@@ -1,0 +1,4 @@
+# Emergency stop — immediately zero all velocities.
+---
+bool accepted
+string detail

@@ -1,0 +1,21 @@
+manifestVersion: 1
+
+package:
+  name: robonix.skill.unitree.g1.basic_movement
+  version: 0.1.0
+  description: Velocity-based basic movement skill for Unitree G1 — forward, backward, strafe, turn, and stop.
+  license: Apache-2.0
+  tags: [skill, movement, locomotion, unitree, g1, humanoid]
+  maintainers:
+    - Origamii520 <zxq13204030517@163.com>
+
+build: bash scripts/build.sh
+start: bash scripts/start.sh
+
+capabilities:
+  - name: robonix/skill/g1_basic_movement/driver
+    path: capabilities/driver.v1.toml
+  - name: robonix/skill/g1_basic_movement/move
+    path: capabilities/move.v1.toml
+  - name: robonix/skill/g1_basic_movement/stop
+    path: capabilities/stop.v1.toml

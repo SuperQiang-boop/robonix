@@ -1,0 +1,19 @@
+manifestVersion: 1
+
+package:
+  name: robonix.primitive.unitree.g1.arm
+  version: 0.1.0
+  description: Guarded Unitree G1 preset upper-arm action primitive using SDK2 LocoClient.
+  license: Apache-2.0
+  tags: [primitive, arm, unitree, g1, humanoid, sdk2]
+  maintainers:
+    - Origamii520 <zxq13204030517@163.com>
+
+build: bash scripts/build.sh
+start: bash scripts/start.sh
+
+capabilities:
+  - name: robonix/primitive/arm/driver
+  - name: robonix/primitive/arm/action
+    path: capabilities/action.v1.toml
+

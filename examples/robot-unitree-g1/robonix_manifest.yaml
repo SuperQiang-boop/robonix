@@ -17,10 +17,12 @@ env:
   RMW_IMPLEMENTATION: rmw_fastrtps_cpp
 
   # G1 network interface (usually the ethernet port to the robot)
-  G1_NETWORK_INTERFACE: "wlp0s20f3"
+  G1_NETWORK_INTERFACE: "enp7s0"
 
   # Motion gate — set to false for read-only / operator-supervised mode
   G1_ALLOW_MOTION: "${G1_ALLOW_MOTION}"
+  G1_ARM_ACTIONS_ENABLED: "true"
+  G1_ARM_ACTION_ACK: "G1_ARM_ACTIONS_APPROVED"
 
   # Mapping directory
   MAPPING_MAPS_DIR: /home/szh/robonix/examples/robot-unitree-g1/third_party/service-map-rbnx/rbnx-build/data/maps
@@ -58,7 +60,7 @@ env:
   TORCH_HOME: ${ROBONIX_DEPLOY_DIR}/.cache/torch
 
   # Dashboard port
-  G1_DASHBOARD_PORT: "${G1_DASHBOARD_PORT}"
+  G1_DASHBOARD_PORT: "28080"
 
   # VLM endpoint (for pilot / scene)
   VLM_BASE_URL: "${VLM_BASE_URL}"
@@ -121,6 +123,19 @@ primitive:
       state_timeout_s: 0.5
 
   # ============================================================
+  # Arm — guarded SDK2 preset upper-arm actions exposed over gRPC.
+  # Disabled unless G1_ARM_ACTIONS_ENABLED=true and the exact
+  # acknowledgement string is provided.
+  # ============================================================
+  - name: g1_arm
+    path: ${ROBONIX_DEPLOY_DIR}/packages/g1_arm
+    config:
+      network_interface: ${G1_NETWORK_INTERFACE}
+      allow_actions: ${G1_ARM_ACTIONS_ENABLED}
+      action_ack: ${G1_ARM_ACTION_ACK}
+      action_timeout_s: 15.0
+
+  # ============================================================
   # Sensors — Livox Mid-360 LiDAR / IMU (read via UDP directly from
   # the head-mounted sensor) + Intel RealSense D435i depth camera.
   # Follows the same pattern as the ranger_mini_v3 manifest.
@@ -130,7 +145,7 @@ primitive:
     branch: main
     config:
       lidar_ip: 192.168.123.120
-      host_ip: 192.168.123.213
+      host_ip: 192.168.123.100
       xfer_format: 0
       frame_id: mid360_link
       # Three attempts including cleanup stay below Soma's 90 s INIT deadline.
@@ -288,6 +303,12 @@ service:
       browser_mic_provider: audio_client_bridge
 
 skill:
+  - name: g1_arm_actions
+    path: ${ROBONIX_DEPLOY_DIR}/packages/g1_arm_actions
+    config:
+      arm_provider_id: g1_arm
+      rpc_timeout_s: 15.0
+
   - name: semantic_navigation
     path: ${ROBONIX_DEPLOY_DIR}/packages/semantic_navigation
     config:
@@ -302,3 +323,6 @@ skill:
       status_endpoint: "http://127.0.0.1:${G1_DASHBOARD_PORT}/api/semantic-task"
       status_timeout_s: 0.5
       nav_status_poll_s: 0.5
+
+  - name: g1_basic_movement
+    path: ${ROBONIX_DEPLOY_DIR}/packages/g1_basic_movement
