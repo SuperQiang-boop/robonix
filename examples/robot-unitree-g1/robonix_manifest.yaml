@@ -157,13 +157,15 @@ primitive:
     config:
       sentinel_timeout_s: 45.0
 
-  # - name: realsense_camera
-  #   url: https://github.com/syswonder/primitive-intel-realsense_d435i-camera-rbnx
-  #   branch: main
-  #   config:
-  #     depth_profile: 640x480x30
-  #     enable_imu: false
-  #     sentinel_timeout_s: 45.0
+  - name: realsense_camera
+    url: https://github.com/syswonder/primitive-intel-realsense_d435i-camera-rbnx
+    branch: main
+    config:
+      camera_name: camera
+      depth_profile: 640x480x15
+      depth_topic: /camera/depth/image_rect_raw
+      enable_imu: false
+      sentinel_timeout_s: 45.0
 
   # ============================================================
   # Robot description — publishes /robot_description and the TF tree.
