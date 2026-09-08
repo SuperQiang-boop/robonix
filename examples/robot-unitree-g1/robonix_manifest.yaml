@@ -12,7 +12,7 @@ catalog:
 
 env:
   # Deployment root — "." when running locally (no external deploy dir).
-  ROBONIX_DEPLOY_DIR: "/home/szh/robonix/examples/robot-unitree-g1"
+  ROBONIX_DEPLOY_DIR: "/data/robonix/examples/robot-unitree-g1"
 
   RMW_IMPLEMENTATION: rmw_fastrtps_cpp
 
