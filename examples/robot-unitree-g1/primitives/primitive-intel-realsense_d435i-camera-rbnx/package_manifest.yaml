@@ -1,0 +1,61 @@
+# Intel RealSense D435i RGBD camera primitive for Ranger Mini.
+#
+# Wraps the upstream `realsense2_camera` (vendored under src/realsense-ros).
+# Atlas-registers the streams it produces under generic
+# `primitive/camera/*` contracts. Consumers (mapping_rbnx, scene, any
+# vision skill) discover the topic names via atlas — no hardcoded
+# `/camera_435i/...` paths on the consumer side.
+#
+# Lifecycle: start.sh launches the atlas bridge ONLY (no ROS spawn).
+# `rbnx boot` then calls `Driver(CMD_INIT, config_json)` on the
+# primitive/camera/driver gRPC interface — that handler parses config,
+# starts the upstream rs_launch.py, waits for the first RGB frame,
+# and only THEN declares rgb / depth data interfaces on atlas.
+#
+# Capability surface (mode = abstract pattern, transport = wire):
+#   primitive/camera/driver         mode=rpc        transport=gRPC
+#   primitive/camera/rgb            mode=topic_out  transport=ROS2  sensor_msgs/Image (RGB8)
+#   primitive/camera/depth          mode=topic_out  transport=ROS2  sensor_msgs/Image (16UC1)
+#   primitive/camera/extrinsics     mode=topic_out  transport=ROS2  latched TransformStamped from robot TF
+#   primitive/camera/snapshot       mode=rpc        transport=MCP   one-shot RGB (TODO)
+#   primitive/camera/depth_snapshot mode=rpc        transport=MCP   one-shot depth (TODO)
+#
+# The D435i has an internal IMU (BMI055). We deliberately do NOT
+# register it under `primitive/imu/imu` because the Ranger Mini's
+# MID-360 IMU is canonical (better noise, co-located with the lidar
+# for SLAM). Anyone who needs the camera IMU directly can subscribe
+# to `/<camera_name>/imu`.
+#
+# Config (passed via `Driver(CMD_INIT, config_json)`):
+#   camera_name        default "camera_435i"           — ROS namespace
+#   rgb_profile        default "640x480x30"            — color stream
+#   depth_profile      default "848x480x30"            — depth stream
+#   align_depth        default true                    — depth → color frame
+#   spatial_filter     default true                    — reduce local disparity noise
+#   temporal_filter    default true                    — stabilize depth across frames
+#   hole_filling_filter default false                  — avoid inventing SLAM geometry
+#   enable_imu         default true                    — published, not atlas-routed
+#   extrinsics_topic   default "/camera/extrinsics"  — latched robot-camera TF
+#   extrinsics_base_frame default "base_link"        — TF parent frame
+#   extrinsics_camera_frame default "camera_color_optical_frame" — TF child frame
+#   sentinel_timeout_s default 30.0
+manifestVersion: 1
+
+package:
+  name: robonix.primitive.intel.realsense_d435i.camera
+  version: 0.1.0
+  description: Intel RealSense D435i driver wrapper — declares RGB + depth + extrinsics contracts.
+  tags: [primitive, camera, intel, realsense_d435i, rgbd]
+  maintainers: [wheatfox <wheatfox17@icloud.com>]
+  license: Apache-2.0
+
+build: bash scripts/build.sh
+start: bash scripts/start.sh
+
+capabilities:
+  - name: robonix/primitive/camera/driver
+  - name: robonix/primitive/camera/rgb
+  - name: robonix/primitive/camera/depth
+  - name: robonix/primitive/camera/extrinsics
+  - name: robonix/primitive/camera/snapshot
+  - name: robonix/primitive/camera/depth_snapshot
