@@ -324,7 +324,7 @@ def init(cfg: dict):
     try:
         _spawn_realsense(cfg)
     except Exception as e:  # noqa: BLE001
-        return Err(f"spawn realsense failed: {e}")
+        log.warning("spawn realsense failed; continuing without camera: %s", e)
 
     # Subscribe RGB + depth via robonix_api (declare=False — we declare
     # the ros2 topic_out interfaces explicitly below, after sentinel passes).
@@ -339,10 +339,14 @@ def init(cfg: dict):
         callback=_on_depth, qos="best_effort", declare=False,
     )
 
-    # Gate INIT on first RGB arriving — webots/jetson cold-boot can lag.
+    # Do not gate SOMA initialization on camera availability.  The camera may
+    # be disconnected or slow to start; keep the process and topic contracts
+    # alive so the rest of the robot can start, and report the condition.
     if not cap.wait_for_topic(rgb_topic, "Image", sentinel_timeout):
-        _kill_realsense()
-        return Err(f"no Image on {rgb_topic} within {sentinel_timeout:.1f}s")
+        log.warning(
+            "no Image on %s within %.1fs; continuing without camera frames",
+            rgb_topic, sentinel_timeout,
+        )
 
     cap.declare_ros2_topic(
         "robonix/primitive/camera/rgb",
