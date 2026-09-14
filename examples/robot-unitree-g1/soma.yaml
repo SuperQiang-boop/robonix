@@ -5,7 +5,7 @@
 
 urdf:
   path: ./g1_description/g1_29dof.urdf
-  root_link: base_link
+  root_link: base_footprint
   model_name: unitree_g1
 
 robot:
@@ -26,7 +26,7 @@ robot:
   # Nav2 inflation covers the narrow base; actual collision envelope
   # is defined by the URDF.
   footprint:
-    base_frame: base_link
+    base_frame: base_footprint
     points:
       - [0.15, 0.08]
       - [0.15, -0.08]

@@ -3,7 +3,7 @@ readonly_inputs:
   low_state: [/rt/lowstate]
 standard_outputs:
   odom: /odom
-  imu: /imu/data
+  imu: /livox/imu
   lidar_cloud: /scanner/cloud
   lidar_scan: /scanner/scan
   camera_image: /camera/color/image_raw
@@ -15,6 +15,6 @@ frames:
   map: map
   odom: odom
   base: base_link
-  imu: imu
-  lidar: mid360_lidar
+  imu: livox_frame
+  lidar: mid360_upright
   camera: front_camera

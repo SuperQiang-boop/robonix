@@ -36,6 +36,10 @@ if [[ -n "${GO2_ROS_OVERLAY_SETUP:-}" ]]; then
 fi
 set -u
 
+# Clear ROS2 humble PYTHONPATH (python3.10) to avoid conflicts with
+# conda python3.13 used by this venv.
+unset PYTHONPATH
+
 mkdir -p "${ROOT_DIR}/rbnx-build/run"
 CODEGEN_PATH="${ROOT_DIR}/rbnx-build/codegen/proto_gen:${ROOT_DIR}/rbnx-build/codegen/robonix_mcp_types"
 if [[ -n "${ROBONIX_SOURCE_PATH:-}" && -d "${ROBONIX_SOURCE_PATH}/pylib/robonix-api/robonix_api" ]]; then

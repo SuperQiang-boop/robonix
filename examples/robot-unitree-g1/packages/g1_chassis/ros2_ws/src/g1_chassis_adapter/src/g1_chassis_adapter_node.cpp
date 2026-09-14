@@ -86,6 +86,9 @@ class AdapterNode : public rclcpp::Node {
     // Parameters.
     twist_in_topic_ = declare_parameter("twist_in_topic", "/cmd_vel");
     odom_topic_ = declare_parameter("odom_topic", "/odom");
+    publish_odom_tf_ = declare_parameter("publish_odom_tf", true);
+    odom_frame_ = declare_parameter("odom_frame", "odom");
+    base_frame_ = declare_parameter("base_frame", "base_footprint");
     joint_state_topic_ = declare_parameter("joint_state_topic", "/joint_states");
 
     // Twist subscriber.
@@ -101,7 +104,7 @@ class AdapterNode : public rclcpp::Node {
     joint_state_pub_ =
         create_publisher<sensor_msgs::msg::JointState>(joint_state_topic_, 10);
 
-    // Broadcast odom -> base_link TF so mapping and nav2 can resolve the chain.
+    // Broadcast odom -> base_footprint TF so mapping and nav2 can resolve the chain.
     tf_broadcaster_ = std::make_unique<tf2_ros::TransformBroadcaster>(*this);
 
     // Periodic timer to keep the ROS graph alive and forward stale-free cmd_vel.
@@ -160,28 +163,53 @@ class AdapterNode : public rclcpp::Node {
     odom->twist.twist.angular.z = 0.0;
     odom_pub_->publish(std::move(odom));
 
-    // Broadcast odom -> base_link TF transform.
+    // Broadcast odom -> base_footprint TF transform.
     geometry_msgs::msg::TransformStamped tf;
     tf.header.stamp = now;
     tf.header.frame_id = odom_frame_;
     tf.child_frame_id = base_frame_;
     tf.transform.rotation.w = 1.0;
-    tf_broadcaster_->sendTransform(tf);
+    if (publish_odom_tf_) tf_broadcaster_->sendTransform(tf);
   }
 
-  // Publish neutral waist joints so robot_state_publisher can connect
-  // base_link to torso-mounted sensors when SDK joint states are absent.
+  // Publish the G1 29-DOF neutral visualization pose while SDK joint states
+  // are absent, so robot_state_publisher can connect every limb and sensor.
+  // These are placeholder positions, not measured robot joint states.
   void PublishNeutralJointState(const rclcpp::Time &stamp) {
     auto joint_state = std::make_unique<sensor_msgs::msg::JointState>();
     joint_state->header.stamp = stamp;
     joint_state->name = {
+        "left_hip_pitch_joint",
+        "left_hip_roll_joint",
+        "left_hip_yaw_joint",
+        "left_knee_joint",
+        "left_ankle_pitch_joint",
+        "left_ankle_roll_joint",
+        "right_hip_pitch_joint",
+        "right_hip_roll_joint",
+        "right_hip_yaw_joint",
+        "right_knee_joint",
+        "right_ankle_pitch_joint",
+        "right_ankle_roll_joint",
         "waist_yaw_joint",
         "waist_roll_joint",
         "waist_pitch_joint",
+        "left_shoulder_pitch_joint",
+        "left_shoulder_roll_joint",
+        "left_shoulder_yaw_joint",
+        "left_elbow_joint",
+        "left_wrist_roll_joint",
+        "left_wrist_pitch_joint",
+        "left_wrist_yaw_joint",
+        "right_shoulder_pitch_joint",
+        "right_shoulder_roll_joint",
+        "right_shoulder_yaw_joint",
+        "right_elbow_joint",
+        "right_wrist_roll_joint",
+        "right_wrist_pitch_joint",
+        "right_wrist_yaw_joint",
     };
-    joint_state->position = {0.0, 0.0, 0.0};
-    joint_state->velocity = {0.0, 0.0, 0.0};
-    joint_state->effort = {0.0, 0.0, 0.0};
+    joint_state->position.assign(joint_state->name.size(), 0.0);
     joint_state_pub_->publish(std::move(joint_state));
   }
 
@@ -200,6 +228,7 @@ class AdapterNode : public rclcpp::Node {
   std::string twist_in_topic_;
   std::string odom_topic_;
   std::string joint_state_topic_;
+  bool publish_odom_tf_{true};
   std::string odom_frame_{"odom"};
   std::string base_frame_{"base_link"};
 

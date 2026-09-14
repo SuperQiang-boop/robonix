@@ -13,7 +13,7 @@ Guarded Unitree G1 chassis adapter using the SDK2 LocoClient.
 | Component | Language | Purpose |
 |---|---|---|
 | `g1_loco_daemon` | C++ | IPC server wrapping SDK2 LocoClient. 300 ms watchdog, velocity clamping, motion gating. |
-| `g1_chassis_adapter_node` | C++ (ROS2) | Subscribes to `/cmd_vel`, forwards commands to daemon via Unix socket, and publishes odom plus waist joint-state heartbeats. |
+| `g1_chassis_adapter_node` | C++ (ROS2) | Subscribes to `/cmd_vel`, forwards commands to daemon via Unix socket, and publishes odom plus neutral joint-state heartbeats. |
 | `g1_chassis/main.py` | Python | Robonix primitive provider — spawns adapter + daemon, declares ROS2 capabilities. |
 
 ### Safety
@@ -27,7 +27,7 @@ Guarded Unitree G1 chassis adapter using the SDK2 LocoClient.
 ### ROS outputs
 
 - `/odom` carries the stationary odometry heartbeat used by mapping and navigation while real G1 odometry is not integrated.
-- `/joint_states` carries neutral waist joint positions so `robot_state_publisher` can connect `base_link` to torso-mounted sensors such as `mid360_link`.
+- `/joint_states` carries all 29 movable joint positions at zero so `robot_state_publisher` can connect `base_link` to both legs, both arms, and torso-mounted sensors. This is a visualization placeholder, not measured robot posture. Velocity and effort are omitted because they are unknown. Replace this placeholder publisher when integrating actual SDK joint feedback; do not publish competing positions for the same joints.
 
 ### IPC Protocol
 
@@ -42,9 +42,30 @@ export UNITREE_SDK2_DIR=/path/to/unitree_sdk2-main
 bash scripts/build.sh
 ```
 
+### TF smoke test
+
+With ROS sourced, run this in an isolated ROS domain. It uses a fake IPC peer and does not start the SDK daemon. It checks all movable joints against the deployment URDF and verifies every link has a transform to `base_link`.
+
+```bash
+ROS_DOMAIN_ID=217 ROS_LOCALHOST_ONLY=1 /usr/bin/python3 tests/tf_smoke.py \
+  rbnx-build/ros/install/lib/g1_chassis_adapter/g1_chassis_adapter_node \
+  ../../g1_description/g1_29dof.urdf
+```
+
 ## Runtime
 
 The provider (`main.py`) is launched by the Robonix primitive engine. It resolves:
 
 - `G1_NETWORK_INTERFACE` — ethernet interface to the G1 (default: `lo`)
 - `G1_ALLOW_MOTION` — `"true"` to enable motion (default: `false`)
+
+Navigation TF uses `odom -> base_footprint` (configured by `odom_frame` and
+`base_frame`, passed to the ROS adapter). The URDF owns
+`base_footprint -> base_link` at the nominal standing pelvis height of 0.55 m.
+The adapter currently publishes stationary placeholder odometry, not measured
+SDK odometry; its zero roll/pitch cannot provide walking gravity compensation.
+
+With mapping gravity alignment enabled, `publish_odom_tf: false` suppresses
+chassis TF; internal ICP owns `odom -> base_footprint`. The `/odom` heartbeat
+remains placeholder data and is not used by mapping or navigation in this mode.
+Navigation explicitly consumes `/rtabmap/odom`.

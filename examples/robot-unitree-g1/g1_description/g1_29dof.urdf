@@ -1,6 +1,13 @@
 <robot name="g1_29dof">
-  <!-- Robonix navigation root: zero-offset base_link for chassis adapter and Soma. -->
+  <!-- Navigation root is base_footprint; base_link remains the physical pelvis. -->
   <link name="base_link" />
+  <link name="base_footprint" />
+  <!-- Planar navigation reference at the nominal sole level. -->
+  <joint name="base_footprint_to_base_link" type="fixed">
+    <origin xyz="0 0 0.80" rpy="0 0 0" />
+    <parent link="base_footprint" />
+    <child link="base_link" />
+  </joint>
   <joint name="base_link_to_pelvis" type="fixed">
     <origin xyz="0 0 0" rpy="0 0 0" />
     <parent link="base_link" />
@@ -34,7 +41,7 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="meshes/pelvis.STL"/>
+        <mesh filename="file:///home/szh/robonix/examples/robot-unitree-g1/g1_description/meshes/pelvis.STL"/>
       </geometry>
       <material name="dark"/>
     </visual>
@@ -48,14 +55,14 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="meshes/pelvis_contour_link.STL"/>
+        <mesh filename="file:///home/szh/robonix/examples/robot-unitree-g1/g1_description/meshes/pelvis_contour_link.STL"/>
       </geometry>
       <material name="white"/>
     </visual>
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="meshes/pelvis_contour_link.STL"/>
+        <mesh filename="file:///home/szh/robonix/examples/robot-unitree-g1/g1_description/meshes/pelvis_contour_link.STL"/>
       </geometry>
     </collision>
   </link>
@@ -74,14 +81,14 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="meshes/left_hip_pitch_link.STL"/>
+        <mesh filename="file:///home/szh/robonix/examples/robot-unitree-g1/g1_description/meshes/left_hip_pitch_link.STL"/>
       </geometry>
       <material name="dark"/>
     </visual>
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="meshes/left_hip_pitch_link.STL"/>
+        <mesh filename="file:///home/szh/robonix/examples/robot-unitree-g1/g1_description/meshes/left_hip_pitch_link.STL"/>
       </geometry>
     </collision>
   </link>
@@ -101,14 +108,14 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="meshes/left_hip_roll_link.STL"/>
+        <mesh filename="file:///home/szh/robonix/examples/robot-unitree-g1/g1_description/meshes/left_hip_roll_link.STL"/>
       </geometry>
       <material name="white"/>
     </visual>
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="meshes/left_hip_roll_link.STL"/>
+        <mesh filename="file:///home/szh/robonix/examples/robot-unitree-g1/g1_description/meshes/left_hip_roll_link.STL"/>
       </geometry>
     </collision>
   </link>
@@ -128,14 +135,14 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="meshes/left_hip_yaw_link.STL"/>
+        <mesh filename="file:///home/szh/robonix/examples/robot-unitree-g1/g1_description/meshes/left_hip_yaw_link.STL"/>
       </geometry>
       <material name="white"/>
     </visual>
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="meshes/left_hip_yaw_link.STL"/>
+        <mesh filename="file:///home/szh/robonix/examples/robot-unitree-g1/g1_description/meshes/left_hip_yaw_link.STL"/>
       </geometry>
     </collision>
   </link>
@@ -155,14 +162,14 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="meshes/left_knee_link.STL"/>
+        <mesh filename="file:///home/szh/robonix/examples/robot-unitree-g1/g1_description/meshes/left_knee_link.STL"/>
       </geometry>
       <material name="white"/>
     </visual>
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="meshes/left_knee_link.STL"/>
+        <mesh filename="file:///home/szh/robonix/examples/robot-unitree-g1/g1_description/meshes/left_knee_link.STL"/>
       </geometry>
     </collision>
   </link>
@@ -182,14 +189,14 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="meshes/left_ankle_pitch_link.STL"/>
+        <mesh filename="file:///home/szh/robonix/examples/robot-unitree-g1/g1_description/meshes/left_ankle_pitch_link.STL"/>
       </geometry>
       <material name="white"/>
     </visual>
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="meshes/left_ankle_pitch_link.STL"/>
+        <mesh filename="file:///home/szh/robonix/examples/robot-unitree-g1/g1_description/meshes/left_ankle_pitch_link.STL"/>
       </geometry>
     </collision>
   </link>
@@ -209,7 +216,7 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="meshes/left_ankle_roll_link.STL"/>
+        <mesh filename="file:///home/szh/robonix/examples/robot-unitree-g1/g1_description/meshes/left_ankle_roll_link.STL"/>
       </geometry>
       <material name="dark"/>
     </visual>
@@ -254,14 +261,14 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="meshes/right_hip_pitch_link.STL"/>
+        <mesh filename="file:///home/szh/robonix/examples/robot-unitree-g1/g1_description/meshes/right_hip_pitch_link.STL"/>
       </geometry>
       <material name="dark"/>
     </visual>
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="meshes/right_hip_pitch_link.STL"/>
+        <mesh filename="file:///home/szh/robonix/examples/robot-unitree-g1/g1_description/meshes/right_hip_pitch_link.STL"/>
       </geometry>
     </collision>
   </link>
@@ -281,14 +288,14 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="meshes/right_hip_roll_link.STL"/>
+        <mesh filename="file:///home/szh/robonix/examples/robot-unitree-g1/g1_description/meshes/right_hip_roll_link.STL"/>
       </geometry>
       <material name="white"/>
     </visual>
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="meshes/right_hip_roll_link.STL"/>
+        <mesh filename="file:///home/szh/robonix/examples/robot-unitree-g1/g1_description/meshes/right_hip_roll_link.STL"/>
       </geometry>
     </collision>
   </link>
@@ -308,14 +315,14 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="meshes/right_hip_yaw_link.STL"/>
+        <mesh filename="file:///home/szh/robonix/examples/robot-unitree-g1/g1_description/meshes/right_hip_yaw_link.STL"/>
       </geometry>
       <material name="white"/>
     </visual>
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="meshes/right_hip_yaw_link.STL"/>
+        <mesh filename="file:///home/szh/robonix/examples/robot-unitree-g1/g1_description/meshes/right_hip_yaw_link.STL"/>
       </geometry>
     </collision>
   </link>
@@ -335,14 +342,14 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="meshes/right_knee_link.STL"/>
+        <mesh filename="file:///home/szh/robonix/examples/robot-unitree-g1/g1_description/meshes/right_knee_link.STL"/>
       </geometry>
       <material name="white"/>
     </visual>
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="meshes/right_knee_link.STL"/>
+        <mesh filename="file:///home/szh/robonix/examples/robot-unitree-g1/g1_description/meshes/right_knee_link.STL"/>
       </geometry>
     </collision>
   </link>
@@ -362,14 +369,14 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="meshes/right_ankle_pitch_link.STL"/>
+        <mesh filename="file:///home/szh/robonix/examples/robot-unitree-g1/g1_description/meshes/right_ankle_pitch_link.STL"/>
       </geometry>
       <material name="white"/>
     </visual>
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="meshes/right_ankle_pitch_link.STL"/>
+        <mesh filename="file:///home/szh/robonix/examples/robot-unitree-g1/g1_description/meshes/right_ankle_pitch_link.STL"/>
       </geometry>
     </collision>
   </link>
@@ -389,7 +396,7 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="meshes/right_ankle_roll_link.STL"/>
+        <mesh filename="file:///home/szh/robonix/examples/robot-unitree-g1/g1_description/meshes/right_ankle_roll_link.STL"/>
       </geometry>
       <material name="dark"/>
     </visual>
@@ -436,7 +443,7 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="meshes/waist_yaw_link.STL"/>
+        <mesh filename="file:///home/szh/robonix/examples/robot-unitree-g1/g1_description/meshes/waist_yaw_link.STL"/>
       </geometry>
       <material name="white"/>
     </visual>
@@ -457,7 +464,7 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="meshes/waist_roll_link.STL"/>
+        <mesh filename="file:///home/szh/robonix/examples/robot-unitree-g1/g1_description/meshes/waist_roll_link.STL"/>
       </geometry>
       <material name="white"/>
     </visual>
@@ -478,14 +485,14 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="meshes/torso_link.STL"/>
+        <mesh filename="file:///home/szh/robonix/examples/robot-unitree-g1/g1_description/meshes/torso_link.STL"/>
       </geometry>
       <material name="white"/>
     </visual>
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="meshes/torso_link.STL"/>
+        <mesh filename="file:///home/szh/robonix/examples/robot-unitree-g1/g1_description/meshes/torso_link.STL"/>
       </geometry>
     </collision>
   </link>
@@ -512,14 +519,14 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="meshes/logo_link.STL"/>
+        <mesh filename="file:///home/szh/robonix/examples/robot-unitree-g1/g1_description/meshes/logo_link.STL"/>
       </geometry>
       <material name="dark"/>
     </visual>
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="meshes/logo_link.STL"/>
+        <mesh filename="file:///home/szh/robonix/examples/robot-unitree-g1/g1_description/meshes/logo_link.STL"/>
       </geometry>
     </collision>
   </link>
@@ -534,14 +541,14 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="meshes/head_link.STL"/>
+        <mesh filename="file:///home/szh/robonix/examples/robot-unitree-g1/g1_description/meshes/head_link.STL"/>
       </geometry>
       <material name="dark"/>
     </visual>
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="meshes/head_link.STL"/>
+        <mesh filename="file:///home/szh/robonix/examples/robot-unitree-g1/g1_description/meshes/head_link.STL"/>
       </geometry>
     </collision>
   </link>
@@ -561,14 +568,14 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="meshes/waist_support_link.STL"/>
+        <mesh filename="file:///home/szh/robonix/examples/robot-unitree-g1/g1_description/meshes/waist_support_link.STL"/>
       </geometry>
       <material name="white"/>
     </visual>
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="meshes/waist_support_link.STL"/>
+        <mesh filename="file:///home/szh/robonix/examples/robot-unitree-g1/g1_description/meshes/waist_support_link.STL"/>
       </geometry>
     </collision>
   </link>
@@ -601,12 +608,35 @@
     <child link="d435_link"/>
   </joint>
 
-  <!-- mid360 -->
+  <!-- MID360 mount: stationary upright IMU calibration, 2026-09-14.
+       Residual roll=-0.00248080, pitch=0.66736485 rad after driver Rx(pi).
+       Correct the physical mount here; both cloud and IMU inherit it. -->
   <link name="mid360_link"></link>
   <joint name="mid360_joint" type="fixed">
-    <origin xyz="0.0002835 0.00003 0.40618" rpy="0 0.04014257279586953 0"/>
-    <parent link="torso_link"/>
+    <origin xyz="0 0 0.47618" rpy="3.139111853589793 0.66736485 0"/>
+    <parent link="base_link"/>
     <child link="mid360_link"/>
+  </joint>
+
+  <!-- Driver applies roll=180 degrees; this frame describes corrected points. -->
+  <link name="mid360_upright" />
+  <joint name="mid360_upright_joint" type="fixed">
+    <origin xyz="0 0 0" rpy="3.141592653589793 0 0" />
+    <parent link="mid360_link" />
+    <child link="mid360_upright" />
+  </joint>
+  <link name="mid360_imu"></link>
+  <joint name="mid360_imu_joint" type="fixed">
+    <origin xyz="0.011 0.02329 -0.04412" rpy="0 0 0"/>
+    <parent link="mid360_link"/>
+    <child link="mid360_imu"/>
+  </joint>
+
+  <link name="livox_frame"></link>
+  <joint name="mid360_imu_frame_joint" type="fixed">
+    <origin xyz="0 0 0" rpy="3.141592653589793 0 0"/>
+    <parent link="mid360_imu"/>
+    <child link="livox_frame"/>
   </joint>
 
   <!-- Arm -->
@@ -619,7 +649,7 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="meshes/left_shoulder_pitch_link.STL"/>
+        <mesh filename="file:///home/szh/robonix/examples/robot-unitree-g1/g1_description/meshes/left_shoulder_pitch_link.STL"/>
       </geometry>
       <material name="white"/>
     </visual>
@@ -646,7 +676,7 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="meshes/left_shoulder_roll_link.STL"/>
+        <mesh filename="file:///home/szh/robonix/examples/robot-unitree-g1/g1_description/meshes/left_shoulder_roll_link.STL"/>
       </geometry>
       <material name="white"/>
     </visual>
@@ -673,14 +703,14 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="meshes/left_shoulder_yaw_link.STL"/>
+        <mesh filename="file:///home/szh/robonix/examples/robot-unitree-g1/g1_description/meshes/left_shoulder_yaw_link.STL"/>
       </geometry>
       <material name="white"/>
     </visual>
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="meshes/left_shoulder_yaw_link.STL"/>
+        <mesh filename="file:///home/szh/robonix/examples/robot-unitree-g1/g1_description/meshes/left_shoulder_yaw_link.STL"/>
       </geometry>
     </collision>
   </link>
@@ -700,14 +730,14 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="meshes/left_elbow_link.STL"/>
+        <mesh filename="file:///home/szh/robonix/examples/robot-unitree-g1/g1_description/meshes/left_elbow_link.STL"/>
       </geometry>
       <material name="white"/>
     </visual>
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="meshes/left_elbow_link.STL"/>
+        <mesh filename="file:///home/szh/robonix/examples/robot-unitree-g1/g1_description/meshes/left_elbow_link.STL"/>
       </geometry>
     </collision>
   </link>
@@ -734,14 +764,14 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="meshes/left_wrist_roll_link.STL"/>
+        <mesh filename="file:///home/szh/robonix/examples/robot-unitree-g1/g1_description/meshes/left_wrist_roll_link.STL"/>
       </geometry>
       <material name="white"/>
     </visual>
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="meshes/left_wrist_roll_link.STL"/>
+        <mesh filename="file:///home/szh/robonix/examples/robot-unitree-g1/g1_description/meshes/left_wrist_roll_link.STL"/>
       </geometry>
     </collision>
   </link>
@@ -761,14 +791,14 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="meshes/left_wrist_pitch_link.STL"/>
+        <mesh filename="file:///home/szh/robonix/examples/robot-unitree-g1/g1_description/meshes/left_wrist_pitch_link.STL"/>
       </geometry>
       <material name="white"/>
     </visual>
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="meshes/left_wrist_pitch_link.STL"/>
+        <mesh filename="file:///home/szh/robonix/examples/robot-unitree-g1/g1_description/meshes/left_wrist_pitch_link.STL"/>
       </geometry>
     </collision>
   </link>
@@ -788,14 +818,14 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="meshes/left_wrist_yaw_link.STL"/>
+        <mesh filename="file:///home/szh/robonix/examples/robot-unitree-g1/g1_description/meshes/left_wrist_yaw_link.STL"/>
       </geometry>
       <material name="white"/>
     </visual>
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="meshes/left_wrist_yaw_link.STL"/>
+        <mesh filename="file:///home/szh/robonix/examples/robot-unitree-g1/g1_description/meshes/left_wrist_yaw_link.STL"/>
       </geometry>
     </collision>
   </link>
@@ -813,7 +843,7 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="meshes/left_rubber_hand.STL"/>
+        <mesh filename="file:///home/szh/robonix/examples/robot-unitree-g1/g1_description/meshes/left_rubber_hand.STL"/>
       </geometry>
       <material name="white"/>
     </visual>
@@ -827,7 +857,7 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="meshes/right_shoulder_pitch_link.STL"/>
+        <mesh filename="file:///home/szh/robonix/examples/robot-unitree-g1/g1_description/meshes/right_shoulder_pitch_link.STL"/>
       </geometry>
       <material name="white"/>
     </visual>
@@ -854,7 +884,7 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="meshes/right_shoulder_roll_link.STL"/>
+        <mesh filename="file:///home/szh/robonix/examples/robot-unitree-g1/g1_description/meshes/right_shoulder_roll_link.STL"/>
       </geometry>
       <material name="white"/>
     </visual>
@@ -881,14 +911,14 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="meshes/right_shoulder_yaw_link.STL"/>
+        <mesh filename="file:///home/szh/robonix/examples/robot-unitree-g1/g1_description/meshes/right_shoulder_yaw_link.STL"/>
       </geometry>
       <material name="white"/>
     </visual>
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="meshes/right_shoulder_yaw_link.STL"/>
+        <mesh filename="file:///home/szh/robonix/examples/robot-unitree-g1/g1_description/meshes/right_shoulder_yaw_link.STL"/>
       </geometry>
     </collision>
   </link>
@@ -908,14 +938,14 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="meshes/right_elbow_link.STL"/>
+        <mesh filename="file:///home/szh/robonix/examples/robot-unitree-g1/g1_description/meshes/right_elbow_link.STL"/>
       </geometry>
       <material name="white"/>
     </visual>
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="meshes/right_elbow_link.STL"/>
+        <mesh filename="file:///home/szh/robonix/examples/robot-unitree-g1/g1_description/meshes/right_elbow_link.STL"/>
       </geometry>
     </collision>
   </link>
@@ -942,14 +972,14 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="meshes/right_wrist_roll_link.STL"/>
+        <mesh filename="file:///home/szh/robonix/examples/robot-unitree-g1/g1_description/meshes/right_wrist_roll_link.STL"/>
       </geometry>
       <material name="white"/>
     </visual>
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="meshes/right_wrist_roll_link.STL"/>
+        <mesh filename="file:///home/szh/robonix/examples/robot-unitree-g1/g1_description/meshes/right_wrist_roll_link.STL"/>
       </geometry>
     </collision>
   </link>
@@ -969,14 +999,14 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="meshes/right_wrist_pitch_link.STL"/>
+        <mesh filename="file:///home/szh/robonix/examples/robot-unitree-g1/g1_description/meshes/right_wrist_pitch_link.STL"/>
       </geometry>
       <material name="white"/>
     </visual>
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="meshes/right_wrist_pitch_link.STL"/>
+        <mesh filename="file:///home/szh/robonix/examples/robot-unitree-g1/g1_description/meshes/right_wrist_pitch_link.STL"/>
       </geometry>
     </collision>
   </link>
@@ -996,14 +1026,14 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="meshes/right_wrist_yaw_link.STL"/>
+        <mesh filename="file:///home/szh/robonix/examples/robot-unitree-g1/g1_description/meshes/right_wrist_yaw_link.STL"/>
       </geometry>
       <material name="white"/>
     </visual>
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="meshes/right_wrist_yaw_link.STL"/>
+        <mesh filename="file:///home/szh/robonix/examples/robot-unitree-g1/g1_description/meshes/right_wrist_yaw_link.STL"/>
       </geometry>
     </collision>
   </link>
@@ -1021,7 +1051,7 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="meshes/right_rubber_hand.STL"/>
+        <mesh filename="file:///home/szh/robonix/examples/robot-unitree-g1/g1_description/meshes/right_rubber_hand.STL"/>
       </geometry>
       <material name="white"/>
     </visual>
