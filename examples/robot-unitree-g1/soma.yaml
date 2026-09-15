@@ -5,7 +5,7 @@
 
 urdf:
   path: ./g1_description/g1_29dof.urdf
-  root_link: base_link
+  root_link: base_footprint
   model_name: unitree_g1
 
 robot:
@@ -26,7 +26,7 @@ robot:
   # Nav2 inflation covers the narrow base; actual collision envelope
   # is defined by the URDF.
   footprint:
-    base_frame: base_link
+    base_frame: base_footprint
     points:
       - [0.15, 0.08]
       - [0.15, -0.08]
@@ -65,6 +65,12 @@ robot:
             description: "Report semantic navigation task state." }
         - { path: robonix/skill/semantic_navigation/navigate_landmark/cancel,
             description: "Cancel semantic navigation." }
+    - provider_id: g1_basic_movement
+      capabilities:
+        - { path: robonix/skill/basic_movement/move,
+            description: "Move the G1 with linear/angular velocity for a specified duration." }
+        - { path: robonix/skill/basic_movement/stop,
+            description: "Emergency stop — immediately zero all velocities." }
     - provider_id: speech
       capabilities:
         - { path: robonix/service/speech/asr,
@@ -106,7 +112,7 @@ robot:
           components:
             - id: mid360_lidar
               type: lidar_3d
-              urdf_link: mid360_lidar
+              urdf_link: mid360_link
               exports:
                 - provider_id: mid360_lidar
                   capabilities:
@@ -190,6 +196,7 @@ description:
     - "Build a map with RTAB-Map, localize, and navigate with Nav2."
     - "Navigate to verified Chinese semantic landmarks."
     - "Control dual arm joint positions via SDK2 high-level API."
+    - "Basic velocity-based movement (forward, backward, strafe, turn) via MCP skill."
     - "Expose camera, lidar, map and task state in the operator browser UI."
   cannot_do:
     - "Recover posture, run fast, or climb stairs."

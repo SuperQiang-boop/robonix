@@ -97,6 +97,19 @@ def _daemon_env(socket_path: str) -> dict[str, str]:
     return env
 
 
+def _adapter_argv(config) -> list[str]:
+    """Build ROS2 adapter arguments from provider config."""
+    return [
+        str(_adapter_binary), "--ros-args",
+        "-p", f"twist_in_topic:={config.get('twist_in_topic', '/cmd_vel')}",
+        "-p", f"odom_topic:={config.get('odom_topic', '/odom')}",
+        "-p", f"publish_odom_tf:={str(config.get('publish_odom_tf', True)).lower()}",
+        "-p", f"odom_frame:={config.get('odom_frame', 'odom')}",
+        "-p", f"base_frame:={config.get('base_frame', 'base_footprint')}",
+        "-p", f"joint_state_topic:={config.get('joint_state_topic', '/joint_states')}",
+    ]
+
+
 @g1_chassis.on_init
 def initialize(config):
     """Start daemon + adapter, wait for odometry, then declare topics."""
@@ -146,7 +159,7 @@ def initialize(config):
     # Start ROS2 adapter (daemon env already has G1_IPC_SOCKET)
     _processes.append(
         g1_chassis.spawn(
-            [str(_adapter_binary)],
+            _adapter_argv(config),
             env=daemon_env,
             log="adapter.log",
             cwd=str(_package_root),

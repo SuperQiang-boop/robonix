@@ -1,0 +1,7 @@
+# User-facing request for an allowlisted Unitree G1 preset upper-arm action.
+string action
+---
+bool accepted
+string detail
+string action
+

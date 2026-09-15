@@ -15,11 +15,12 @@ Grid/CellSize: 0.05
 Grid/RayTracing: false
 Grid/3D: false
 Grid/NormalsSegmentation: false
-# G1 base_link is near the ankle (~0.6 m above floor). Mid-360 point cloud
-# puts the floor near z=0 in the robot frame when level. Reject points below
-# floor as ground; keep above as obstacles.
+# Project in the gravity-aligned map frame before applying height thresholds.
+Grid/MapFrameProjection: true
+# Mapping uses base_footprint, a planar frame at the nominal sole level.
+# Reject points below the floor as ground and keep points above as obstacles.
 Grid/MaxObstacleHeight: 1.50
-Grid/MaxGroundHeight: -0.20
+Grid/MaxGroundHeight: 0.10
 # Sparse packet → isolated speckle in local grid. Three-neighbour radius
 # filtering cleans noise while preserving thin wall continuity.
 Grid/NoiseFilteringRadius: 0.20
@@ -29,9 +30,9 @@ Grid/NoiseFilteringMinNeighbors: 3
 Grid/FootprintLength: 0.40
 Grid/FootprintWidth: 0.15
 Reg/Strategy: 1
-Reg/Force3DoF: true
+Reg/Force3DoF: false
 Optimizer/Strategy: 1
-Optimizer/GravitySigma: 0
+Optimizer/GravitySigma: 0.1
 # Keep neighbour-link refining off until a deskewed cloud source is available.
 RGBD/NeighborLinkRefining: false
 RGBD/ProximityBySpace: false

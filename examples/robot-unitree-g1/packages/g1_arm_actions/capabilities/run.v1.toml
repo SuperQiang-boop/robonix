@@ -1,0 +1,13 @@
+[contract]
+id      = "robonix/skill/g1_arm_actions/run"
+version = "1"
+kind    = "skill"
+idl     = "g1_arm_actions/srv/RunG1ArmAction.srv"
+description = "Run one allowlisted Unitree G1 preset upper-arm action."
+
+[mode]
+type = "rpc"
+
+[semantics]
+user_invocable = true
+

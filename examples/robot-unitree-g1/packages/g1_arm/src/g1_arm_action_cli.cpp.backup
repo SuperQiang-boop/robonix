@@ -1,0 +1,114 @@
+#include <cstdint>
+#include <cstdlib>
+#include <exception>
+#include <iostream>
+#include <stdexcept>
+#include <string>
+
+#include <unitree/robot/channel/channel_factory.hpp>
+#include <unitree/robot/g1/loco/g1_loco_client.hpp>
+
+namespace {
+
+constexpr const char *kRequiredAcknowledgement = "G1_ARM_ACTIONS_APPROVED";
+
+struct Options {
+  std::string network_interface;
+  std::string action;
+  std::string acknowledgement;
+};
+
+void PrintUsage(const char *program) {
+  std::cerr << "Usage: " << program
+            << " --interface IFACE --action ACTION"
+               " --motion-ack G1_ARM_ACTIONS_APPROVED\n";
+}
+
+// Parses the CLI gate and required robot network parameters before SDK2 setup.
+Options ParseOptions(int argc, char **argv) {
+  Options options;
+  for (int index = 1; index < argc; ++index) {
+    const std::string argument(argv[index]);
+    const auto require_value = [&](const char *name) -> std::string {
+      if (index + 1 >= argc) {
+        throw std::runtime_error(std::string("missing value for ") + name);
+      }
+      return argv[++index];
+    };
+    if (argument == "--interface") {
+      options.network_interface = require_value("--interface");
+    } else if (argument == "--action") {
+      options.action = require_value("--action");
+    } else if (argument == "--motion-ack") {
+      options.acknowledgement = require_value("--motion-ack");
+    } else if (argument == "--help" || argument == "-h") {
+      PrintUsage(argv[0]);
+      std::exit(0);
+    } else {
+      throw std::runtime_error("unknown argument: " + argument);
+    }
+  }
+  if (options.network_interface.empty()) {
+    throw std::runtime_error("--interface is required");
+  }
+  if (options.action.empty()) {
+    throw std::runtime_error("--action is required");
+  }
+  if (options.acknowledgement != kRequiredAcknowledgement) {
+    throw std::runtime_error("exact --motion-ack value required");
+  }
+  return options;
+}
+
+// Maps Robonix action names to the SDK2 G1 LocoClient preset methods.
+int RunAction(unitree::robot::g1::LocoClient &client,
+              const std::string &action) {
+  if (action == "wave_hand") {
+    return client.WaveHand(false);
+  }
+  if (action == "wave_hand_turn") {
+    return client.WaveHand(true);
+  }
+  if (action == "shake_hand_stage_0") {
+    return client.ShakeHand(0);
+  }
+  if (action == "shake_hand_stage_1") {
+    return client.ShakeHand(1);
+  }
+  if (action == "shake_hand_toggle") {
+    return client.ShakeHand(-1);
+  }
+  throw std::runtime_error("unsupported action: " + action);
+}
+
+// Initializes the Unitree channel, runs exactly one preset, then exits.
+int Main(int argc, char **argv) {
+  const Options options = ParseOptions(argc, argv);
+  unitree::robot::ChannelFactory::Instance()->Init(
+      0, options.network_interface);
+
+  unitree::robot::g1::LocoClient client;
+  client.Init();
+  client.SetTimeout(10.0F);
+
+  const int32_t result = RunAction(client, options.action);
+  if (result != 0) {
+    std::cerr << "SDK2 action " << options.action << " returned " << result
+              << "\n";
+    return 3;
+  }
+  std::cout << "SDK2 action accepted: " << options.action << "\n";
+  return 0;
+}
+
+}  // namespace
+
+int main(int argc, char **argv) {
+  try {
+    return Main(argc, argv);
+  } catch (const std::exception &exception) {
+    std::cerr << "g1_arm_action_cli: " << exception.what() << "\n";
+    PrintUsage(argv[0]);
+    return 2;
+  }
+}
