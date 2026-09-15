@@ -6,6 +6,7 @@
 #   - service/map/occupancy_grid     (read; pick frontier targets)
 #   - service/navigation/navigate    (drive to chosen frontier)
 #   - service/navigation/navigate/status      (poll goal completion)
+#   - system/scene/list_objects      (optional; glass door detection)
 #
 # Doesn't subscribe to lidar / odom directly — collision avoidance is
 # the nav service's job, this skill only chooses goals. Same design

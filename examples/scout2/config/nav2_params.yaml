@@ -18,10 +18,10 @@ planner_server:
       goal_search_radius: 0.8         # 如果goal在障碍/膨胀区，在目标点周围0.8m搜索最近自由栅格，作为实际路径终点，实现停物体前方
     GridBased_known:
       tolerance: 2.0
-      allow_unknown: false
+      allow_unknown: true
     GridBased_unknown:
       tolerance: 2.0
-      allow_unknown: false
+      allow_unknown: true
     tf_buffer_duration: 0.5
 
 
@@ -54,11 +54,12 @@ controller_server:
       # RotationShim 参数
       # 启用终点旋转
       rotate_to_goal_heading: true
-      rotate_to_heading_angular_vel: 0.4
-      max_angular_accel: 0.8
+      rotate_to_heading_angular_vel: 0.5
+      max_angular_accel: 1.0
       # 滞回关系：进入阈值 > 退出阈值，避免反复进出旋转模式
-      angular_dist_threshold: 0.5
-      angular_disengage_threshold: 0.15
+      # 降低阈值以支持原地旋转（从0.5降到0.2弧度≈11.5°）
+      angular_dist_threshold: 0.2
+      angular_disengage_threshold: 0.1
       simulate_ahead_time: 1.0
       max_cost_threshold: 254.0
       rotate_to_heading_linear_vel: 0.0
@@ -154,7 +155,7 @@ local_costmap:
         plugin: "nav2_costmap_2d::InflationLayer"
         enabled: true
         # Must be >= inscribed_radius of the octagonal footprint (~0.25m)
-        inflation_radius: 0.45
+        inflation_radius: 0.70
         cost_scaling_factor: 10.0
 
 
@@ -199,7 +200,7 @@ global_costmap:
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         enabled: true
-        inflation_radius: 0.45
+        inflation_radius: 0.70
         cost_scaling_factor: 10.0
       always_send_full_costmap: true
 

@@ -51,7 +51,13 @@ class TaskHandle:
     last_progress_t: float = field(default_factory=time.time)
     cancel_requested: bool = False
     legs_completed: int = 0           # successful nav legs in this task
+    # Consecutive sweeps tracking (from backup fix for complete mapping)
+    consecutive_sweeps: int = 0       # consecutive 360° sweeps in place
     thread: Optional[threading.Thread] = None
+    # Failure tracking
+    consecutive_nav_fails: int = 0    # consecutive navigation failures
+    consecutive_no_target: int = 0    # iterations without a safe frontier
+    last_state_change_t: float = field(default_factory=time.time)
 
 
 class ExploreController:
@@ -61,14 +67,20 @@ class ExploreController:
     # Tunables
     FRONTIER_MIN_SIZE_CELLS = 3           # below this = noise, ignore
     DONE_QUIET_SECONDS = 30.0             # no progress for this long → done
-    PROGRESS_AREA_DELTA_M2 = 1.0          # area gain considered "progress"
+    PROGRESS_AREA_DELTA_M2 = 0.5          # area gain considered "progress"
     NAV_POLL_PERIOD_S = 1.0
     NAV_GOAL_TIMEOUT_S = 60.0             # per-leg cap; not the global timeout
     LOOP_QUIET_PERIOD_S = 2.0             # delay between consecutive goals
     # "Local exploration" radius: candidates farther than this from
     # current robot pose are skipped. Forces the skill to clear the
     # current room before jumping to a far-away frontier.
-    MAX_FRONTIER_DISTANCE_M = 6.0
+    # Increased to 15.0 from 6.0 to allow exploring across larger rooms
+    # and corridors without prematurely terminating.
+    MAX_FRONTIER_DISTANCE_M = 15.0
+    # Maximum consecutive sweeps in place before declaring exploration
+    # complete. Prevents infinite rotation loops when no safe frontiers
+    # are found but map keeps growing slightly.
+    MAX_CONSECUTIVE_SWEEPS = 5
     # Mark cells within this radius of the robot as "visited" each
     # time we update the pose. Used to deprioritise re-revisiting
     # already-cleared areas when multiple frontiers tie in score.
@@ -83,11 +95,26 @@ class ExploreController:
     # accumulating rotation drift and starving the global timeout.
     SWEEP_MIN_SECTORS = 6
     SWEEP_EVERY_N_LEGS = 3
+    # Failure thresholds: terminate task when consecutive failures
+    # exceed these limits to prevent infinite loops.
+    MAX_CONSECUTIVE_NAV_FAILS = 3        # navigation failures in a row
+    MAX_CONSECUTIVE_NO_TARGET = 5        # iterations without a safe frontier
+    STATE_STALE_TIMEOUT_S = 120.0        # state unchanged for this long → stuck
+    # Goal memory: remember failed navigation targets to avoid retrying.
+    FAILED_GOALS_MEMORY = 10             # max failed goals to remember
+    FAILED_GOAL_RADIUS_M = 0.5           # radius around failed goal to penalize
+    # Dynamic safe radius: adjust based on navigation success rate.
+    INITIAL_SAFE_RADIUS_M = 0.15
+    MIN_SAFE_RADIUS_M = 0.10
+    MAX_SAFE_RADIUS_M = 0.30
+    RADIUS_ADJUST_STEP = 0.05
+    RADIUS_EVAL_INTERVAL = 5             # evaluate success rate every N legs
 
     def __init__(self, *, map_topic: str,
                  nav_navigate_endpoint: str,
                  nav_status_endpoint: str,
-                 nav_cancel_endpoint: str):
+                 nav_cancel_endpoint: str,
+                 scene_list_objects_endpoint: Optional[str] = None):
         self.map_topic = map_topic
         # All three nav endpoints typically point at the same FastMCP
         # server (http://host:port/mcp/) — atlas hands us the URL each
@@ -99,6 +126,8 @@ class ExploreController:
             "status":   nav_status_endpoint,
             "cancel":   nav_cancel_endpoint,
         }
+        # Scene service endpoint for glass door detection (optional)
+        self._scene_endpoint = scene_list_objects_endpoint
         self._lock = threading.Lock()
         self._latest_map: Any = None     # latest OccupancyGrid msg
         self._latest_pose_xyyaw: Optional[Tuple[float, float, float]] = None
@@ -110,6 +139,17 @@ class ExploreController:
         # Used to decide whether to insert a 360° sweep at this cell
         # and to evaluate "fully observed" coverage at done-time.
         self._viewed_sectors: dict = {}
+        # Failed goals memory: set of (x, y) world coords that caused
+        # navigation failures. Used to penalize retrying same targets.
+        self._failed_goals: set = set()
+        # Glass door positions from scene service: list of (x, y) coords
+        self._glass_doors: list = []
+        self._last_glass_door_update: float = 0.0
+        # Dynamic safe radius for target safety checks.
+        self._current_safe_radius: float = self.INITIAL_SAFE_RADIUS_M
+        # Navigation success rate tracking for radius adjustment.
+        self._nav_success_count: int = 0
+        self._nav_total_count: int = 0
         self._task: Optional[TaskHandle] = None
 
         self._ros: Optional[dict] = None
@@ -237,6 +277,7 @@ class ExploreController:
             # Reset visited history for the new task so we don't carry
             # over stale cells from a prior incomplete run.
             self._visited_cells = set()
+            self._failed_goals = set()  # reset failed goals
             handle = TaskHandle(
                 task_id="exp-" + uuid.uuid4().hex[:8],
                 started_at=time.time(),
@@ -316,6 +357,17 @@ class ExploreController:
                                  f"hit {handle.timeout_s}s ceiling")
                 return
 
+            # Stale state check: if state hasn't changed for too long,
+            # the task is likely stuck (e.g., infinite rotation or
+            # repeated failures without progress).
+            if time.time() - handle.last_state_change_t > self.STATE_STALE_TIMEOUT_S:
+                self._terminate(handle, "error",
+                                f"state stale for {self.STATE_STALE_TIMEOUT_S:.0f}s — task stuck")
+                return
+
+            # Update glass door detections from scene service
+            self._update_glass_doors()
+
             # Get latest map + pose.
             with self._lock:
                 latest = self._latest_map
@@ -340,10 +392,17 @@ class ExploreController:
                 continue
             with self._lock:
                 visited_snapshot = set(self._visited_cells)
+                failed_snapshot = set(self._failed_goals)
+                safe_radius = self._current_safe_radius
+                glass_doors_snapshot = list(self._glass_doors)
             target = pick_target(gv, pose,
                                   min_size=self.FRONTIER_MIN_SIZE_CELLS,
                                   max_distance_m=self.MAX_FRONTIER_DISTANCE_M,
-                                  visited_cells=visited_snapshot)
+                                  visited_cells=visited_snapshot,
+                                  failed_goals=failed_snapshot,
+                                  failed_goal_radius_m=self.FAILED_GOAL_RADIUS_M,
+                                  safe_radius_m=safe_radius,
+                                  glass_doors=glass_doors_snapshot)
 
             # Done check: declare done when no progress for
             # DONE_QUIET_SECONDS AND either (a) no frontiers remain at
@@ -369,11 +428,36 @@ class ExploreController:
                 # new safe frontier candidates appear next iteration.
                 # Without this, we'd just sit and the map would never
                 # grow because nav-to-nowhere doesn't move the robot.
-                handle.detail = (f"no safe frontier; "
+                handle.consecutive_no_target += 1
+                handle.consecutive_nav_fails = 0  # reset other counter
+
+                # Check if exceeded threshold
+                if handle.consecutive_no_target >= self.MAX_CONSECUTIVE_NO_TARGET:
+                    self._terminate(handle, "error",
+                                    f"no safe frontier for {handle.consecutive_no_target} iterations")
+                    return
+
+                # Consecutive sweeps limit: prevent infinite rotation loops
+                # when no safe frontiers are found but map keeps growing slightly.
+                handle.consecutive_sweeps += 1
+                if handle.consecutive_sweeps > self.MAX_CONSECUTIVE_SWEEPS:
+                    self._terminate(handle, "done",
+                                    f"exhausted {self.MAX_CONSECUTIVE_SWEEPS} "
+                                    f"consecutive sweeps; area={cur_area:.1f}m²")
+                    return
+
+                handle.detail = (f"no safe frontier ({handle.consecutive_no_target}/{self.MAX_CONSECUTIVE_NO_TARGET}); "
                                   f"spinning to expand FOV ({n_frontiers} "
                                   f"raw clusters detected)")
                 log.info("[%s] %s", handle.task_id, handle.detail)
                 self._sweep_360(handle, deadline=deadline)
+                # Reset progress timer after sweep — 360° rotation is active
+                # exploration behavior and should count as progress.
+                # Without this, DONE_QUIET_SECONDS fires prematurely when
+                # map grows slowly during rotation.
+                handle.last_progress_t = time.time()
+                # Reset consecutive sweeps counter after successful sweep
+                handle.consecutive_sweeps = 0
                 # After the spin, re-evaluate immediately rather than
                 # sleeping — the map should now be richer.
                 continue
@@ -399,12 +483,43 @@ class ExploreController:
             if not ok:
                 # Nav failed for this leg — that's not fatal, the next
                 # frontier might be reachable. Just log + continue.
-                log.warning("[%s] nav leg failed: %s", handle.task_id, msg)
-                handle.detail = f"nav leg failed ({msg}); trying next frontier"
+                handle.consecutive_nav_fails += 1
+                handle.consecutive_no_target = 0  # reset other counter
+
+                # Record failed goal to avoid retrying same target
+                if handle.last_target_xy:
+                    self._failed_goals.add(handle.last_target_xy)
+                    if len(self._failed_goals) > self.FAILED_GOALS_MEMORY:
+                        self._failed_goals.pop()
+
+                # Update success rate tracking
+                self._nav_total_count += 1
+                self._adjust_safe_radius()
+
+                # Check if exceeded threshold
+                if handle.consecutive_nav_fails >= self.MAX_CONSECUTIVE_NAV_FAILS:
+                    self._terminate(handle, "error",
+                                    f"too many consecutive nav fails ({handle.consecutive_nav_fails})")
+                    return
+
+                log.warning("[%s] nav leg failed (%d/%d): %s",
+                            handle.task_id,
+                            handle.consecutive_nav_fails,
+                            self.MAX_CONSECUTIVE_NAV_FAILS,
+                            msg)
+                handle.detail = f"nav leg failed ({handle.consecutive_nav_fails}/{self.MAX_CONSECUTIVE_NAV_FAILS}); trying next frontier"
                 time.sleep(self.LOOP_QUIET_PERIOD_S)
                 continue
 
             handle.legs_completed += 1
+            handle.consecutive_nav_fails = 0    # reset nav failure counter
+            handle.consecutive_no_target = 0    # reset no-target counter
+            handle.consecutive_sweeps = 0       # reset sweep counter after successful nav
+
+            # Update success rate tracking
+            self._nav_success_count += 1
+            self._nav_total_count += 1
+            self._adjust_safe_radius()
 
             # 360° sweep to fill camera viewing-angle coverage at the
             # leg endpoint. Two triggers:
@@ -422,6 +537,7 @@ class ExploreController:
         with self._lock:
             handle.state = state
             handle.detail = detail
+            handle.last_state_change_t = time.time()
         log.info("[%s] task %s: %s", handle.task_id, state, detail)
 
     def _wait_for_map(self, timeout_s: float) -> Any:
@@ -496,19 +612,28 @@ class ExploreController:
     # endpoint URL for each contract; in practice all three point at
     # the same FastMCP server, but we keep them separate so a future
     # multi-nav setup still works.
-    def _ensure_mcp_client(self):
-        if self._mcp_client is not None:
-            return
-        from fastmcp import Client
-        # All three endpoints typically share the same base URL.
-        url = self._nav_endpoints["navigate"]
-        self._mcp_client = Client(url)
+    def _ensure_mcp_client(self, endpoint: Optional[str] = None):
+        """Get or create MCP client for given endpoint.
+        If endpoint is None, use nav endpoint (default)."""
+        if endpoint is None:
+            if self._mcp_client is not None:
+                return self._mcp_client
+            from fastmcp import Client
+            url = self._nav_endpoints["navigate"]
+            self._mcp_client = Client(url)
+            return self._mcp_client
+        else:
+            # Create client for custom endpoint (e.g., scene service)
+            from fastmcp import Client
+            return Client(endpoint)
 
-    async def _mcp_call(self, tool: str, args: dict) -> dict:
+    async def _mcp_call(self, tool: str, args: dict,
+                        endpoint: Optional[str] = None) -> dict:
         """Single MCP tool round-trip. Async because fastmcp's client
-        is async — we await inside a fresh event loop in the caller."""
-        self._ensure_mcp_client()
-        async with self._mcp_client as c:
+        is async — we await inside a fresh event loop in the caller.
+        If endpoint is provided, use it instead of default nav endpoint."""
+        client = self._ensure_mcp_client(endpoint)
+        async with client as c:
             result = await c.call_tool(tool, args)
             # FastMCP returns a list of TextContent; the tool returned
             # JSON-serialised dict in its sole entry.
@@ -521,10 +646,11 @@ class ExploreController:
             except Exception:
                 return {"raw": txt}
 
-    def _mcp_call_sync(self, tool: str, args: dict) -> dict:
+    def _mcp_call_sync(self, tool: str, args: dict,
+                       endpoint: Optional[str] = None) -> dict:
         import asyncio
         try:
-            return asyncio.run(self._mcp_call(tool, args))
+            return asyncio.run(self._mcp_call(tool, args, endpoint))
         except Exception as e:  # noqa: BLE001
             log.warning("mcp call %s failed: %s", tool, e)
             return {}
@@ -575,6 +701,89 @@ class ExploreController:
 
     def _nav_cancel_rpc(self, run_id: str = "") -> None:
         self._mcp_call_sync("cancel", {"run_id": run_id})
+
+    def _adjust_safe_radius(self) -> None:
+        """Adjust safe radius based on navigation success rate.
+        High success rate → smaller radius (more aggressive).
+        Low success rate → larger radius (more conservative).
+        Only evaluates every RADIUS_EVAL_INTERVAL legs."""
+        if self._nav_total_count < self.RADIUS_EVAL_INTERVAL:
+            return
+        success_rate = self._nav_success_count / self._nav_total_count
+        if success_rate > 0.8:
+            self._current_safe_radius = max(
+                self.MIN_SAFE_RADIUS_M,
+                self._current_safe_radius - self.RADIUS_ADJUST_STEP
+            )
+            log.info("safe radius decreased to %.2f (success rate: %.1f%%)",
+                     self._current_safe_radius, success_rate * 100)
+        elif success_rate < 0.5:
+            self._current_safe_radius = min(
+                self.MAX_SAFE_RADIUS_M,
+                self._current_safe_radius + self.RADIUS_ADJUST_STEP
+            )
+            log.info("safe radius increased to %.2f (success rate: %.1f%%)",
+                     self._current_safe_radius, success_rate * 100)
+        # Reset counters
+        self._nav_success_count = 0
+        self._nav_total_count = 0
+
+    # ── Glass door detection ─────────────────────────────────────────
+    def _update_glass_doors(self) -> None:
+        """Query scene service for glass door detections. Updates
+        self._glass_doors with list of (x, y) world coordinates.
+        Called periodically during exploration loop."""
+        if self._scene_endpoint is None:
+            return
+        # Throttle: only query every 5 seconds
+        now = time.time()
+        if now - self._last_glass_door_update < 5.0:
+            return
+        self._last_glass_door_update = now
+
+        try:
+            # Call scene service's list_objects MCP tool
+            resp = self._mcp_call_sync(
+                "list_objects",
+                {},
+                endpoint=self._scene_endpoint
+            )
+            if not resp:
+                return
+
+            # Extract glass door objects from response
+            objects = resp.get("objects", [])
+            glass_doors = []
+            for obj in objects:
+                if obj.get("cls") == "glass_door":
+                    pose = obj.get("pose", {})
+                    x = pose.get("x", 0.0)
+                    y = pose.get("y", 0.0)
+                    glass_doors.append((x, y))
+
+            with self._lock:
+                self._glass_doors = glass_doors
+            if glass_doors:
+                log.info("detected %d glass doors", len(glass_doors))
+        except Exception as e:  # noqa: BLE001
+            log.debug("glass door query failed: %s", e)
+
+    def _is_glass_door_nearby(self, x: float, y: float,
+                               radius: float = 1.0) -> bool:
+        """Check if a target position is near any detected glass door.
+        Used to penalize frontier scores near glass doors."""
+        with self._lock:
+            glass_doors = list(self._glass_doors)
+        for gx, gy in glass_doors:
+            dist = ((x - gx) ** 2 + (y - gy) ** 2) ** 0.5
+            if dist < radius:
+                return True
+        return False
+
+    def _get_glass_doors(self) -> list:
+        """Return current glass door positions. Thread-safe."""
+        with self._lock:
+            return list(self._glass_doors)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────

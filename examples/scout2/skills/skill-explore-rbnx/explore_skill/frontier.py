@@ -33,6 +33,32 @@ import numpy as np
 OCC_THRESH = 50  # ≥ this counts as obstacle (matches nav2 convention)
 
 
+def _nearest_obstacle_distance(gv: GridView, wx: float, wy: float) -> float:
+    """Approximate distance from (wx, wy) to nearest obstacle cell.
+
+    Scans a 2m × 2m patch around the point for occupied cells (≥ OCC_THRESH).
+    Returns a large number if no obstacle is nearby — this is a soft
+    heuristic only, used to penalise frontier scores, not to reject goals.
+
+    Performance note: the patch is limited to 20 cells (~2m at 0.1m
+    resolution) so the scan is fast even at 1 Hz frontier evaluation.
+    """
+    cx, cy = gv.world_to_cell(wx, wy)
+    r = 20  # search radius in cells (~2m at 0.1m resolution)
+    y0, y1 = max(0, cy - r), min(gv.height, cy + r + 1)
+    x0, x1 = max(0, cx - r), min(gv.width, cx + r + 1)
+    patch = gv.data[y0:y1, x0:x1]
+    obstacle_indices = np.argwhere(patch >= OCC_THRESH)
+    if obstacle_indices.size == 0:
+        return 10.0  # large number if no obstacle nearby
+    # Find nearest cell
+    min_dist = float("inf")
+    for oy, ox in obstacle_indices:
+        d = ((ox - cx) ** 2 + (oy - cy) ** 2) ** 0.5
+        min_dist = min(min_dist, d)
+    return min_dist * gv.resolution  # convert to meters
+
+
 @dataclass
 class GridView:
     """Numpy-friendly view of nav_msgs/OccupancyGrid."""
@@ -184,11 +210,16 @@ def score_clusters(clusters: List[FrontierCluster], gv: GridView,
                     robot_xy: Tuple[float, float], *,
                     max_distance_m: float = 8.0,
                     visited_cells: Optional[set] = None,
-                    visited_penalty_m: float = 1.5
+                    visited_penalty_m: float = 1.5,
+                    failed_goals: Optional[set] = None,
+                    failed_goal_radius_m: float = 0.5,
+                    safe_radius_m: float = 0.15,
+                    glass_doors: Optional[list] = None,
+                    glass_door_radius_m: float = 1.0
                     ) -> List[Tuple[float, FrontierCluster]]:
     """Score frontiers and rank descending. Score formula:
 
-        score = info_gain / (travel + visited_penalty + 1)
+        score = info_gain / (travel + visited_penalty + obstacle_penalty + glass_penalty + 1)
 
     With these guards:
       - travel > max_distance_m → cluster dropped entirely (local
@@ -196,9 +227,17 @@ def score_clusters(clusters: List[FrontierCluster], gv: GridView,
       - centroid inside lethal halo → dropped (is_target_safe()).
       - centroid in/near a visited cell → travel penalty added so
         re-visiting unexplored fringes is preferred.
+      - centroid near a failed goal → score heavily penalized.
+      - centroid near obstacle → obstacle_penalty added so the planner
+        avoids destinations dangerously close to walls.
+      - centroid near glass door → glass_penalty added to avoid
+        planning paths through glass doors.
 
     visited_cells is a set of (cx, cy) cell-space coordinates the
     skill has already driven through; the controller maintains it.
+    failed_goals is a set of (x, y) world coords that caused nav failures.
+    safe_radius_m is the dynamic radius for safety checks.
+    glass_doors is a list of (x, y) world coords of detected glass doors.
     """
     scored = []
     for c in clusters:
@@ -210,7 +249,7 @@ def score_clusters(clusters: List[FrontierCluster], gv: GridView,
         travel = ((wx - robot_xy[0]) ** 2 + (wy - robot_xy[1]) ** 2) ** 0.5
         if travel > max_distance_m:
             continue                             # too far — skip
-        if not is_target_safe(gv, wx, wy):
+        if not is_target_safe(gv, wx, wy, safe_radius_m=safe_radius_m):
             continue                             # would crash — skip
 
         penalty = 0.0
@@ -225,7 +264,39 @@ def score_clusters(clusters: List[FrontierCluster], gv: GridView,
                 if penalty:
                     break
 
-        score = c_world.size / (travel + penalty + 1.0)
+        # Penalize targets near failed navigation goals
+        fail_penalty = 0.0
+        if failed_goals:
+            for fg_x, fg_y in failed_goals:
+                dist = ((wx - fg_x) ** 2 + (wy - fg_y) ** 2) ** 0.5
+                if dist < failed_goal_radius_m:
+                    fail_penalty = 10.0  # heavy penalty, not skip
+                    break
+
+        # Obstacle proximity penalty: prefer frontiers farther from walls.
+        # Frontier cells sit on the free/unknown boundary, but some are
+        # right next to mapped obstacles (walls). The inflation layer will
+        # push the actual endpoint inward, potentially causing planning
+        # failures. This penalty biases selection toward safer, more open
+        # frontiers.
+        obstacle_penalty = 0.0
+        dist_to_obstacle = _nearest_obstacle_distance(gv, wx, wy)
+        if dist_to_obstacle < 1.0:
+            # Linear penalty: 0 at 1m, 1.0 at 0m
+            obstacle_penalty = max(0.0, 1.0 - dist_to_obstacle)
+
+        # Glass door penalty: avoid frontiers near detected glass doors.
+        # Glass doors are transparent to lidar but impassable for the robot.
+        # Without this penalty, the planner may route through glass doors.
+        glass_penalty = 0.0
+        if glass_doors:
+            for gx, gy in glass_doors:
+                dist = ((wx - gx) ** 2 + (wy - gy) ** 2) ** 0.5
+                if dist < glass_door_radius_m:
+                    # Heavy penalty proportional to closeness
+                    glass_penalty = max(glass_penalty, 10.0 * (1.0 - dist / glass_door_radius_m))
+
+        score = c_world.size / (travel + penalty + fail_penalty + obstacle_penalty + glass_penalty + 1.0)
         scored.append((score, c_world))
     scored.sort(key=lambda t: t[0], reverse=True)
     return scored
@@ -234,7 +305,12 @@ def score_clusters(clusters: List[FrontierCluster], gv: GridView,
 def pick_target(gv: GridView, robot_xy: Tuple[float, float], *,
                  min_size: int = 3,
                  max_distance_m: float = 8.0,
-                 visited_cells: Optional[set] = None
+                 visited_cells: Optional[set] = None,
+                 failed_goals: Optional[set] = None,
+                 failed_goal_radius_m: float = 0.5,
+                 safe_radius_m: float = 0.15,
+                 glass_doors: Optional[list] = None,
+                 glass_door_radius_m: float = 1.0
                  ) -> Optional[FrontierCluster]:
     """End-to-end convenience. Returns None if no SAFE frontier in
     range — caller may declare done."""
@@ -246,7 +322,12 @@ def pick_target(gv: GridView, robot_xy: Tuple[float, float], *,
         return None
     scored = score_clusters(clusters, gv, robot_xy,
                              max_distance_m=max_distance_m,
-                             visited_cells=visited_cells)
+                             visited_cells=visited_cells,
+                             failed_goals=failed_goals,
+                             failed_goal_radius_m=failed_goal_radius_m,
+                             safe_radius_m=safe_radius_m,
+                             glass_doors=glass_doors,
+                             glass_door_radius_m=glass_door_radius_m)
     return scored[0][1] if scored else None
 
 

@@ -37,11 +37,18 @@ REQUIRED_INPUTS = {
     "nav_cancel":    ("robonix/service/navigation/navigate/cancel", "mcp"),
 }
 
+# Optional inputs: used when available for enhanced features (e.g., glass door
+# detection). Skill works without these but with reduced capability.
+OPTIONAL_INPUTS = {
+    "scene_list_objects": ("robonix/system/scene/list_objects", "mcp"),
+}
+
 
 def resolve_inputs(deadline_s: float = 60.0) -> dict[str, str]:
     resolved: dict[str, str] = {}
     deadline = time.time() + deadline_s
     while time.time() < deadline:
+        # Resolve required inputs
         for key, (cid, transport) in REQUIRED_INPUTS.items():
             if key in resolved:
                 continue
@@ -58,16 +65,37 @@ def resolve_inputs(deadline_s: float = 60.0) -> dict[str, str]:
                 resolved[key] = ep
                 log.info("resolved %s [%s] → %s", cid, transport, ep)
         if len(resolved) == len(REQUIRED_INPUTS):
-            return resolved
+            break
         time.sleep(2.0)
-    missing = [k for k in REQUIRED_INPUTS if k not in resolved]
-    raise RuntimeError(
-        f"explore skill cannot find dependencies on atlas: missing "
-        f"{[REQUIRED_INPUTS[k][0] for k in missing]}. The skill needs a "
-        f"running mapping service (occupancy_grid) and navigation service "
-        f"(navigate with status/cancel) before it can start. There is "
-        f"intentionally no hardcoded fallback — packaging-spec invariant #1."
-    )
+    else:
+        missing = [k for k in REQUIRED_INPUTS if k not in resolved]
+        raise RuntimeError(
+            f"explore skill cannot find dependencies on atlas: missing "
+            f"{[REQUIRED_INPUTS[k][0] for k in missing]}. The skill needs a "
+            f"running mapping service (occupancy_grid) and navigation service "
+            f"(navigate with status/cancel) before it can start. There is "
+            f"intentionally no hardcoded fallback — packaging-spec invariant #1."
+        )
+
+    # Resolve optional inputs (best-effort, short timeout)
+    optional_deadline = time.time() + 10.0
+    for key, (cid, transport) in OPTIONAL_INPUTS.items():
+        if key in resolved:
+            continue
+        try:
+            cap_view = ATLAS.find_unique_capability(
+                contract_id=cid, transport=transport,
+            )
+            ch = explore_skill.connect_capability(cap_view, cid, transport)
+            ep = ch.endpoint
+            ch.close()
+            if ep:
+                resolved[key] = ep
+                log.info("resolved optional %s [%s] → %s", cid, transport, ep)
+        except Exception:  # noqa: BLE001
+            log.info("optional dependency %s not available, skipping", key)
+
+    return resolved
 
 
 # ── MCP tools (typed against codegen Request/Response) ──────────────────────
@@ -181,6 +209,7 @@ def activate():
         nav_navigate_endpoint=inputs["nav_navigate"],
         nav_status_endpoint=inputs["nav_status"],
         nav_cancel_endpoint=inputs["nav_cancel"],
+        scene_list_objects_endpoint=inputs.get("scene_list_objects"),
     )
     ctrl.start_runtime()
     log.info("CMD_ACTIVATE ok — controller running")

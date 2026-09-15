@@ -46,6 +46,7 @@ _GATE_RADIUS_M: dict[str, float] = {
     "table": 1.00,
     "chair": 0.80,
     "door": 1.50,
+    "glass_door": 1.50,
     "person": 1.50,
     "robot": 1.00,
 }

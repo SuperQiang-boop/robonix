@@ -39,12 +39,21 @@ object you see that the robot might interact with or need to avoid. For each
 object, report:
 
   - cls: a single lowercase class name from this preferred set when applicable
-    (table, chair, door, cup, bottle, tray, tool, person, robot,
+    (table, chair, door, glass_door, cup, bottle, tray, tool, person, robot,
     monitor, keyboard, book, plant, box, trash_bin); otherwise pick the
     most specific common noun.
   - confidence: 0.0 to 1.0 (how sure you are it's that class).
   - bbox_2d: image-pixel [x_min, y_min, x_max, y_max] integers.
   - approximate_depth_m: rough metres from the camera, your best guess.
+
+IMPORTANT: Pay special attention to glass doors. They are characterized by:
+- Transparent/reflective surface
+- Metal frame around the edges
+- Door handle
+- Reflection of the room/objects
+- Often appear as a slightly tinted or reflective area with visible frame
+
+Use "glass_door" class for glass doors, not "door".
 
 Respond ONLY with a JSON object of the form:
   {"detections": [{"cls": "...", "confidence": 0.83,
