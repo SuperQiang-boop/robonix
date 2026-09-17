@@ -17,15 +17,15 @@ env:
   RMW_IMPLEMENTATION: rmw_fastrtps_cpp
 
   # G1 network interface (usually the ethernet port to the robot)
-  G1_NETWORK_INTERFACE: "enp7s0"
+  G1_NETWORK_INTERFACE: "enp129s0"
 
   # Motion gate — set to false for read-only / operator-supervised mode
-  G1_ALLOW_MOTION: "${G1_ALLOW_MOTION}"
+  G1_ALLOW_MOTION: "true"
   G1_ARM_ACTIONS_ENABLED: "true"
   G1_ARM_ACTION_ACK: "G1_ARM_ACTIONS_APPROVED"
 
   # Mapping directory
-  MAPPING_MAPS_DIR: /home/szh/robonix/examples/robot-unitree-g1/third_party/service-map-rbnx/rbnx-build/data/maps
+  MAPPING_MAPS_DIR: /data/robonix/examples/robot-unitree-g1/third_party/service-map-rbnx/rbnx-build/data/maps
 
   # Scene data directories
   SCENE_OBJECT_MEMORY_DB: ${ROBONIX_DEPLOY_DIR}/rbnx-build/data/scene/objects.db
@@ -43,8 +43,8 @@ env:
 
   # The G1 is CPU-only (no NVIDIA GPU in the torso). Force CPU backends
   # for Scene and any inference pipelines.
-  ROBONIX_FORCE_CPU: "1"
-  SCENE_CG_FORCE_CPU: "1"
+  ROBONIX_FORCE_CPU: "0"
+  SCENE_CG_FORCE_CPU: "0"
 
   SCENE_MAP_ID: "${G1_MAP_ID}"
 
@@ -103,10 +103,10 @@ primitive:
       twist_in_topic: /cmd_vel
       odom_topic: /odom
       odom_source: base_controller
-      publish_odom_tf: true
+      publish_odom_tf: false
       joint_state_topic: /joint_states
       odom_frame: odom
-      base_frame: base_link
+      base_frame: base_footprint
       imu_frame: imu
       velocity_frame: odom
       network_interface: ${G1_NETWORK_INTERFACE}
@@ -141,13 +141,12 @@ primitive:
   # Follows the same pattern as the ranger_mini_v3 manifest.
   # ============================================================
   - name: mid360_lidar
-    url: https://github.com/syswonder/primitive-livox-mid360-lidar-rbnx
-    branch: main
+    path: ${ROBONIX_DEPLOY_DIR}/primitives/primitive-livox-mid360-lidar-rbnx
     config:
       lidar_ip: 192.168.123.120
-      host_ip: 192.168.123.100
+      host_ip: 192.168.123.220
       xfer_format: 0
-      frame_id: mid360_link
+      frame_id: mid360_upright
       # Three attempts including cleanup stay below Soma's 90 s INIT deadline.
       sentinel_timeout_s: 20.0
 
@@ -155,15 +154,21 @@ primitive:
     url: https://github.com/syswonder/primitive-livox-mid360-imu-rbnx
     branch: main
     config:
+      imu_topic: /livox/imu
       sentinel_timeout_s: 45.0
 
   - name: realsense_camera
-    url: https://github.com/syswonder/primitive-intel-realsense_d435i-camera-rbnx
-    branch: main
+    path: ${ROBONIX_DEPLOY_DIR}/primitives/primitive-intel-realsense_d435i-camera-rbnx
     config:
       camera_name: camera
+      base_frame_id: d435_link
+      # Publish the robot-to-RGB-camera transform required by Scene. These
+      # names match the TF frames verified on the G1 ROS graph.
+      extrinsics_topic: /camera/extrinsics
+      extrinsics_base_frame: base_footprint
+      extrinsics_camera_frame: camera_color_optical_frame
       depth_profile: 640x480x15
-      depth_topic: /camera/depth/image_rect_raw
+      depth_topic: /camera/aligned_depth_to_color/image_raw
       enable_imu: false
       sentinel_timeout_s: 45.0
 
@@ -193,20 +198,22 @@ service:
     path: ${ROBONIX_DEPLOY_DIR}/third_party/service-map-rbnx
     config:
       algo: rtabmap
-      base_frame: base_link
+      base_frame: base_footprint
       odom_frame: odom
       use_sim_time: false
       webui_host: 127.0.0.1
       webui_port: 8091
       map_id: "${G1_MAP_ID}"
       map_mode: mapping
-      deskew_lidar: true
+      gravity_alignment: true
+      imu_acceleration_scale: 9.80665
+      deskew_lidar: false
       dense_scan_2d: true
       dense_scan_refine_neighbors: true
       params_file: config/rtabmap_params.yaml
       rtabmap_params:
         Reg/Strategy: 1
-        Reg/Force3DoF: true
+        Reg/Force3DoF: false
         RGBD/NeighborLinkRefining: true
         RGBD/ProximityBySpace: false
         RGBD/ProximityPathMaxNeighbors: 0
@@ -217,11 +224,11 @@ service:
         Icp/CorrespondenceRatio: 0.20
         Icp/MaxTranslation: 0.10
         Icp/MaxRotation: 0.10
-      rtabmap_inputs: [lidar, imu, odom]
+      rtabmap_inputs: [lidar, imu]
       sensor_providers:
         lidar3d: mid360_lidar
         imu: mid360_imu
-        odom: g1_chassis
+        # Internal ICP is the sole odom TF publisher.
         # rgb: realsense_camera
         # depth: realsense_camera
 
@@ -238,16 +245,16 @@ service:
       velocity_output_topic: /cmd_vel
       use_sim_time: false
       action_wait_s: 90.0
+      topic_remap:
+        odom: /rtabmap/odom
       provider_ids:
         map: mapping
-        odom: g1_chassis
         scan_cloud: mid360_lidar
       scan_projection:
         enabled: true
-        target_frame: base_link
-        # G1 humanoid: tall torso and legs — keep obstacles below the
-        # foot level while rejecting most floor returns.
-        min_height_m: -0.25
+        target_frame: base_footprint
+        # Height above the nominal sole plane; exclude floor returns.
+        min_height_m: 0.05
         max_height_m: 1.50
         range_max_m: 12.0
         self_filter_margin_m: 0.05
