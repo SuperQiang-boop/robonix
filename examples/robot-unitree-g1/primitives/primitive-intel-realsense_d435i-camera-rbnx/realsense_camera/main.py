@@ -74,6 +74,9 @@ _latest_rgb_jpeg: bytes | None = None
 _latest_depth_jpeg: bytes | None = None
 _rgb_frame_id: str = "camera_435i_color_optical_frame"
 _extrinsics_pub = None
+_extrinsics_tf_broadcaster = None
+_extrinsics_stop: threading.Event | None = None
+_extrinsics_thread: threading.Thread | None = None
 _depth_frame_id: str = "camera_435i_depth_optical_frame"
 
 
@@ -90,13 +93,16 @@ def _spawn_realsense(cfg: dict) -> None:
         f"enable_accel:={'true' if enable_imu else 'false'}",
         f"align_depth.enable:={'true' if cfg.get('align_depth', True) else 'false'}",
         f"enable_sync:={'true' if cfg.get('enable_sync', True) else 'false'}",
-        "publish_tf:=true",  # rtabmap consumes camera_link → optical_frame TFs
+        "publish_tf:=true",  # publish the configured camera-base → optical TFs
         f"spatial_filter.enable:={'true' if cfg.get('spatial_filter', True) else 'false'}",
         f"temporal_filter.enable:={'true' if cfg.get('temporal_filter', True) else 'false'}",
         f"hole_filling_filter.enable:={'true' if cfg.get('hole_filling_filter', False) else 'false'}",
         f"rgb_camera.color_profile:={cfg.get('rgb_profile', '640x480x30')}",
         f"depth_module.depth_profile:={cfg.get('depth_profile', '848x480x30')}",
     ]
+    base_frame_id = str(cfg.get("base_frame_id", "")).strip()
+    if base_frame_id:
+        args.append(f"base_frame_id:={base_frame_id}")
     if enable_imu:
         args.append("unite_imu_method:=2")
     log.info("spawning realsense (cam=%s)", cam)
@@ -258,33 +264,43 @@ def depth_snapshot(msg: Empty) -> Image:
 
 def _publish_extrinsics_when_ready(
     base_frame: str, camera_frame: str, topic: str,
+    publisher, stop_event: threading.Event,
 ) -> None:
     """Publish the static robot-to-camera TF as the Atlas extrinsics contract.
 
-    TF may come up after the camera process, so this waits in a daemon thread.
+    Retry in a daemon thread until TF becomes available or shutdown is requested.
+    Log the specific TF failure at most once every ten seconds.
     Failure is non-fatal: RGB, depth, and snapshot capabilities still run.
     """
+    listener = None
     try:
-        from rclpy.duration import Duration  # type: ignore
         from rclpy.time import Time  # type: ignore
         from tf2_ros import Buffer, TransformListener  # type: ignore
         from robonix_api.ros import RosBackend
 
         node = RosBackend.get().node
         buffer = Buffer()
-        TransformListener(buffer, node)
-        deadline = time.monotonic() + 60.0
-        while time.monotonic() < deadline:
+        listener = TransformListener(buffer, node)
+        next_log_at = 0.0
+        while not stop_event.is_set():
             try:
                 transform = buffer.lookup_transform(
-                    base_frame, camera_frame, Time(), Duration(seconds=0.5),
+                    base_frame, camera_frame, Time(),
                 )
-            except Exception:  # noqa: BLE001
-                time.sleep(0.5)
+            except Exception as exc:  # noqa: BLE001
+                now = time.monotonic()
+                if now >= next_log_at:
+                    log.warning(
+                        "waiting for camera extrinsics TF %s -> %s: %s: %s",
+                        base_frame, camera_frame, type(exc).__name__, exc,
+                    )
+                    next_log_at = now + 10.0
+                stop_event.wait(0.5)
                 continue
+            if stop_event.is_set():
+                return
             transform.header.frame_id = base_frame
             transform.child_frame_id = camera_frame
-            publisher = _extrinsics_pub
             if publisher is not None:
                 publisher.publish(transform)
                 t = transform.transform.translation
@@ -294,20 +310,53 @@ def _publish_extrinsics_when_ready(
                     base_frame, camera_frame, topic, t.x, t.y, t.z,
                 )
             return
-        log.warning(
-            "camera extrinsics unavailable after 60s; TF chain %s -> %s "
-            "was not resolvable",
-            base_frame, camera_frame,
-        )
     except Exception as exc:  # noqa: BLE001
-        log.warning("camera extrinsics publisher unavailable: %s", exc)
+        log.exception("camera extrinsics publisher unavailable: %s", exc)
+    finally:
+        if listener is not None:
+            listener.unregister()
+
+
+def _configured_extrinsics(cfg: dict, base_frame: str, camera_frame: str):
+    """Build a static TransformStamped from the configured camera mount.
+
+    The manifest may provide ``extrinsics`` as flat ``x/y/z/qx/qy/qz/qw``
+    values or as nested ``translation`` and ``rotation`` mappings. Returning
+    ``None`` leaves the existing TF lookup fallback active.
+    """
+    values = cfg.get("extrinsics")
+    if not isinstance(values, dict):
+        return None
+    translation = values.get("translation", values)
+    rotation = values.get("rotation", values)
+    if not isinstance(translation, dict) or not isinstance(rotation, dict):
+        log.warning("ignoring malformed camera extrinsics configuration")
+        return None
+    try:
+        from geometry_msgs.msg import TransformStamped  # type: ignore
+
+        msg = TransformStamped()
+        msg.header.frame_id = base_frame
+        msg.child_frame_id = camera_frame
+        msg.transform.translation.x = float(translation["x"])
+        msg.transform.translation.y = float(translation["y"])
+        msg.transform.translation.z = float(translation["z"])
+        msg.transform.rotation.x = float(rotation["qx"])
+        msg.transform.rotation.y = float(rotation["qy"])
+        msg.transform.rotation.z = float(rotation["qz"])
+        msg.transform.rotation.w = float(rotation["qw"])
+        return msg
+    except (KeyError, TypeError, ValueError) as exc:
+        log.warning("ignoring incomplete camera extrinsics configuration: %s", exc)
+        return None
 
 
 # ── lifecycle ────────────────────────────────────────────────────────────────
 @cap.on_init
 def init(cfg: dict):
     """REGISTERED → INACTIVE: start streams and publish camera contracts."""
-    global _extrinsics_pub
+    global _extrinsics_pub, _extrinsics_tf_broadcaster
+    global _extrinsics_stop, _extrinsics_thread
     cam = cfg.get("camera_name", "camera_435i")
     rgb_topic = cfg.get("rgb_topic", f"/{cam}/color/image_raw")
     depth_topic = cfg.get(
@@ -324,7 +373,7 @@ def init(cfg: dict):
     try:
         _spawn_realsense(cfg)
     except Exception as e:  # noqa: BLE001
-        log.warning("spawn realsense failed; continuing without camera: %s", e)
+        return Err(f"spawn realsense failed: {e}")
 
     # Subscribe RGB + depth via robonix_api (declare=False — we declare
     # the ros2 topic_out interfaces explicitly below, after sentinel passes).
@@ -339,14 +388,10 @@ def init(cfg: dict):
         callback=_on_depth, qos="best_effort", declare=False,
     )
 
-    # Do not gate SOMA initialization on camera availability.  The camera may
-    # be disconnected or slow to start; keep the process and topic contracts
-    # alive so the rest of the robot can start, and report the condition.
+    # Gate INIT on first RGB arriving — webots/jetson cold-boot can lag.
     if not cap.wait_for_topic(rgb_topic, "Image", sentinel_timeout):
-        log.warning(
-            "no Image on %s within %.1fs; continuing without camera frames",
-            rgb_topic, sentinel_timeout,
-        )
+        _kill_realsense()
+        return Err(f"no Image on {rgb_topic} within {sentinel_timeout:.1f}s")
 
     cap.declare_ros2_topic(
         "robonix/primitive/camera/rgb",
@@ -372,11 +417,39 @@ def init(cfg: dict):
         msg_type=TransformStamped,
         qos="latched",
     )
-    threading.Thread(
-        target=_publish_extrinsics_when_ready,
-        args=(extrinsics_base_frame, extrinsics_camera_frame, extrinsics_topic),
-        daemon=True,
-    ).start()
+    configured = _configured_extrinsics(
+        cfg, extrinsics_base_frame, extrinsics_camera_frame,
+    )
+    if configured is not None:
+        # The contract is latched; a zero ROS stamp is valid for this static
+        # transform and avoids coupling publication to /clock startup.
+        _extrinsics_pub.publish(configured)
+        try:
+            from robonix_api.ros import RosBackend
+            from tf2_ros import StaticTransformBroadcaster  # type: ignore
+            _extrinsics_tf_broadcaster = StaticTransformBroadcaster(
+                RosBackend.get().node,
+            )
+            _extrinsics_tf_broadcaster.sendTransform(configured)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("static TF broadcast unavailable: %s", exc)
+        log.info(
+            "published configured camera extrinsics %s -> %s on %s "
+            "(%.3f, %.3f, %.3f)",
+            extrinsics_base_frame, extrinsics_camera_frame, extrinsics_topic,
+            configured.transform.translation.x,
+            configured.transform.translation.y,
+            configured.transform.translation.z,
+        )
+    else:
+        _extrinsics_stop = threading.Event()
+        _extrinsics_thread = threading.Thread(
+            target=_publish_extrinsics_when_ready,
+            args=(extrinsics_base_frame, extrinsics_camera_frame, extrinsics_topic,
+                  _extrinsics_pub, _extrinsics_stop),
+            daemon=True,
+        )
+        _extrinsics_thread.start()
     log.info(
         "init complete: rgb=%s depth=%s intrinsics=%s extrinsics=%s "
         "(%s -> %s) + snapshot/depth_snapshot MCP exposed",
@@ -388,9 +461,18 @@ def init(cfg: dict):
 
 @cap.on_shutdown
 def shutdown():
-    global _extrinsics_pub
+    """Stop TF retries before releasing the publisher and camera process."""
+    global _extrinsics_pub, _extrinsics_tf_broadcaster
+    global _extrinsics_stop, _extrinsics_thread
+    if _extrinsics_stop is not None:
+        _extrinsics_stop.set()
+    if _extrinsics_thread is not None:
+        _extrinsics_thread.join()
+    _extrinsics_thread = None
+    _extrinsics_stop = None
     _kill_realsense()
     _extrinsics_pub = None
+    _extrinsics_tf_broadcaster = None
     return Ok()
 
 
