@@ -29,6 +29,14 @@ class ILocoClient {
   virtual std::int32_t PrepareArm() = 0;
 
   /**
+   * @brief Read the active G1 locomotion mode without changing it.
+   * @return 0 on success, non-zero when the state is unavailable.
+   */
+  virtual std::int32_t GetFsmId(std::int32_t *fsm_id) = 0;
+  virtual std::int32_t GetFsmMode(std::int32_t *fsm_mode) = 0;
+  virtual std::int32_t GetBalanceMode(std::int32_t *balance_mode) = 0;
+
+  /**
    * @brief Send a velocity command (v_x, v_y, yaw_rate) with duration.
    * @return 0 on success, non-zero on failure.
    */
@@ -46,6 +54,12 @@ class ILocoClient {
    * @return 0 on success, non-zero on failure.
    */
   virtual std::int32_t BalanceStand() = 0;
+
+  /**
+   * @brief Enter the G1 high-level locomotion FSM.
+   * @return 0 on success, non-zero on failure.
+   */
+  virtual std::int32_t Start() = 0;
 
   /**
    * @brief Damp the robot — relax joints, fall onto feet.

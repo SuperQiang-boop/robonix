@@ -21,7 +21,7 @@ Guarded Unitree G1 chassis adapter using the SDK2 LocoClient.
 - **Motion disabled by default** — daemon rejects all velocity commands unless `--allow-motion` is passed at daemon startup, which requires the `G1_PHYSICAL_MOTION_APPROVED` acknowledgement.
 - **300 ms watchdog** — if no valid cmd_vel arrives within 300 ms, the daemon issues StopMove and faults.
 - **Velocity limits** — vx, vy, omega are clamped to configured maximums.
-- **Zero-velocity stop** — a cmd_vel with all zeros updates the watchdog but does not issue movement.
+- **Zero-velocity stop** — the first all-zero cmd_vel after a movement command issues `StopMove`; repeated zeros do not flood the SDK.
 - **Adapter disconnect** — if the IPC peer disconnects, the daemon immediately issues StopMove.
 
 ### ROS outputs
@@ -69,3 +69,7 @@ With mapping gravity alignment enabled, `publish_odom_tf: false` suppresses
 chassis TF; internal ICP owns `odom -> base_footprint`. The `/odom` heartbeat
 remains placeholder data and is not used by mapping or navigation in this mode.
 Navigation explicitly consumes `/rtabmap/odom`.
+
+Before enabling motion, the operator must place the G1 in its intended
+locomotion mode. The chassis adapter preserves that mode; it does not issue
+`Start` or `BalanceStand` when it receives a velocity command.

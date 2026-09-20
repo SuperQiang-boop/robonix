@@ -24,10 +24,14 @@ class UnitreeLocoClient final : public ILocoClient {
                    std::string *error) override;
 
   std::int32_t PrepareArm() override;
+  std::int32_t GetFsmId(std::int32_t *fsm_id) override;
+  std::int32_t GetFsmMode(std::int32_t *fsm_mode) override;
+  std::int32_t GetBalanceMode(std::int32_t *balance_mode) override;
   std::int32_t SetVelocity(float vx, float vy, float omega,
                             float duration) override;
   std::int32_t StopMove() override;
   std::int32_t BalanceStand() override;
+  std::int32_t Start() override;
   std::int32_t Damp() override;
   std::int32_t StandUp() override;
 

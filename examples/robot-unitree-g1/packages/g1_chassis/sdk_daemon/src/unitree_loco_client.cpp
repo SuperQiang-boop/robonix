@@ -49,6 +49,36 @@ std::int32_t UnitreeLocoClient::PrepareArm() {
   return 0;
 }
 
+// Read the SDK FSM identifier and leave the caller output unchanged on error.
+std::int32_t UnitreeLocoClient::GetFsmId(std::int32_t *fsm_id) {
+  if (!client_ || !fsm_id) return -1;
+  int value = 0;
+  const auto result =
+      static_cast<unitree::robot::g1::LocoClient *>(client_)->GetFsmId(value);
+  if (result == 0) *fsm_id = value;
+  return result;
+}
+
+// Read the SDK FSM mode and leave the caller output unchanged on error.
+std::int32_t UnitreeLocoClient::GetFsmMode(std::int32_t *fsm_mode) {
+  if (!client_ || !fsm_mode) return -1;
+  int value = 0;
+  const auto result =
+      static_cast<unitree::robot::g1::LocoClient *>(client_)->GetFsmMode(value);
+  if (result == 0) *fsm_mode = value;
+  return result;
+}
+
+// Read the SDK balance mode and leave the caller output unchanged on error.
+std::int32_t UnitreeLocoClient::GetBalanceMode(std::int32_t *balance_mode) {
+  if (!client_ || !balance_mode) return -1;
+  int value = 0;
+  const auto result = static_cast<unitree::robot::g1::LocoClient *>(client_)
+                          ->GetBalanceMode(value);
+  if (result == 0) *balance_mode = value;
+  return result;
+}
+
 std::int32_t UnitreeLocoClient::SetVelocity(float vx, float vy, float omega,
                                              float duration) {
   if (!client_) return -1;
@@ -64,6 +94,11 @@ std::int32_t UnitreeLocoClient::StopMove() {
 std::int32_t UnitreeLocoClient::BalanceStand() {
   if (!client_) return -1;
   return static_cast<unitree::robot::g1::LocoClient *>(client_)->BalanceStand();
+}
+
+std::int32_t UnitreeLocoClient::Start() {
+  if (!client_) return -1;
+  return static_cast<unitree::robot::g1::LocoClient *>(client_)->Start();
 }
 
 std::int32_t UnitreeLocoClient::Damp() {

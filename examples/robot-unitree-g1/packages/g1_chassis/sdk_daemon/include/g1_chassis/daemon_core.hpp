@@ -49,16 +49,18 @@ class DaemonCore {
   bool faulted() const { return faulted_; }
 
  private:
-  void IssueStop();
-  void IssueVelocity(float vx, float vy, float omega);
+  int32_t IssueStop();
+  int32_t IssueVelocity(float vx, float vy, float omega);
+  void LogLocoState();
 
-  const DaemonConfig &config_;
+  DaemonConfig config_;
   ILocoClient &client_;
 
   std::mutex mutex_;
   bool armed_{false};
   bool faulted_{false};
   bool stop_pending_{false};
+  bool moving_{false};
 
   // Last time a valid command was successfully processed.
   uint64_t last_arm_time_ns_{0};

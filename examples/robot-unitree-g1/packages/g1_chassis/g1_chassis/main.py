@@ -79,14 +79,34 @@ def _stop_processes() -> None:
     _processes.clear()
 
 
-def _daemon_argv(socket_path: str) -> list[str]:
-    return [
+def _as_bool(value) -> bool:
+    """Parse manifest and environment boolean values consistently."""
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _daemon_argv(socket_path: str, config: dict) -> list[str]:
+    """Build the SDK daemon command from the active deployment config."""
+    network_interface = str(
+        config.get("network_interface", os.environ.get("G1_NETWORK_INTERFACE", ""))
+    ).strip()
+    allow_motion = _as_bool(
+        config.get("allow_motion", os.environ.get("G1_ALLOW_MOTION", "false"))
+    )
+    argv = [
         str(_daemon_binary),
         "--socket", socket_path,
+        "--watchdog-ms", "300",
         "--max-vx", "0.5",
         "--max-vy", "0.3",
         "--max-wz", "2.0",
     ]
+    if network_interface:
+        argv.extend(["--interface", network_interface])
+    if allow_motion:
+        argv.extend(["--allow-motion", "--motion-ack", "G1_PHYSICAL_MOTION_APPROVED"])
+    return argv
 
 
 def _daemon_env(socket_path: str) -> dict[str, str]:
@@ -128,12 +148,12 @@ def initialize(config):
     if not _is_executable(_daemon_binary):
         return Err(f"daemon not built: {_daemon_binary}")
 
-    # Start SDK daemon (non-motion mode — adapter handles safety)
+    # Start the SDK daemon with the deployment's explicit motion gate.
     daemon_env = _daemon_env(socket_path)
 
     _processes.append(
         g1_chassis.spawn(
-            _daemon_argv(socket_path),
+            _daemon_argv(socket_path, config),
             env=daemon_env,
             log="sdk-daemon.log",
             cwd=str(_package_root),

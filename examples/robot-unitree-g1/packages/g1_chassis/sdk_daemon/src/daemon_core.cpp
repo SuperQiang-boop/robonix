@@ -22,8 +22,9 @@ bool MotionWatchdogDeploymentEligible(bool allow_motion, uint64_t watchdog_ms) {
 DaemonCore::DaemonCore(const DaemonConfig &config, ILocoClient &client)
     : config_(config), client_(client) {}
 
-void DaemonCore::IssueStop() {
-  if (stop_pending_) return;
+// Send a single SDK stop request and remember whether its reply was confirmed.
+int32_t DaemonCore::IssueStop() {
+  if (stop_pending_) return -1;
   stop_pending_ = true;
   int32_t result = client_.StopMove();
   if (result != 0) {
@@ -32,9 +33,11 @@ void DaemonCore::IssueStop() {
     std::cerr << "[g1-daemon] StopMove acknowledged\n";
     stop_pending_ = false;
   }
+  return result;
 }
 
-void DaemonCore::IssueVelocity(float vx, float vy, float omega) {
+// Clamp a requested velocity to deployment limits before forwarding it to SDK2.
+int32_t DaemonCore::IssueVelocity(float vx, float vy, float omega) {
   // Clamp to configured limits
   if (std::abs(vx) > config_.max_vx) {
     vx = std::copysign(config_.max_vx, vx);
@@ -46,7 +49,23 @@ void DaemonCore::IssueVelocity(float vx, float vy, float omega) {
     omega = std::copysign(config_.max_wz, omega);
   }
   // Send a continuous move (duration = infinity for streaming).
-  client_.SetVelocity(vx, vy, omega, 86400.0F);
+  const int32_t result = client_.SetVelocity(vx, vy, omega, 86400.0F);
+  std::cerr << "[g1-daemon] SetVelocity RPC returned " << result << "\n";
+  return result;
+}
+
+// Log SDK-reported locomotion values to diagnose operator mode mismatches.
+void DaemonCore::LogLocoState() {
+  std::int32_t fsm_id = 0;
+  std::int32_t fsm_mode = 0;
+  std::int32_t balance_mode = 0;
+  const auto fsm_id_result = client_.GetFsmId(&fsm_id);
+  const auto fsm_mode_result = client_.GetFsmMode(&fsm_mode);
+  const auto balance_mode_result = client_.GetBalanceMode(&balance_mode);
+  std::cerr << "[g1-daemon] locomotion state: fsm_id=" << fsm_id
+            << " (rpc=" << fsm_id_result << "), fsm_mode=" << fsm_mode
+            << " (rpc=" << fsm_mode_result << "), balance_mode="
+            << balance_mode << " (rpc=" << balance_mode_result << ")\n";
 }
 
 ReplyPacket DaemonCore::Handle(const CommandPacket &cmd, uint64_t now_ns) {
@@ -58,6 +77,10 @@ ReplyPacket DaemonCore::Handle(const CommandPacket &cmd, uint64_t now_ns) {
     sequence_ = (sequence_ + 1) & 0xFF;
     return MakeReply(cmd.sequence, ReplyCode::kMalformed,
                      armed_, faulted_);
+  }
+
+  if (faulted_) {
+    return MakeReply(cmd.sequence, ReplyCode::kFaulted, armed_, true);
   }
 
   // Decode fixed-point velocity.
@@ -78,23 +101,34 @@ ReplyPacket DaemonCore::Handle(const CommandPacket &cmd, uint64_t now_ns) {
         sequence_ = (sequence_ + 1) & 0xFF;
         return MakeReply(cmd.sequence, ReplyCode::kSdkError, false, false);
       }
-      // Issue BalanceStand to enter safe standing state.
-      client_.BalanceStand();
+      LogLocoState();
+      // The operator establishes the G1 locomotion mode before motion is
+      // enabled. Do not overwrite it here with Start or BalanceStand.
       armed_ = true;
       last_arm_time_ns_ = now_ns;
       std::cerr << "[g1-daemon] ARMED (first valid cmd_vel)\n";
     }
 
-    // Zero command: just update last-motion time, don't issue velocity.
+    // Stop promptly on the first zero command after motion. Nav2 commonly
+    // publishes zero commands at a high rate, so suppress duplicate RPCs.
     if (is_zero) {
+      if (moving_ && IssueStop() != 0) {
+        sequence_ = (sequence_ + 1) & 0xFF;
+        return MakeReply(cmd.sequence, ReplyCode::kSdkError, armed_, faulted_);
+      }
+      moving_ = false;
       last_motion_time_ns_ = now_ns;
       sequence_ = (sequence_ + 1) & 0xFF;
       return MakeReply(cmd.sequence, ReplyCode::kOk, armed_, faulted_);
     }
 
     // Non-zero command: issue velocity.
-    IssueVelocity(static_cast<float>(vx), static_cast<float>(vy),
-                   static_cast<float>(omega));
+    if (IssueVelocity(static_cast<float>(vx), static_cast<float>(vy),
+                      static_cast<float>(omega)) != 0) {
+      sequence_ = (sequence_ + 1) & 0xFF;
+      return MakeReply(cmd.sequence, ReplyCode::kSdkError, armed_, faulted_);
+    }
+    moving_ = true;
     last_motion_time_ns_ = now_ns;
   }
 
@@ -105,7 +139,7 @@ ReplyPacket DaemonCore::Handle(const CommandPacket &cmd, uint64_t now_ns) {
 bool DaemonCore::CheckWatchdog(uint64_t now_ns) {
   std::lock_guard<std::mutex> lock(mutex_);
 
-  if (!armed_ || faulted_) return false;
+  if (!armed_ || faulted_ || !moving_) return false;
 
   // No watchdog when motion is disabled.
   if (!config_.allow_motion) return false;
@@ -127,8 +161,8 @@ void DaemonCore::OnDisconnect() {
   armed_ = false;
   if (!stop_pending_) {
     std::cerr << "[g1-daemon] ADAPTER DISCONNECTED — issuing StopMove\n";
-    client_.StopMove();
-    stop_pending_ = true;
+    stop_pending_ = client_.StopMove() != 0;
+    moving_ = false;
     faulted_ = true;
   }
 }

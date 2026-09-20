@@ -12,7 +12,7 @@
 #include <unistd.h>
 
 #include "geometry_msgs/msg/transform_stamped.hpp"
-#include "geometry_msgs/msg/twist_stamped.hpp"
+#include "geometry_msgs/msg/twist.hpp"
 #include "nav_msgs/msg/odometry.hpp"
 #include "sensor_msgs/msg/joint_state.hpp"
 #include "rclcpp/rclcpp.hpp"
@@ -92,9 +92,9 @@ class AdapterNode : public rclcpp::Node {
     joint_state_topic_ = declare_parameter("joint_state_topic", "/joint_states");
 
     // Twist subscriber.
-    twist_sub_ = create_subscription<geometry_msgs::msg::TwistStamped>(
+    twist_sub_ = create_subscription<geometry_msgs::msg::Twist>(
         twist_in_topic_, 10,
-        [this](const geometry_msgs::msg::TwistStamped::SharedPtr msg) {
+        [this](const geometry_msgs::msg::Twist::SharedPtr msg) {
           OnTwist(msg);
         });
 
@@ -120,21 +120,24 @@ class AdapterNode : public rclcpp::Node {
   }
 
  private:
-  CommandPacket TwistToPacket(const geometry_msgs::msg::TwistStamped &msg) {
+  CommandPacket TwistToPacket(const geometry_msgs::msg::Twist &msg) {
     CommandPacket pkt{};
     pkt.type = static_cast<uint8_t>(PacketType::kCmd);
     pkt.sequence = sequence_++;
-    pkt.vx = static_cast<int32_t>(msg.twist.linear.x * 10000);
-    pkt.vy = static_cast<int32_t>(msg.twist.linear.y * 10000);
-    pkt.omega = static_cast<int32_t>(msg.twist.angular.z * 10000);
+    pkt.vx = static_cast<int32_t>(msg.linear.x * 10000);
+    pkt.vy = static_cast<int32_t>(msg.linear.y * 10000);
+    pkt.omega = static_cast<int32_t>(msg.angular.z * 10000);
     return pkt;
   }
 
-  void OnTwist(const geometry_msgs::msg::TwistStamped::SharedPtr msg) {
+  void OnTwist(const geometry_msgs::msg::Twist::SharedPtr msg) {
     last_twist_ = TwistToPacket(*msg);
+    last_twist_received_ = true;
   }
 
   void TimerTick() {
+    DrainReplies();
+
     // If a twist arrived since the last tick, send it.
     if (last_twist_received_) {
       last_twist_received_ = false;
@@ -222,6 +225,30 @@ class AdapterNode : public rclcpp::Node {
     }
   }
 
+  void DrainReplies() {
+    g1_chassis::ReplyPacket reply{};
+    for (;;) {
+      const ssize_t received =
+          ::recv(socket_fd_, &reply, sizeof(reply), MSG_DONTWAIT | MSG_TRUNC);
+      if (received < 0) {
+        if (errno == EAGAIN || errno == EWOULDBLOCK) return;
+        if (errno != EINTR) {
+          RCLCPP_WARN(this->get_logger(), "recv() error: %s", strerror(errno));
+        }
+        continue;
+      }
+      if (received == 0) return;
+      if (received != static_cast<ssize_t>(sizeof(reply))) {
+        RCLCPP_WARN(this->get_logger(), "discarding malformed daemon reply");
+      } else if (reply.code !=
+                 static_cast<uint8_t>(g1_chassis::ReplyCode::kOk)) {
+        RCLCPP_ERROR(this->get_logger(),
+                     "daemon rejected cmd_vel: code=%u armed=%u faulted=%u",
+                     reply.code, reply.armed, reply.faulted);
+      }
+    }
+  }
+
   std::string socket_path_;
   int socket_fd_{-1};
 
@@ -232,7 +259,7 @@ class AdapterNode : public rclcpp::Node {
   std::string odom_frame_{"odom"};
   std::string base_frame_{"base_link"};
 
-  rclcpp::Subscription<geometry_msgs::msg::TwistStamped>::SharedPtr twist_sub_;
+  rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr twist_sub_;
   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr odom_pub_;
   rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr joint_state_pub_;
   std::unique_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
