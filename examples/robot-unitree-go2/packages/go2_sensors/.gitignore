@@ -1,7 +1,0 @@
-.build/
-build/
-install/
-log/
-rbnx-build/
-__pycache__/
-*.pyc
