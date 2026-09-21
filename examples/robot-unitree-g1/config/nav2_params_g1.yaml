@@ -32,7 +32,7 @@ controller_server:
     general_goal_checker:
       plugin: "nav2_controller::SimpleGoalChecker"
       # G1 step length ~0.3 m; generous terminal tolerance for bipedal arrival.
-      xy_goal_tolerance: 0.40
+      xy_goal_tolerance: 0.15
       yaw_goal_tolerance: 0.25
       stateful: true
 
@@ -71,7 +71,7 @@ controller_server:
       linear_granularity: 0.05
       angular_granularity: 0.05
       transform_tolerance: 0.3
-      xy_goal_tolerance: 0.40
+      xy_goal_tolerance: 0.15
       yaw_goal_tolerance: 0.25
       trans_stopped_velocity: 0.05
       short_circuit_trajectory_evaluation: True
@@ -128,8 +128,8 @@ local_costmap:
           inf_is_valid: true
           observation_persistence: 0.0
           expected_update_rate: 0.50
-          min_obstacle_height: 0.0
-          max_obstacle_height: 2.0
+          min_obstacle_height: 0.10
+          max_obstacle_height: 2.00
 
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
@@ -173,8 +173,8 @@ global_costmap:
           inf_is_valid: true
           observation_persistence: 0.0
           expected_update_rate: 0.50
-          min_obstacle_height: 0.0
-          max_obstacle_height: 2.0
+          min_obstacle_height: 0.10
+          max_obstacle_height: 2.00
 
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"

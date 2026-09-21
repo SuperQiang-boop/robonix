@@ -1,5 +1,6 @@
 #include <cstring>
 #include <cerrno>
+#include <chrono>
 #include <fcntl.h>
 #include <filesystem>
 #include <iostream>
@@ -133,15 +134,29 @@ class AdapterNode : public rclcpp::Node {
   void OnTwist(const geometry_msgs::msg::Twist::SharedPtr msg) {
     last_twist_ = TwistToPacket(*msg);
     last_twist_received_ = true;
+    stale_stop_sent_ = false;
+    last_twist_time_ = std::chrono::steady_clock::now();
   }
 
   void TimerTick() {
     DrainReplies();
 
-    // If a twist arrived since the last tick, send it.
-    if (last_twist_received_) {
-      last_twist_received_ = false;
+    // Keep streaming the latest command through short ROS scheduling gaps.
+    // Stop refreshing after 250 ms so the daemon's 300 ms watchdog still
+    // faults safely when the navigation publisher actually disappears.
+    const auto command_age =
+        std::chrono::steady_clock::now() - last_twist_time_;
+    if (last_twist_received_ &&
+        command_age < std::chrono::milliseconds(250)) {
       send_command(last_twist_);
+    } else if (last_twist_received_ && !stale_stop_sent_) {
+      // End a stale command stream explicitly. This keeps the daemon in its
+      // safe disarmed/stopped state without tripping a latched watchdog fault.
+      CommandPacket stop{};
+      stop.type = static_cast<uint8_t>(PacketType::kCmd);
+      stop.sequence = sequence_++;
+      send_command(stop);
+      stale_stop_sent_ = true;
     }
 
     // Publish a stationary odometry heartbeat so the ROS2 graph is visible.
@@ -267,6 +282,8 @@ class AdapterNode : public rclcpp::Node {
 
   CommandPacket last_twist_{};
   bool last_twist_received_{false};
+  bool stale_stop_sent_{false};
+  std::chrono::steady_clock::time_point last_twist_time_{};
   uint8_t sequence_{0};
 };
 
