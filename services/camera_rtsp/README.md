@@ -50,3 +50,13 @@ scripts/smoke.sh 检查配置、行步长/颜色转换、生成的 protobuf 与�
 播放；重复 DEACTIVATE/ACTIVATE，停止相机确认不可用，再 SHUTDOWN 检查端口释放。
 stop.sh 依赖 rbnx 在 Driver shutdown 后终止包进程组，避免按名字误杀其他实例。
 不通过 rbnx 启动时应对主进程发送 SIGTERM，不能仅执行 stop.sh。
+
+ROS context 回归测试（无需 MediaMTX、FFmpeg 或相机）：
+
+```bash
+source /opt/ros/humble/setup.bash
+PYTHONPATH="$PWD:${PYTHONPATH:-}" rbnx-build/venv/bin/python scripts/ros_context_smoke.py
+```
+
+该测试使用真实 ROS 图像回调，验证专用 context 的执行器、断流失败和重复清理；
+预期记录断流错误，不替代 RTSP 端到端验收。

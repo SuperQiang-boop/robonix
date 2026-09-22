@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import math
+import logging
 import os
 import select
 import shutil
@@ -96,6 +97,7 @@ class Pipeline:
         self.settings, self.channel = settings, channel
         self.stop = threading.Event()
         self.thread = self.node = self.context = self.encoder = self.server = None
+        self.executor = None
         self.directory = None
         self.error = ""
         self.ready = False
@@ -107,6 +109,7 @@ class Pipeline:
         """Wait for a real decoded RTSP frame; rollbacks belong to the caller."""
         import rclpy
         from rclpy.context import Context
+        from rclpy.executors import SingleThreadedExecutor
         from rclpy.qos import qos_profile_sensor_data
         from sensor_msgs.msg import Image
         for name in ("ffmpeg", "mediamtx") if self.settings.manage_server else ("ffmpeg",):
@@ -122,7 +125,9 @@ class Pipeline:
             self.server = subprocess.Popen(["mediamtx", str(config)])
         self.context = Context()
         rclpy.init(args=[], context=self.context)
+        self.executor = SingleThreadedExecutor(context=self.context)
         self.node = rclpy.create_node("camera_rtsp_bridge", context=self.context)
+        self.executor.add_node(self.node)
         self.node.create_subscription(Image, self.channel.endpoint, self.receive, qos_profile_sensor_data)
         self.thread = threading.Thread(target=self.run, name="camera-rtsp")
         self.thread.start()
@@ -168,11 +173,10 @@ class Pipeline:
 
     def run(self):
         """Spin ROS and write frames with bounded pipe waits and no unbounded queue."""
-        import rclpy
         started = next_frame = time.monotonic()
         try:
             while not self.stop.is_set():
-                rclpy.spin_once(self.node, timeout_sec=0.02)
+                self.executor.spin_once(timeout_sec=0.02)
                 now = time.monotonic()
                 if self.server is not None and self.server.poll() is not None:
                     raise RuntimeError("MediaMTX exited")
@@ -206,7 +210,8 @@ class Pipeline:
                             continue
                 next_frame = now + 1 / self.settings.fps
         except Exception as exc:
-            self.error = str(exc)
+            logging.getLogger(__name__).exception("camera RTSP worker failed: %s", exc)
+            self.error = f"{type(exc).__name__}: {exc}"
             self.stop.set()
         finally:
             self.ready = False
@@ -223,6 +228,10 @@ class Pipeline:
                 raise RuntimeError("camera RTSP worker failed to stop")
         terminate(self.encoder)
         terminate(self.server)
+        if self.executor is not None:
+            if not self.executor.shutdown(timeout_sec=3):
+                raise RuntimeError("camera RTSP executor failed to stop")
+            self.executor = None
         if self.node is not None:
             self.node.destroy_node()
             self.node = None
