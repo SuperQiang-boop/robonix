@@ -1,0 +1,8 @@
+[contract]
+id = "robonix/service/camera_rtsp/driver"
+version = "1"
+kind = "service"
+idl = "lifecycle/srv/Driver.srv"
+description = "Lifecycle control interface for the camera RTSP service."
+[mode]
+type = "rpc"

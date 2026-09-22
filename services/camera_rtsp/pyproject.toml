@@ -1,0 +1,11 @@
+[project]
+name = "robonix-camera-rtsp"
+version = "0.1.0"
+description = "Camera RGB to RTSP service for Robonix"
+requires-python = ">=3.10"
+dependencies = ["robonix-api>=0.1.0rc1", "grpcio-tools>=1.50"]
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+[tool.setuptools.packages.find]
+include = ["camera_rtsp*"]
