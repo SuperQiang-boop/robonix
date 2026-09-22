@@ -172,6 +172,11 @@ primitive:
       enable_imu: false
       sentinel_timeout_s: 45.0
 
+  - name: face_camera
+    path: ${ROBONIX_DEPLOY_DIR}/primitives/primitive-unitree-g1-face-camera-rgb-rbnx
+    config:
+      rgb_topic: /face/camera/color/image_raw
+      sentinel_timeout_s: 30.0
   # ============================================================
   # Robot description — publishes /robot_description and the TF tree.
   # ============================================================
@@ -222,8 +227,8 @@ service:
         Icp/PointToPlaneMinComplexity: 0.02
         Icp/PointToPlaneLowComplexityStrategy: 1
         Icp/CorrespondenceRatio: 0.20
-        Icp/MaxTranslation: 0.10
-        Icp/MaxRotation: 0.10
+        # Icp/MaxTranslation: 0.10
+        # Icp/MaxRotation: 0.10
       rtabmap_inputs: [lidar, imu]
       sensor_providers:
         lidar3d: mid360_lidar
@@ -254,10 +259,10 @@ service:
         enabled: true
         target_frame: base_footprint
         # Height above the nominal sole plane; exclude floor returns.
-        min_height_m: 0.05
+        min_height_m: 0.25
         max_height_m: 1.50
         range_max_m: 12.0
-        self_filter_margin_m: 0.05
+        self_filter_margin_m: 0.25
         transform_tolerance_s: 0.20
         deskewing: false
         deskew_fixed_frame: odom

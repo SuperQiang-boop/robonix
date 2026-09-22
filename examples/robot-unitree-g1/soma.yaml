@@ -147,6 +147,15 @@ robot:
                     - { path: robonix/primitive/camera/depth_snapshot,
                         description: "Capture a front depth snapshot." }
 
+            - id: face_rgb
+              type: rgb_camera
+              urdf_link: face_camera
+              exports:
+                - provider_id: face_camera
+                  capabilities:
+                    - { path: robonix/primitive/camera/rgb,
+                        description: "G1 face RGB camera stream." }
+
         # ----- Left arm (SDK2 joint command) -----
         - id: left_arm
           type: manipulator
