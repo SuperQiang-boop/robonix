@@ -9,3 +9,6 @@ requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 include = ["camera_rtsp*"]
+
+[tool.uv.sources]
+robonix-api = { workspace = true }
