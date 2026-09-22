@@ -96,31 +96,46 @@ async def _call_speech(endpoint: str, text: str) -> dict[str, Any]:
 
 class _SpeechHandler(BaseHTTPRequestHandler):
     def do_POST(self):  # noqa: N802
+        """Forward a greeting once; a disconnected caller must never trigger a retry."""
         if self.path != "/speak":
             self.send_error(404, "unknown endpoint")
             return
         try:
             length = int(self.headers.get("Content-Length", "0"))
+            if not 0 < length <= 65536:
+                raise ValueError("invalid request size")
             payload = json.loads(self.rfile.read(length))
-            text = str(payload.get("text", "")).strip()
+            if not isinstance(payload, dict) or not isinstance(payload.get("text"), str):
+                raise ValueError("text must be a string")
+            text = payload["text"].strip()
             if not text:
                 raise ValueError("text is required")
-            proxy = self.server.proxy  # type: ignore[attr-defined]
-            result = proxy.speak(text)
-            body = json.dumps(result, ensure_ascii=False).encode("utf-8")
-            self.send_response(200 if result.get("ok", False) else 502)
+        except (ValueError, TypeError) as exc:
+            self._respond(400, {"ok": False, "detail": str(exc)})
+            return
+        try:
+            result = self.server.proxy.speak(text)
+            status = 200 if result.get("ok") is True else 502
+            log.info("speech result: %s", result)
+        except (TimeoutError, asyncio.TimeoutError):
+            status, result = 504, {"ok": False, "detail": "speech exceeded 60s; playback outcome unknown"}
+            log.warning("speech timed out; do not automatically retry playback")
+        except Exception as exc:
+            log.exception("speech upstream request failed")
+            status, result = 502, {"ok": False, "detail": str(exc)}
+        self._respond(status, result)
+
+    def _respond(self, status, result):
+        """Write one response, reporting disconnects without writing a second response."""
+        body = json.dumps(result, ensure_ascii=False).encode("utf-8")
+        try:
+            self.send_response(status)
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
-        except Exception as exc:  # noqa: BLE001
-            log.exception("speech proxy request failed")
-            body = json.dumps({"ok": False, "detail": str(exc)}, ensure_ascii=False).encode("utf-8")
-            self.send_response(400)
-            self.send_header("Content-Type", "application/json; charset=utf-8")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError):
+            log.warning("greeting caller disconnected; response status=%s, result=%s", status, result)
 
     def log_message(self, fmt, *args):
         log.debug("speech proxy: " + fmt, *args)
@@ -138,7 +153,9 @@ class SpeechProxy:
         log.info("speech compatibility proxy listening on %s:%d", *self.server.server_address)
 
     def speak(self, text: str) -> dict[str, Any]:
-        return asyncio.run(_call_speech(self.endpoint, text))
+        async def bounded_call():
+            return await asyncio.wait_for(_call_speech(self.endpoint, text), timeout=60)
+        return asyncio.run(bounded_call())
 
     def close(self) -> None:
         self.server.shutdown()

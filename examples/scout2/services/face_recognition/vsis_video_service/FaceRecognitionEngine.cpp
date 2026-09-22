@@ -350,7 +350,7 @@ void FaceRecognitionEngine::hello(const std::string& text) {
     std::thread([host, port, text]() {
         httplib::Client cli(host, port);
         cli.set_connection_timeout(1, 0);   // 连接 1s
-        cli.set_read_timeout(3, 0);         // 读取 3s
+        cli.set_read_timeout(65, 0);        // bridge 最多等待 60s，留出返回错误的时间
 
         json body = {{"text", text}};
         auto res = cli.Post("/speak", body.dump(), "application/json");
