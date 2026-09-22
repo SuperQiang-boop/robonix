@@ -1,0 +1,8 @@
+[contract]
+id = "robonix/service/face_recognition/driver"
+version = "1"
+kind = "service"
+idl = "lifecycle/srv/Driver.srv"
+description = "Lifecycle control interface for the VSIS face recognition service."
+[mode]
+type = "rpc"

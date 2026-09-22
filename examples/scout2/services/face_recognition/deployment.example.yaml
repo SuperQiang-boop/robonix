@@ -1,0 +1,9 @@
+service:
+  - name: face_recognition
+    path: ./services/face_recognition
+    config:
+      # Omit external_root/binary_path to use the bundled VSIS project.
+      startup_timeout: 45
+      speak_host: 127.0.0.1
+      speak_port: 10086
+      # speech_provider_id: speech
