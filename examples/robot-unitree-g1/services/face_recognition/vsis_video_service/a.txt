@@ -1,0 +1,28 @@
+docker run --rm \
+  -v "$PWD/person:/vsis_video_service/person" \
+  vsis-video-service \
+  /vsis_video_service/face_enroll/build/face_enroll \
+  add "时振昊" person/photo/shi.jpg "时振昊您好！很高兴见到您！"
+
+
+
+docker run --rm \
+  -v "$PWD/person:/vsis_video_service/person" \
+  vsis-video-service \
+  /vsis_video_service/face_enroll/build/face_enroll \
+  add "王福伟" person/photo/wang.jpg "王福伟您好！很高兴见到您！"
+
+
+  docker run --rm \
+  -v "$PWD/person:/vsis_video_service/person" \
+  vsis-video-service \
+  /vsis_video_service/face_enroll/build/face_enroll \
+  add "孔令冉" person/photo/kong.jpg "孔令冉您好！很高兴见到您！"
+
+
+
+  docker run --rm \
+  -v "$PWD/person:/vsis_video_service/person" \
+  vsis-video-service \
+  /vsis_video_service/face_enroll/build/face_enroll \
+  add "袁国强" person/photo/yuan.jpg "强哥您好！很高兴见到您！"

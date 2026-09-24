@@ -1,0 +1,6 @@
+**/build/
+build/
+bin/
+logs/
+.svn/
+.vscode/
