@@ -1,0 +1,12 @@
+[contract]
+id      = "robonix/skill/g1_face_greeting/greet"
+version = "1"
+kind    = "skill"
+idl     = "g1_face_greeting/srv/GreetFace.srv"
+description = "Run one face greeting immediately from a face event payload."
+
+[mode]
+type = "rpc"
+
+[semantics]
+user_invocable = false

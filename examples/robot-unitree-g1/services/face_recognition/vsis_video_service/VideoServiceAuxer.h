@@ -11,6 +11,7 @@
 #define VSIS_VIDEO_SERVICE_AUXER_H
 
 #include <string>
+#include <array>
 
 namespace Vsis {
 
@@ -38,10 +39,11 @@ public:
     int m_videoHeight{720};         // V4L2 请求高
 
     double m_searchThreshold{0.5};
-    int m_greetCooldownSec{30};
+    int m_greetCooldownSec{30};   // 同一人的事件冷却时间
     int m_maxFaces{3};
     int m_confirmHits{3};
     int m_absentSec{3};
+    std::array<int, 4> m_intimacyUpgradeEncounters{{5, 15, 30, 60}};
     std::string m_audioHost{"127.0.0.1"};
     int m_audioPort{10086}; 
 

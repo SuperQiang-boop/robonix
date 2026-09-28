@@ -28,8 +28,9 @@ fi
 if [[ ! -x "$BUILD_ROOT/venv/bin/python" ]]; then
     uv venv --python "$PYTHON" --system-site-packages "$BUILD_ROOT/venv"
 fi
-uv pip install --python "$BUILD_ROOT/venv/bin/python" "$SOURCE/pylib/robonix-api" "$PKG"
-RBNX_CODEGEN_PYTHON="$BUILD_ROOT/venv/bin/python" rbnx codegen -p "$PKG"
+uv pip install --python "$BUILD_ROOT/venv/bin/python" "$SOURCE/pylib/robonix-api" "$PKG" \
+    'mcp>=1,<2'
+RBNX_CODEGEN_PYTHON="$BUILD_ROOT/venv/bin/python" rbnx codegen -p "$PKG" --mcp
 
 # Rebuild the bundled executable so source fixes do not leave a stale binary.
 cmake -S "$VSIS_SOURCE" -B "$VSIS_BUILD" -DCMAKE_BUILD_TYPE=Release

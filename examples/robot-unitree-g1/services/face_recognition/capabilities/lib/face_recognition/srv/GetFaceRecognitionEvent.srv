@@ -1,0 +1,13 @@
+int32 wait_ms
+---
+bool available
+string event_id
+int64 person_id
+string name
+string hello
+float64 confidence
+int32 encounter_count
+int32 base_intimacy_level
+int32 intimacy_level
+string timestamp
+string detail

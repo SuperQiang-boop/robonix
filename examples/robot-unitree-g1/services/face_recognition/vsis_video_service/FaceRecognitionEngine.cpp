@@ -13,12 +13,14 @@
 #include "VideoDef.h"
 #include "spdlog/spdlog.h"
 #include "nlohmann/json.hpp"
-#include "httplib.h"
 
 #include <fstream>
 #include <sstream>
 #include <sys/stat.h>
 #include <filesystem>
+#include <chrono>
+#include <iomanip>
+#include <iostream>
 
 using json = nlohmann::json;
 
@@ -45,6 +47,7 @@ bool FaceRecognitionEngine::start() {
     m_maxFaces    = auxer->m_maxFaces;  // 会话检测容量，见 HFCreateInspireFaceSession
     m_confirmHits = auxer->m_confirmHits;
     m_absentSec   = auxer->m_absentSec;
+    m_intimacyUpgradeEncounters = auxer->m_intimacyUpgradeEncounters;
     SPDLOG_INFO("[Face] 配置: gate={:.2f}, confirm={}, cooldown={}s, absent={}s, maxFaces={}",
                 m_scoreGate, m_confirmHits, m_cooldownSec, m_absentSec, m_maxFaces);
 
@@ -58,6 +61,7 @@ bool FaceRecognitionEngine::start() {
     SPDLOG_INFO("[Face] pack路径: {}", packPath);
     SPDLOG_INFO("[Face] hub数据库: {}", hubDbPath);
     SPDLOG_INFO("[Face] mapping文件: {}", mappingPath);
+    m_mappingPath = mappingPath;
     SPDLOG_INFO("[Face] 照片目录: {}", photoDir);
 
     // b) InspireFace 初始化
@@ -157,13 +161,24 @@ bool FaceRecognitionEngine::start() {
         std::string name = item.value("name", "");
         std::string hello = item.value("hello", "");
         std::string photo = item.value("photo", "");
+        int baseIntimacy = item.value("base_intimacy_level", 1);
+        int encounterCount = item.value("encounter_count", 0);
         
         if (id == -1 || name.empty()) {
             SPDLOG_WARN("[Face] 跳过无效条目: id={}, name='{}'", id, name);
             continue;
         }
         
-        m_mapping[id] = {name, hello, photo};
+        if (baseIntimacy < 1 || baseIntimacy > 5 || encounterCount < 0) {
+            SPDLOG_ERROR("[Face] 亲密度档案无效: id={}, base={}, encounters={}",
+                         id, baseIntimacy, encounterCount);
+            HFFeatureHubDataDisable();
+            HFTerminateInspireFace();
+            return false;
+        }
+        const int autoIntimacy = intimacyForEncounters(encounterCount);
+        m_mapping[id] = {name, hello, photo, baseIntimacy, encounterCount,
+                         autoIntimacy, std::max(baseIntimacy, autoIntimacy)};
     }
 
     // f) 对账
@@ -173,7 +188,6 @@ bool FaceRecognitionEngine::start() {
         SPDLOG_WARN("[Face] 特征库与名单数量不一致 (hub={}, mapping={}), 仅告警继续", 
                     hubCount, m_mapping.size());
     }
-
     // g) 自检门
     if (m_mapping.empty()) {
         SPDLOG_ERROR("[Face] mapping为空, 无法自检");
@@ -309,6 +323,8 @@ bool FaceRecognitionEngine::start() {
         return false;
     }
 
+    std::cout << "FACE_READY count=" << m_mapping.size() << std::endl;
+
     // 启动 worker 线程
     m_running = true;
     m_thread = std::thread(&FaceRecognitionEngine::workerLoop, this);
@@ -339,33 +355,64 @@ void FaceRecognitionEngine::stop() {
     SPDLOG_INFO("[Face] 人脸资源已释放");
 }
 
-void FaceRecognitionEngine::hello(const std::string& text) {
-    auto auxer = VideoServiceManager::Instance.getAuxer();
+int FaceRecognitionEngine::intimacyForEncounters(int encounters) const {
+    for (int index = static_cast<int>(m_intimacyUpgradeEncounters.size()) - 1; index >= 0; --index) {
+        if (encounters >= m_intimacyUpgradeEncounters[index]) return index + 2;
+    }
+    return 1;
+}
 
-    // 快照配置：线程里只碰值拷贝，不碰 this / auxer
-    std::string host = auxer->m_audioHost;
-    int         port = auxer->m_audioPort;
+bool FaceRecognitionEngine::saveMapping() {
+    json output = json::array();
+    for (const auto& [id, person] : m_mapping) {
+        output.push_back({
+            {"id", id},
+            {"name", person.name},
+            {"hello", person.hello},
+            {"photo", person.photo},
+            {"base_intimacy_level", person.baseIntimacyLevel},
+            {"encounter_count", person.encounterCount},
+            {"auto_intimacy_level", person.autoIntimacyLevel},
+            {"effective_intimacy_level", person.effectiveIntimacyLevel},
+        });
+    }
+    const std::string tempPath = m_mappingPath + ".tmp";
+    std::ofstream temp(tempPath, std::ios::trunc);
+    if (!temp.good()) {
+        SPDLOG_ERROR("[Face] 无法写入临时名单文件: {}", tempPath);
+        return false;
+    }
+    temp << output.dump(2) << '\n';
+    temp.close();
+    if (std::rename(tempPath.c_str(), m_mappingPath.c_str()) != 0) {
+        SPDLOG_ERROR("[Face] 更新名单文件失败: {}", m_mappingPath);
+        std::remove(tempPath.c_str());
+        return false;
+    }
+    return true;
+}
 
-    // 发完就忘：不阻塞视觉线程；问候受冷却限频，线程开销可忽略
-    std::thread([host, port, text]() {
-        httplib::Client cli(host, port);
-        cli.set_connection_timeout(1, 0);   // 连接 1s
-        cli.set_read_timeout(65, 0);        // bridge 最多等待 60s，留出返回错误的时间
-
-        json body = {{"text", text}};
-        auto res = cli.Post("/speak", body.dump(), "application/json");
-
-        if (!res) {
-            SPDLOG_ERROR("[Face] 语音服务不可达: {}:{} (err={})",
-                         host, port, static_cast<int>(res.error()));
-            return;
-        }
-        if (res->status != 200) {
-            SPDLOG_WARN("[Face] 语音接口异常: status={}, body={}", res->status, res->body);
-            return;
-        }
-        SPDLOG_INFO("[Face] 已送达语音: '{}'", text);
-    }).detach();
+void FaceRecognitionEngine::emitEncounterEvent(int id, float conf, const PersonInfo& person) {
+    const auto now = std::chrono::system_clock::now();
+    const auto seconds = std::chrono::time_point_cast<std::chrono::seconds>(now);
+    const auto epoch = seconds.time_since_epoch().count();
+    std::ostringstream timestamp;
+    timestamp << epoch;
+    json event = {
+        {"event_type", "face_encounter"},
+        {"event_id", std::to_string(id) + "-" + std::to_string(epoch)},
+        {"person_id", id},
+        {"name", person.name},
+        {"hello", person.hello.empty() ? person.name + "，您好！" : person.hello},
+        {"confidence", conf},
+        {"encounter_count", person.encounterCount},
+        {"base_intimacy_level", person.baseIntimacyLevel},
+        {"intimacy_level", person.effectiveIntimacyLevel},
+        {"timestamp", timestamp.str()},
+    };
+    std::cout << "FACE_EVENT " << event.dump() << std::endl;
+    SPDLOG_INFO("[Face] 已输出见面事件: id={}, 姓名={}, 次数={}, 亲密度={}",
+                id, person.name, person.encounterCount, person.effectiveIntimacyLevel);
 }
 
 void FaceRecognitionEngine::workerLoop() {
@@ -510,18 +557,33 @@ void FaceRecognitionEngine::onFaceMatch(int id, float conf) {
             SPDLOG_INFO("[Face] 识别到: id={}, 姓名={}, 得分={:.2f}", id, it->second.name, conf);
         }
         slot.consecutiveHits = 1;
+        slot.newEncounter = true;
     } else {
         slot.consecutiveHits++;
     }
 
     if (slot.consecutiveHits == m_confirmHits) {
         auto it = m_mapping.find(id);
-        if (it != m_mapping.end() &&
-            std::chrono::duration_cast<std::chrono::seconds>(
-                now - slot.lastGreet).count() >= m_cooldownSec) {
-            SPDLOG_INFO("[Face] 问候: {}", it->second.hello);
-            slot.lastGreet = now;
-            hello(it->second.hello);
+        if (it != m_mapping.end()) {
+            PersonInfo& person = it->second;
+            if (slot.newEncounter) {
+                ++person.encounterCount;
+                person.autoIntimacyLevel = intimacyForEncounters(person.encounterCount);
+                person.effectiveIntimacyLevel =
+                    std::max(person.baseIntimacyLevel, person.autoIntimacyLevel);
+                if (!saveMapping()) {
+                    SPDLOG_WARN("[Face] 见面次数未能持久化: id={}", id);
+                }
+            }
+            slot.newEncounter = false;
+            if (std::chrono::duration_cast<std::chrono::seconds>(
+                    now - slot.lastEvent).count() >= m_cooldownSec) {
+                slot.lastEvent = now;
+                SPDLOG_INFO("[Face] 已确认见面: id={}, 姓名={}, 次数={}, 亲密度={}, 得分={:.2f}",
+                            id, person.name, person.encounterCount,
+                            person.effectiveIntimacyLevel, conf);
+                emitEncounterEvent(id, conf, person);
+            }
         }
     }
 }

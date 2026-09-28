@@ -1,0 +1,20 @@
+manifestVersion: 1
+
+package:
+  name: robonix.skill.unitree.g1.face_greeting
+  version: 0.1.0
+  description: G1 face greeting orchestration skill for speech and intimacy-based arm actions.
+  license: Apache-2.0
+  tags: [skill, face, greeting, unitree, g1]
+  maintainers:
+    - robonix
+
+build: bash scripts/build.sh
+start: bash scripts/start.sh
+stop: bash scripts/stop.sh
+
+capabilities:
+  - name: robonix/skill/g1_face_greeting/driver
+    path: capabilities/driver.v1.toml
+  - name: robonix/skill/g1_face_greeting/greet
+    path: capabilities/greet.v1.toml

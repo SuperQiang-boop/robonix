@@ -14,6 +14,7 @@
 #include <cstdlib>
 #include <cstdarg>
 #include <cctype>
+#include <climits>
 #include <cerrno>
 #include <unistd.h>       // access()
 #include <string>
@@ -49,7 +50,7 @@ static HFSession g_session = nullptr;
 
 static void usage() {
     printf("用法:\n"
-           "  face_enroll add <名字> <照片>  注册 (照片位于 person/photo/; 恰好一张脸; 重名/相似脸拒绝)\n"
+           "  face_enroll add <名字> <照片> [亲密度] [问候语]  注册 (亲密度 1..5)\n"
            "  face_enroll list               列出已注册\n"
            "  face_enroll del <名字>         注销 (库+映射+照片一并删除)\n");
 }
@@ -157,7 +158,7 @@ int main(int argc, char** argv) {
      && strcmp(mode, "del") != 0 && strcmp(mode, "query") != 0) {
         printf("未知命令: '%s'\n", mode); usage(); return 2;
     }
-    if (strcmp(mode, "add")  == 0 && argc != 4 && argc != 5) { printf("用法: face_enroll add <名字> <照片> [问候语]\n"); return 2; }
+    if (strcmp(mode, "add")  == 0 && (argc < 4 || argc > 6)) { printf("用法: face_enroll add <名字> <照片> [亲密度] [问候语]\n"); return 2; }
     if (strcmp(mode, "list") == 0 && argc != 2) { printf("用法: face_enroll list\n"); return 2; }
     if (strcmp(mode, "del")  == 0 && argc != 3) { printf("用法: face_enroll del <名字>\n"); return 2; }
 
@@ -191,6 +192,21 @@ int main(int argc, char** argv) {
     if (strcmp(mode, "add") == 0) {
         const char* name = argv[2];
         const char* img  = argv[3];
+        int intimacy = 1;
+        const char* helloArg = nullptr;
+        if (argc >= 5) {
+            char* end = nullptr;
+            long parsed = std::strtol(argv[4], &end, 10);
+            if (end != argv[4] && *end == '\0') {
+                if (parsed < 1 || parsed > 5)
+                    die("[enroll] 亲密度必须是 1..5: %s\n", argv[4]);
+                intimacy = static_cast<int>(parsed);
+                if (argc == 6) helloArg = argv[5];
+            } else {
+                // 兼容旧命令: add <名字> <照片> <问候语>
+                helloArg = argv[4];
+            }
+        }
         if (!name_ok(name))
             die("[enroll] 非法名字: '%s' (不得含 / 或 \\)\n", name);
         int idx = find_by_name(mapping, name);
@@ -230,18 +246,17 @@ int main(int argc, char** argv) {
         if (ret != HSUCCEED) { HFReleaseFaceFeature(&feat); die("[enroll] insert fail: %ld\n", ret); }
         HFReleaseFaceFeature(&feat);
 
-        json entry = {{"id", (long long)allocId}, {"name", name}, {"photo", photoRel}};
-        if (argc >= 5) {
-            entry["hello"] = argv[4];
-        }else {
-            entry["hello"] = std::string(name) + "，您好！";
-        }
+        json entry = {{"id", (long long)allocId}, {"name", name}, {"photo", photoRel},
+                      {"hello", helloArg ? helloArg : (std::string(name) + "，您好！")},
+                      {"base_intimacy_level", intimacy}, {"encounter_count", 0},
+                      {"auto_intimacy_level", 1}, {"effective_intimacy_level", intimacy}};
 
         mapping.push_back(entry);
         save_mapping(mapping);
         HInt32 count = 0;
         HFFeatureHubGetFaceCount(&count);
-        printf("[ENROLL-ADD] id=%lld name=%s photo=%s\n", (long long)allocId, name, photoRel.c_str());
+        printf("[ENROLL-ADD] id=%lld name=%s intimacy=%d photo=%s\n",
+               (long long)allocId, name, intimacy, photoRel.c_str());
         printf("[ENROLL-ADD] hub count=%d mapping=%d\n", count, (int)mapping.size());
 
     } else if (strcmp(mode, "list") == 0) {
@@ -252,9 +267,11 @@ int main(int argc, char** argv) {
             printf("[ENROLL-LIST] 警告: hub 与 mapping 数目不一致 — 库可能被外部改动\n");
         if (mapping.empty()) printf("  (空库)\n");
         for (size_t i = 0; i < mapping.size(); ++i)
-            printf("  id=%lld name=%s photo=%s\n",
+            printf("  id=%lld name=%s intimacy=%d encounters=%d photo=%s\n",
                    mapping[i].value("id", -1LL),
                    mapping[i].value("name", std::string("?")).c_str(),
+                   mapping[i].value("effective_intimacy_level", 1),
+                   mapping[i].value("encounter_count", 0),
                    mapping[i].value("photo", std::string("?")).c_str());
 
     } else if (strcmp(mode, "del") == 0) {

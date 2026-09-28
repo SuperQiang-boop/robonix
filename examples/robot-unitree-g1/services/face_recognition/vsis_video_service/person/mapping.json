@@ -1,35 +1,59 @@
 [
   {
+    "auto_intimacy_level": 2,
+    "base_intimacy_level": 1,
+    "effective_intimacy_level": 2,
+    "encounter_count": 2,
     "hello": "蔡徐坤，您好！",
     "id": 8,
     "name": "蔡徐坤",
     "photo": "photo/t_kun.jpg"
   },
   {
+    "auto_intimacy_level": 1,
+    "base_intimacy_level": 1,
+    "effective_intimacy_level": 1,
+    "encounter_count": 0,
     "hello": "白日依山尽，黄河入海流。",
     "id": 9,
     "name": "高山",
     "photo": "photo/t_gao.jpg"
   },
   {
+    "auto_intimacy_level": 4,
+    "base_intimacy_level": 1,
+    "effective_intimacy_level": 4,
+    "encounter_count": 11,
     "hello": "时振昊您好！很高兴见到您！",
     "id": 10,
     "name": "时振昊",
     "photo": "photo/shi.jpg"
   },
   {
+    "auto_intimacy_level": 1,
+    "base_intimacy_level": 1,
+    "effective_intimacy_level": 1,
+    "encounter_count": 0,
     "hello": "王福伟您好！很高兴见到您！",
     "id": 11,
     "name": "王福伟",
     "photo": "photo/wang.jpg"
   },
   {
+    "auto_intimacy_level": 1,
+    "base_intimacy_level": 1,
+    "effective_intimacy_level": 1,
+    "encounter_count": 1,
     "hello": "强哥您好！很高兴见到您！",
     "id": 12,
     "name": "袁国强",
     "photo": "photo/yuan.jpg"
   },
   {
+    "auto_intimacy_level": 2,
+    "base_intimacy_level": 1,
+    "effective_intimacy_level": 2,
+    "encounter_count": 3,
     "hello": "孔令冉您好！很高兴见到您！",
     "id": 13,
     "name": "孔令冉",

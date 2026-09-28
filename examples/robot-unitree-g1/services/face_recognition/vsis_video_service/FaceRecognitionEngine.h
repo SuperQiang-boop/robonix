@@ -15,6 +15,7 @@
 #include <unordered_map>
 #include <string>
 #include <chrono>
+#include <array>
 #include <opencv2/opencv.hpp>
 #include <inspireface.h>
 
@@ -26,6 +27,10 @@ struct PersonInfo {
     std::string name;
     std::string hello;
     std::string photo;
+    int baseIntimacyLevel{1};
+    int encounterCount{0};
+    int autoIntimacyLevel{1};
+    int effectiveIntimacyLevel{1};
 };
 
 class FaceRecognitionEngine {
@@ -41,7 +46,9 @@ public:
 
 private:
     void workerLoop();
-    void hello(const std::string& text);
+    bool saveMapping();
+    void emitEncounterEvent(int id, float conf, const PersonInfo& person);
+    int intimacyForEncounters(int encounters) const;
 
     // RAII 资源守卫
     struct ImageStreamGuard {
@@ -103,6 +110,7 @@ private:
     // InspireFace 相关
     HFSession m_session{nullptr};
     std::unordered_map<int, PersonInfo> m_mapping;
+    std::string m_mappingPath;
     
     // 配置参数（从 cfg.yaml 读取）
     float m_scoreGate{0.5f};              // 业务判定阈值
@@ -110,6 +118,7 @@ private:
     int m_maxFaces{10};                   // 最大检测人脸数
     int m_confirmHits{3};
     int m_absentSec{3};                   // 离场判定阈值（秒）
+    std::array<int, 4> m_intimacyUpgradeEncounters{{5, 15, 30, 60}};
 
     // 日志限流
     std::chrono::steady_clock::time_point m_lastNoFaceLogTime;  // 上次"无人脸"日志时间
@@ -118,8 +127,9 @@ private:
     // v2 槽位状态机
     struct FaceSlot {
         std::chrono::steady_clock::time_point lastSeen{};
-        std::chrono::steady_clock::time_point lastGreet{};
+        std::chrono::steady_clock::time_point lastEvent{};
         int consecutiveHits{0};
+        bool newEncounter{false};
     };
     std::unordered_map<int, FaceSlot> m_slots;
 };

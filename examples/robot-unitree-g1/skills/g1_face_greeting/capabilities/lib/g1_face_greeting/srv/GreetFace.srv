@@ -1,0 +1,10 @@
+string person_name
+string hello
+int32 intimacy_level
+string event_id
+---
+bool accepted
+bool speech_ok
+bool action_ok
+string action
+string detail

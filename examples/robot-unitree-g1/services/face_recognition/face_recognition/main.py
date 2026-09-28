@@ -1,24 +1,27 @@
 """Atlas/lifecycle bridge for the external VSIS face recognition executable."""
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
+import math
 import os
 import subprocess
+import tempfile
 import threading
 import time
+import queue
 from dataclasses import dataclass
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
-from robonix_api import ATLAS, Err, Ok, Service
-from robonix_api.atlas_types import Transport
+from robonix_api import Err, Ok, Service
+from face_recognition_mcp import (
+    GetFaceRecognitionEvent_Request,
+    GetFaceRecognitionEvent_Response,
+)
 
 log = logging.getLogger("face_recognition")
 service = Service(id="face_recognition", namespace="robonix/service/face_recognition")
-SPEAK = "robonix/service/speech/speak"
 
 
 @dataclass(frozen=True)
@@ -26,16 +29,14 @@ class Settings:
     external_root: Path
     binary_path: Path
     startup_timeout: float
-    speak_host: str
-    speak_port: int
-    speech_provider_id: str | None
     ready_marker: str
+    vsis_config: dict[str, Any]
 
     @classmethod
     def parse(cls, raw: dict[str, Any]) -> "Settings":
         if not isinstance(raw, dict):
             raise ValueError("face_recognition config must be an object")
-        allowed = {"external_root", "binary_path", "startup_timeout", "speak_host", "speak_port", "speech_provider_id", "ready_marker"}
+        allowed = {"external_root", "binary_path", "startup_timeout", "ready_marker", "log", "video", "face", "audio"}
         unknown = sorted(set(raw) - allowed)
         if unknown:
             raise ValueError(f"unknown config keys: {', '.join(unknown)}")
@@ -47,120 +48,81 @@ class Settings:
         binary = Path(str(raw.get("binary_path", root / "bin" / "vsis_video_service"))).expanduser()
         if not binary.is_absolute():
             binary = (root / binary).resolve()
-        timeout = float(raw.get("startup_timeout", 45.0))
+        timeout = _number(raw.get("startup_timeout", 45.0), "startup_timeout")
         if not 1.0 <= timeout <= 300.0:
             raise ValueError("startup_timeout must be in [1, 300]")
-        host = str(raw.get("speak_host", "127.0.0.1")).strip()
-        port = int(raw.get("speak_port", 10086))
-        if not host or not 1 <= port <= 65535:
-            raise ValueError("speak_host and speak_port are invalid")
-        provider = raw.get("speech_provider_id")
-        provider = str(provider).strip() if provider is not None else None
-        marker = str(raw.get("ready_marker", "特征库就绪"))
+        marker = str(raw.get("ready_marker", "FACE_READY"))
         if not marker:
             raise ValueError("ready_marker must be nonempty")
         if not root.is_dir():
             raise ValueError(f"external_root does not exist: {root}")
         if not binary.is_file() or not os.access(binary, os.X_OK):
             raise ValueError(f"external binary is not executable: {binary}")
-        return cls(root, binary, timeout, host, port, provider, marker)
+        vsis_config = {
+            "log": _section(raw, "log", {"mode": 2, "level": 1}),
+            "video": _section(raw, "video", {"source": "", "reconnect_interval_ms": 3000, "width": 1280, "height": 720}),
+            "face": _section(raw, "face", {
+                "search_threshold": 0.45, "greet_cooldown_sec": 30, "max_faces": 5,
+                "confirm_hits": 1, "absent_sec": 3,
+                "intimacy_upgrade_encounters": [5, 15, 30, 60],
+            }),
+            "audio": _section(raw, "audio", {"host": "127.0.0.1", "port": 10086}),
+        }
+        log_config, video, face, audio = (vsis_config[name] for name in ("log", "video", "face", "audio"))
+        _integer(log_config["mode"], "log.mode", 0, 2)
+        _integer(log_config["level"], "log.level", 0, 5)
+        if not isinstance(video["source"], str):
+            raise ValueError("video.source must be a string")
+        _integer(video["reconnect_interval_ms"], "video.reconnect_interval_ms", 1)
+        _integer(video["width"], "video.width", 0)
+        _integer(video["height"], "video.height", 0)
+        threshold = _number(face["search_threshold"], "face.search_threshold")
+        if not 0.45 <= threshold <= 0.5:
+            raise ValueError("face.search_threshold must be in [0.45, 0.5]")
+        _integer(face["greet_cooldown_sec"], "face.greet_cooldown_sec", 0)
+        _integer(face["max_faces"], "face.max_faces", 1)
+        _integer(face["confirm_hits"], "face.confirm_hits", 1)
+        _integer(face["absent_sec"], "face.absent_sec", 1)
+        encounters = face["intimacy_upgrade_encounters"]
+        if not isinstance(encounters, list) or len(encounters) != 4:
+            raise ValueError("face.intimacy_upgrade_encounters must contain four thresholds for levels 2–5")
+        previous = 0
+        for index, count in enumerate(encounters, start=2):
+            _integer(count, f"face.intimacy_upgrade_encounters level {index}", previous + 1)
+            previous = count
+        if not isinstance(audio["host"], str) or not audio["host"]:
+            raise ValueError("audio.host must be a nonempty string")
+        _integer(audio["port"], "audio.port", 1, 65535)
+        return cls(root, binary, timeout, marker, vsis_config)
+
+
+def _section(raw: dict[str, Any], name: str, defaults: dict[str, Any]) -> dict[str, Any]:
+    overrides = raw.get(name, {})
+    if not isinstance(overrides, dict):
+        raise ValueError(f"{name} must be an object")
+    unknown = sorted(set(overrides) - defaults.keys())
+    if unknown:
+        raise ValueError(f"unknown {name} config keys: {', '.join(unknown)}")
+    return {**defaults, **overrides}
+
+
+def _number(value: Any, name: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+        raise ValueError(f"{name} must be a finite number")
+    return float(value)
+
+
+def _integer(value: Any, name: str, minimum: int, maximum: int | None = None) -> None:
+    if isinstance(value, bool) or not isinstance(value, int) or value < minimum or (maximum is not None and value > maximum):
+        raise ValueError(f"{name} must be an integer in [{minimum}, {maximum if maximum is not None else '∞'})")
 
 
 _settings: Settings | None = None
 _process: subprocess.Popen[str] | None = None
-_proxy: "SpeechProxy | None" = None
-_speech_channel = None
+_config_dir: tempfile.TemporaryDirectory[str] | None = None
 _ready = threading.Event()
 _lock = threading.RLock()
-
-
-def _find_speech() -> Any:
-    kwargs = {"contract_id": SPEAK, "transport": Transport.MCP}
-    if _settings and _settings.speech_provider_id:
-        kwargs["provider_id"] = _settings.speech_provider_id
-    return ATLAS.find_unique_capability(**kwargs)
-
-
-async def _call_speech(endpoint: str, text: str) -> dict[str, Any]:
-    from fastmcp import Client
-    async with Client(endpoint) as client:
-        result = await client.call_tool("speak", {"target": "", "text": text})
-        if not result.content:
-            return {"ok": False, "detail": "speech returned no content"}
-        try:
-            value = json.loads(result.content[0].text)
-        except (TypeError, ValueError) as exc:
-            return {"ok": False, "detail": f"invalid speech response: {exc}"}
-        return value if isinstance(value, dict) else {"ok": False, "detail": "invalid speech response object"}
-
-
-class _SpeechHandler(BaseHTTPRequestHandler):
-    def do_POST(self):  # noqa: N802
-        """Forward a greeting once; a disconnected caller must never trigger a retry."""
-        if self.path != "/speak":
-            self.send_error(404, "unknown endpoint")
-            return
-        try:
-            length = int(self.headers.get("Content-Length", "0"))
-            if not 0 < length <= 65536:
-                raise ValueError("invalid request size")
-            payload = json.loads(self.rfile.read(length))
-            if not isinstance(payload, dict) or not isinstance(payload.get("text"), str):
-                raise ValueError("text must be a string")
-            text = payload["text"].strip()
-            if not text:
-                raise ValueError("text is required")
-        except (ValueError, TypeError) as exc:
-            self._respond(400, {"ok": False, "detail": str(exc)})
-            return
-        try:
-            result = self.server.proxy.speak(text)
-            status = 200 if result.get("ok") is True else 502
-            log.info("speech result: %s", result)
-        except (TimeoutError, asyncio.TimeoutError):
-            status, result = 504, {"ok": False, "detail": "speech exceeded 60s; playback outcome unknown"}
-            log.warning("speech timed out; do not automatically retry playback")
-        except Exception as exc:
-            log.exception("speech upstream request failed")
-            status, result = 502, {"ok": False, "detail": str(exc)}
-        self._respond(status, result)
-
-    def _respond(self, status, result):
-        """Write one response, reporting disconnects without writing a second response."""
-        body = json.dumps(result, ensure_ascii=False).encode("utf-8")
-        try:
-            self.send_response(status)
-            self.send_header("Content-Type", "application/json; charset=utf-8")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
-        except (BrokenPipeError, ConnectionResetError):
-            log.warning("greeting caller disconnected; response status=%s, result=%s", status, result)
-
-    def log_message(self, fmt, *args):
-        log.debug("speech proxy: " + fmt, *args)
-
-
-class SpeechProxy:
-    def __init__(self, host: str, port: int, endpoint: str):
-        self.endpoint = endpoint
-        self.server = ThreadingHTTPServer((host, port), _SpeechHandler)
-        self.server.proxy = self  # type: ignore[attr-defined]
-        self.thread = threading.Thread(target=self.server.serve_forever, name="face-speech-proxy", daemon=True)
-
-    def start(self) -> None:
-        self.thread.start()
-        log.info("speech compatibility proxy listening on %s:%d", *self.server.server_address)
-
-    def speak(self, text: str) -> dict[str, Any]:
-        async def bounded_call():
-            return await asyncio.wait_for(_call_speech(self.endpoint, text), timeout=60)
-        return asyncio.run(bounded_call())
-
-    def close(self) -> None:
-        self.server.shutdown()
-        self.server.server_close()
-        self.thread.join(timeout=3)
+_events: queue.Queue[dict[str, Any]] = queue.Queue(maxsize=64)
 
 
 def _drain_output(proc: subprocess.Popen[str], marker: str) -> None:
@@ -169,14 +131,31 @@ def _drain_output(proc: subprocess.Popen[str], marker: str) -> None:
         line = line.rstrip()
         if line:
             log.info("vsis: %s", line)
-        if marker in line:
+        if "FACE_EVENT " in line:
+            payload = line.split("FACE_EVENT ", 1)[1].strip()
+            try:
+                event = json.loads(payload)
+                if event.get("event_type") == "face_encounter":
+                    try:
+                        _events.put_nowait(event)
+                    except queue.Full:
+                        log.warning("face event queue full; dropping oldest event")
+                        try:
+                            _events.get_nowait()
+                            _events.task_done()
+                        except queue.Empty:
+                            pass
+                        _events.put_nowait(event)
+            except json.JSONDecodeError:
+                log.warning("invalid FACE_EVENT payload: %s", payload)
+        if marker in line or line.startswith("FACE_READY"):
             _ready.set()
     if proc.poll() is not None and not _ready.is_set():
         log.error("VSIS process exited before ready: rc=%s", proc.returncode)
 
 
 def _cleanup() -> None:
-    global _process, _proxy, _speech_channel
+    global _process, _config_dir
     if _process is not None:
         if _process.poll() is None:
             _process.terminate()
@@ -186,13 +165,47 @@ def _cleanup() -> None:
                 _process.kill()
                 _process.wait(timeout=3)
         _process = None
-    if _proxy is not None:
-        _proxy.close()
-        _proxy = None
-    if _speech_channel is not None:
-        _speech_channel.close()
-        _speech_channel = None
+    if _config_dir is not None:
+        _config_dir.cleanup()
+        _config_dir = None
     _ready.clear()
+    while True:
+        try:
+            _events.get_nowait()
+            _events.task_done()
+        except queue.Empty:
+            break
+
+
+@service.mcp("robonix/service/face_recognition/events/next")
+def next_event(req: GetFaceRecognitionEvent_Request) -> GetFaceRecognitionEvent_Response:
+    wait_ms = max(0, min(int(req.wait_ms), 5000))
+    try:
+        event = _events.get(timeout=wait_ms / 1000.0 if wait_ms else 0)
+    except queue.Empty:
+        return GetFaceRecognitionEvent_Response(
+            available=False,
+            detail="no face encounter event available",
+        )
+    finally:
+        # task_done is called after the event is copied below for the success path.
+        pass
+    try:
+        return GetFaceRecognitionEvent_Response(
+            available=True,
+            event_id=str(event.get("event_id", "")),
+            person_id=int(event.get("person_id", -1)),
+            name=str(event.get("name", "")),
+            hello=str(event.get("hello", "")),
+            confidence=float(event.get("confidence", 0.0)),
+            encounter_count=int(event.get("encounter_count", 0)),
+            base_intimacy_level=int(event.get("base_intimacy_level", 1)),
+            intimacy_level=int(event.get("intimacy_level", 1)),
+            timestamp=str(event.get("timestamp", "")),
+            detail="ok",
+        )
+    finally:
+        _events.task_done()
 
 
 @service.on_init
@@ -200,7 +213,6 @@ def init(config: dict[str, Any]):
     global _settings
     try:
         _settings = Settings.parse(config)
-        _find_speech()
         return Ok()
     except Exception as exc:  # noqa: BLE001
         return Err(str(exc))
@@ -208,22 +220,19 @@ def init(config: dict[str, Any]):
 
 @service.on_activate
 def activate():
-    global _process, _proxy, _speech_channel
+    global _process, _config_dir
     with _lock:
         if _settings is None:
             return Err("service has not been initialized")
         if _process is not None:
             return Err("service is already active")
         try:
-            cap = _find_speech()
-            _speech_channel = service.connect_capability(cap, SPEAK, Transport.MCP)
-            endpoint = _speech_channel.endpoint
-            if not endpoint:
-                raise RuntimeError("speech capability returned an empty endpoint")
-            _proxy = SpeechProxy(_settings.speak_host, _settings.speak_port, endpoint)
-            _proxy.start()
+            _config_dir = tempfile.TemporaryDirectory(prefix="robonix-face-")
+            config_path = Path(_config_dir.name) / "cfg.yaml"
+            config_path.write_text(json.dumps(_settings.vsis_config, ensure_ascii=False, allow_nan=False), encoding="utf-8")
             env = os.environ.copy()
             env.setdefault("LD_LIBRARY_PATH", str(_settings.external_root / "bin"))
+            env["VSIS_CONFIG_PATH"] = str(config_path)
             _process = subprocess.Popen(
                 [str(_settings.binary_path)], cwd=_settings.external_root, env=env,
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,

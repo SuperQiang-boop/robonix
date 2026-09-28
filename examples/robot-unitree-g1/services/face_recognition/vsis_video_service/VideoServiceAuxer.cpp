@@ -3,6 +3,8 @@
 #include <limits.h>
 
 #include <string>
+#include <cstdlib>
+#include <stdexcept>
 #include <vector>
 #include <iostream>
 #include <filesystem>
@@ -34,7 +36,8 @@ void VideoServiceAuxer::initAppDir() {
 }
 
 void VideoServiceAuxer::readConfig() {
-    const std::string ymlFile = getDir("config") + "cfg.yaml";
+    const char* configPath = std::getenv("VSIS_CONFIG_PATH");
+    const std::string ymlFile = configPath && *configPath ? configPath : getDir("config") + "cfg.yaml";
     try {
         YAML::Node config = YAML::LoadFile(ymlFile);
         m_logMode   = config["log"]["mode"].as<int>(0);    // 键缺省时用默认值
@@ -50,6 +53,21 @@ void VideoServiceAuxer::readConfig() {
         m_maxFaces          = config["face"]["max_faces"].as<int>(5);
         m_confirmHits       = config["face"]["confirm_hits"].as<int>(3);
         m_absentSec         = config["face"]["absent_sec"].as<int>(3);
+        const YAML::Node thresholds = config["face"]["intimacy_upgrade_encounters"];
+        if (thresholds) {
+            if (!thresholds.IsSequence() || thresholds.size() != m_intimacyUpgradeEncounters.size()) {
+                throw std::runtime_error("face.intimacy_upgrade_encounters must have four entries (levels 2-5)");
+            }
+            int previous = 0;
+            for (std::size_t index = 0; index < thresholds.size(); ++index) {
+                const int count = thresholds[index].as<int>();
+                if (count <= previous) {
+                    throw std::runtime_error("face.intimacy_upgrade_encounters must be positive and strictly increasing");
+                }
+                m_intimacyUpgradeEncounters[index] = count;
+                previous = count;
+            }
+        }
 
         m_audioHost = config["audio"]["host"].as<std::string>("127.0.0.1");
         m_audioPort = config["audio"]["port"].as<int>(10086);

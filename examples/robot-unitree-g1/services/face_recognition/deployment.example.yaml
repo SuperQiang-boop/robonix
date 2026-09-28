@@ -4,6 +4,17 @@ service:
     config:
       # Omit external_root/binary_path to use the bundled VSIS project.
       startup_timeout: 45
-      speak_host: 127.0.0.1
-      speak_port: 10086
-      # speech_provider_id: speech
+      log: {mode: 2, level: 1}
+      video:
+        source: "http://camera-host:8080/video.mjpg"
+        reconnect_interval_ms: 3000
+        width: 1280
+        height: 720
+      face:
+        search_threshold: 0.45
+        greet_cooldown_sec: 30
+        max_faces: 5
+        confirm_hits: 1
+        absent_sec: 3
+        intimacy_upgrade_encounters: [5, 15, 30, 60]
+      audio: {host: 127.0.0.1, port: 10086}

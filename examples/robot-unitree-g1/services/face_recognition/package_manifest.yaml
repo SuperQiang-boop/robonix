@@ -10,3 +10,5 @@ start: bash scripts/start.sh
 stop: bash scripts/stop.sh
 capabilities:
   - name: robonix/service/face_recognition/driver
+  - name: robonix/service/face_recognition/events/next
+    path: capabilities/events/next.v1.toml

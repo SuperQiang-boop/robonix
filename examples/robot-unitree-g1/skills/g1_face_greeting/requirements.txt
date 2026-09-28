@@ -1,0 +1,2 @@
+fastmcp[client]>=3,<4
+mcp>=1,<2
