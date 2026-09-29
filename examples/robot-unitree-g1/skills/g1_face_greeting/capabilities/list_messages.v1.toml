@@ -3,6 +3,6 @@ id = "robonix/skill/g1_face_greeting/list_messages"
 version = "1"
 kind = "skill"
 idl = "g1_face_greeting/srv/ListFaceMessages.srv"
-description = "List up to 100 saved face-message tasks; status is empty for all or pending/delivering/delivered/uncertain/cancelled."
+description = "List up to 100 saved face-message tasks and refresh tracked object state through Scene; status is empty for all or pending/delivering/delivered/uncertain/cancelled."
 [mode]
 type = "rpc"

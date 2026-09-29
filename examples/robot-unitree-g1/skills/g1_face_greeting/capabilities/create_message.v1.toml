@@ -3,6 +3,6 @@ id = "robonix/skill/g1_face_greeting/create_message"
 version = "1"
 kind = "skill"
 idl = "g1_face_greeting/srv/CreateFaceMessage.srv"
-description = "Save a one-time message to speak next time the robot sees an exactly registered person. Provide person_name, verbatim message and sender (empty string if unknown). Do not claim it has been delivered."
+description = "Save a one-time message for an exactly registered person. Optionally provide object_label, such as cup, to bind the task to the unique object currently known by Scene; the object is checked later by ID. Do not claim delivery."
 [mode]
 type = "rpc"

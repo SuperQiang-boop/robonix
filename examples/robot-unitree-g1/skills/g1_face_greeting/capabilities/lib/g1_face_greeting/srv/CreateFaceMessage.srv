@@ -1,9 +1,12 @@
 string person_name
 string message
 string sender
+string object_label
 ---
 bool accepted
 string task_id
 int64 person_id
 string person_name
+string object_id
+string object_label
 string detail

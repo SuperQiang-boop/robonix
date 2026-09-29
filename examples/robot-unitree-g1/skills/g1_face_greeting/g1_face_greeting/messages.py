@@ -21,6 +21,11 @@ class MessageStore:
                     person_name TEXT NOT NULL,
                     sender TEXT NOT NULL,
                     body TEXT NOT NULL,
+                    object_id TEXT NOT NULL DEFAULT '',
+                    object_label TEXT NOT NULL DEFAULT '',
+                    object_status TEXT NOT NULL DEFAULT 'not_tracked',
+                    object_last_seen_at REAL,
+                    object_checked_at REAL,
                     status TEXT NOT NULL,
                     created_at REAL NOT NULL,
                     event_id TEXT NOT NULL DEFAULT '',
@@ -33,6 +38,17 @@ class MessageStore:
                 "UPDATE messages SET status='uncertain', detail='skill restarted during delivery; verify before retrying' "
                 "WHERE status='delivering'"
             )
+            columns = {row[1] for row in connection.execute("PRAGMA table_info(messages)")}
+            migrations = {
+                "object_id": "ALTER TABLE messages ADD COLUMN object_id TEXT NOT NULL DEFAULT ''",
+                "object_label": "ALTER TABLE messages ADD COLUMN object_label TEXT NOT NULL DEFAULT ''",
+                "object_status": "ALTER TABLE messages ADD COLUMN object_status TEXT NOT NULL DEFAULT 'not_tracked'",
+                "object_last_seen_at": "ALTER TABLE messages ADD COLUMN object_last_seen_at REAL",
+                "object_checked_at": "ALTER TABLE messages ADD COLUMN object_checked_at REAL",
+            }
+            for column, statement in migrations.items():
+                if column not in columns:
+                    connection.execute(statement)
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
@@ -52,19 +68,31 @@ class MessageStore:
     def _dedup_text(value: str) -> str:
         return "".join(value.split()).rstrip("。！？!?；;，,.")
 
-    def create_or_get(self, person_id: int, person_name: str, sender: str, body: str) -> tuple[str, bool]:
+    def create_or_get(
+        self,
+        person_id: int,
+        person_name: str,
+        sender: str,
+        body: str,
+        object_id: str = "",
+        object_label: str = "",
+    ) -> tuple[str, bool]:
         """Atomically deduplicate an identical pending task before saving a new one."""
         task_id = str(uuid.uuid4())
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             existing_rows = connection.execute(
-                "SELECT task_id, sender, body FROM messages WHERE person_id=? AND status='pending' "
+                "SELECT task_id, sender, body, object_id FROM messages WHERE person_id=? AND status='pending' "
                 "ORDER BY created_at, task_id", (person_id,),
             ).fetchall()
             sender_key = self._dedup_text(sender)
             body_key = self._dedup_text(body)
             for row in existing_rows:
-                if self._dedup_text(row["sender"]) == sender_key and self._dedup_text(row["body"]) == body_key:
+                if (
+                    self._dedup_text(row["sender"]) == sender_key
+                    and self._dedup_text(row["body"]) == body_key
+                    and str(row["object_id"] or "") == object_id
+                ):
                     return str(row["task_id"]), False
             existing = connection.execute(
                 "SELECT COALESCE(SUM(LENGTH(body) + LENGTH(sender)), 0) FROM messages "
@@ -73,9 +101,12 @@ class MessageStore:
             if existing + len(body) + len(sender) > 180:
                 raise ValueError("pending messages for this person exceed 180 characters; deliver or cancel them first")
             connection.execute(
-                "INSERT INTO messages(task_id, person_id, person_name, sender, body, status, created_at) "
-                "VALUES(?, ?, ?, ?, ?, 'pending', ?)",
-                (task_id, person_id, person_name, sender, body, time.time()),
+                "INSERT INTO messages(task_id, person_id, person_name, sender, body, object_id, object_label, "
+                "object_status, status, created_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)",
+                (
+                    task_id, person_id, person_name, sender, body, object_id, object_label,
+                    "present" if object_id else "not_tracked", time.time(),
+                ),
             )
         return task_id, True
 
@@ -83,6 +114,21 @@ class MessageStore:
         """Save a pending task and return an existing identical pending task when present."""
         task_id, _ = self.create_or_get(person_id, person_name, sender, body)
         return task_id
+
+    def update_object_status(
+        self,
+        task_id: str,
+        object_status: str,
+        checked_at: float,
+        last_seen_at: float | None,
+    ) -> None:
+        """Persist the latest Scene existence result for a tracked object."""
+        with self._connect() as connection:
+            connection.execute(
+                "UPDATE messages SET object_status=?, object_checked_at=?, object_last_seen_at=? "
+                "WHERE task_id=? AND object_id != ''",
+                (object_status, checked_at, last_seen_at, task_id),
+            )
 
     def claim(self, person_id: int, observed_at: float, event_id: str) -> list[dict]:
         """Only claim tasks created before this event entered the service's queue."""

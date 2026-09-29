@@ -27,6 +27,7 @@ from g1_face_greeting.messages import MessageStore
 log = logging.getLogger("g1_face_greeting")
 FACE_EVENTS = "robonix/service/face_recognition/events/next"
 FACE_RESOLVE = "robonix/service/face_recognition/people/resolve"
+SCENE_OBJECTS = "robonix/system/scene/list_objects"
 SPEECH = "robonix/service/speech/speak"
 ARM = "robonix/skill/g1_arm_actions/run"
 ALLOWED_ACTIONS = {
@@ -40,6 +41,7 @@ ALLOWED_ACTIONS = {
 @dataclass(frozen=True)
 class Settings:
     face_provider_id: str
+    scene_provider_id: str
     speech_provider_id: str
     arm_provider_id: str
     navigation_enabled: bool
@@ -56,6 +58,7 @@ class Settings:
 
         allowed = {
             "face_provider_id",
+            "scene_provider_id",
             "speech_provider_id",
             "arm_provider_id",
             "navigation_enabled",
@@ -120,6 +123,7 @@ class Settings:
             raise ValueError("message_store_path must be an absolute file path")
         return cls(
             text("face_provider_id", "face_recognition"),
+            text("scene_provider_id", "scene"),
             text("speech_provider_id", "speech"),
             text("arm_provider_id", "g1_arm_actions"),
             navigation,
@@ -133,6 +137,7 @@ class Settings:
 
 _settings: Settings | None = None
 _face_connection = None
+_scene_connection = None
 _speech_connection = None
 _arm_connection = None
 _worker: threading.Thread | None = None
@@ -148,6 +153,13 @@ def _find(contract: str, provider_id: str):
     if len(caps) != 1:
         raise RuntimeError(f"expected one {provider_id!r} provider for {contract}, found {len(caps)}")
     return caps[0]
+
+
+def _find_optional(contract: str, provider_id: str):
+    caps = ATLAS.find_capability(provider_id=provider_id, contract_id=contract, transport=Transport.MCP)
+    if len(caps) > 1:
+        raise RuntimeError(f"expected at most one {provider_id!r} provider for {contract}, found {len(caps)}")
+    return caps[0] if caps else None
 
 
 def _result_value(result: Any) -> dict[str, Any]:
@@ -193,6 +205,87 @@ async def _call_connection(connection: Any, tool: str, payload: dict[str, Any], 
     if not endpoint:
         raise RuntimeError(f"empty endpoint for {tool}")
     return await _call(endpoint, tool, payload, timeout)
+
+
+def _normal_label(value: Any) -> str:
+    return "".join(str(value or "").casefold().split())
+
+
+async def _resolve_scene_object(label: str) -> dict[str, Any]:
+    """Resolve one exact Scene label to its current stable object ID."""
+    if _scene_connection is None:
+        raise RuntimeError("Scene object tracking is unavailable")
+    response = await _call_connection(_scene_connection, "list_objects", {}, 8.0)
+    wanted = _normal_label(label)
+    matches = [
+        item for item in response.get("objects", [])
+        if isinstance(item, dict) and _normal_label(item.get("label")) == wanted
+    ]
+    if not matches:
+        raise RuntimeError(f"Scene does not currently list an object labeled {label!r}")
+    if len(matches) > 1:
+        ids = ", ".join(str(item.get("id", "")) for item in matches)
+        raise RuntimeError(f"Scene lists multiple objects labeled {label!r}: {ids}; use a unique object")
+    object_id = str(matches[0].get("id", "")).strip()
+    if not object_id:
+        raise RuntimeError(f"Scene returned an object labeled {label!r} without an ID")
+    return {"id": object_id, "label": str(matches[0].get("label", label))}
+
+
+async def _refresh_object_status(task: dict[str, Any]) -> dict[str, Any]:
+    """Refresh tracked-object existence; query failure remains unknown, never removed."""
+    object_id = str(task.get("object_id", ""))
+    if not object_id:
+        return task
+    checked_at = time.time()
+    try:
+        if _scene_connection is None:
+            raise RuntimeError("Scene object tracking is unavailable")
+        response = await _call_connection(_scene_connection, "list_objects", {}, 8.0)
+        objects = [item for item in response.get("objects", []) if isinstance(item, dict)]
+        current = next((item for item in objects if str(item.get("id", "")) == object_id), None)
+        object_status = "present" if current is not None else "removed"
+        last_seen = float(current.get("last_seen_unix", 0.0)) if current is not None else None
+    except Exception as exc:  # noqa: BLE001
+        log.warning("scene object status refresh failed for task_id=%s: %s", task.get("task_id"), exc)
+        object_status, last_seen = "unknown", None
+    assert _store is not None
+    _store.update_object_status(str(task["task_id"]), object_status, checked_at, last_seen)
+    refreshed = _store.get(str(task["task_id"]))
+    return refreshed or task
+
+
+async def _refresh_object_statuses(tasks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Refresh all tracked tasks from one Scene snapshot, preserving unknown on failure."""
+    tracked = [task for task in tasks if str(task.get("object_id", ""))]
+    if not tracked:
+        return tasks
+    checked_at = time.time()
+    try:
+        if _scene_connection is None:
+            raise RuntimeError("Scene object tracking is unavailable")
+        response = await _call_connection(_scene_connection, "list_objects", {}, 8.0)
+        objects = {
+            str(item.get("id", "")): item
+            for item in response.get("objects", [])
+            if isinstance(item, dict) and str(item.get("id", ""))
+        }
+        for task in tracked:
+            current = objects.get(str(task["object_id"]))
+            _store.update_object_status(
+                str(task["task_id"]),
+                "present" if current is not None else "removed",
+                checked_at,
+                float(current.get("last_seen_unix", 0.0)) if current is not None else None,
+            )
+    except Exception as exc:  # noqa: BLE001
+        log.warning("scene object status refresh failed for %d task(s): %s", len(tracked), exc)
+        for task in tracked:
+            _store.update_object_status(str(task["task_id"]), "unknown", checked_at, None)
+    refreshed = []
+    for task in tasks:
+        refreshed.append(_store.get(str(task["task_id"])) or task)
+    return refreshed
 
 
 def _timed_call(
@@ -343,7 +436,7 @@ def init(config: dict[str, Any]):
 
 @skill.on_activate
 def activate():
-    global _face_connection, _speech_connection, _arm_connection, _worker, _store
+    global _face_connection, _scene_connection, _speech_connection, _arm_connection, _worker, _store
     with _lock:
         if _settings is None:
             return Err("skill has not been initialized")
@@ -353,6 +446,13 @@ def activate():
             _store = MessageStore(_settings.message_store_path)
             _face_connection = skill.connect_capability(_find(FACE_EVENTS, _settings.face_provider_id), FACE_EVENTS, Transport.MCP)
             _find(FACE_RESOLVE, _settings.face_provider_id)
+            scene_capability = _find_optional(SCENE_OBJECTS, _settings.scene_provider_id)
+            _scene_connection = (
+                skill.connect_capability(scene_capability, SCENE_OBJECTS, Transport.MCP)
+                if scene_capability is not None else None
+            )
+            if _scene_connection is None:
+                log.warning("Scene object tracking is unavailable; ordinary face messages remain usable")
             _speech_connection = skill.connect_capability(_find(SPEECH, _settings.speech_provider_id), SPEECH, Transport.MCP)
             _arm_connection = skill.connect_capability(_find(ARM, _settings.arm_provider_id), ARM, Transport.MCP)
             _last_greet.clear()
@@ -369,7 +469,7 @@ def activate():
 
 @skill.on_deactivate
 def deactivate():
-    global _face_connection, _speech_connection, _arm_connection, _worker, _store
+    global _face_connection, _scene_connection, _speech_connection, _arm_connection, _worker, _store
     with _lock:
         _stop.set()
         if _worker is not None and _worker is not threading.current_thread():
@@ -377,8 +477,8 @@ def deactivate():
             if _worker.is_alive():
                 return Err("greeting worker is still completing an in-flight MCP request")
         _worker = None
-        connections = (_face_connection, _speech_connection, _arm_connection)
-        _face_connection = _speech_connection = _arm_connection = None
+        connections = (_face_connection, _scene_connection, _speech_connection, _arm_connection)
+        _face_connection = _scene_connection = _speech_connection = _arm_connection = None
         errors = []
         for connection in connections:
             try:
@@ -425,6 +525,7 @@ async def create_message(req: CreateFaceMessage_Request) -> CreateFaceMessage_Re
     if _settings is None or _store is None or _face_connection is None:
         return CreateFaceMessage_Response(detail="greeting skill is not active")
     person_name, body, sender = req.person_name.strip(), req.message.strip(), req.sender.strip()
+    object_label = req.object_label.strip()
     if not person_name or not body or len(body) > 160 or len(sender) > 30:
         return CreateFaceMessage_Response(detail="person_name and message are required; message <=160 and sender <=30 characters")
     if any(ord(char) < 32 for char in body + sender):
@@ -434,7 +535,11 @@ async def create_message(req: CreateFaceMessage_Request) -> CreateFaceMessage_Re
         if not response.get("found"):
             return CreateFaceMessage_Response(detail=str(response.get("detail", "person not registered")))
         person_id = int(response["person_id"])
-        task_id, created = _store.create_or_get(person_id, str(response["name"]), sender, body)
+        object_info = await _resolve_scene_object(object_label) if object_label else {"id": "", "label": ""}
+        task_id, created = _store.create_or_get(
+            person_id, str(response["name"]), sender, body,
+            object_id=object_info["id"], object_label=object_info["label"],
+        )
         log.info(
             "face message %s task_id=%s requested_name=%s resolved_name=%s person_id=%s sender=%s",
             "created" if created else "deduplicated",
@@ -450,7 +555,8 @@ async def create_message(req: CreateFaceMessage_Request) -> CreateFaceMessage_Re
             detail = "an identical pending task already exists; awaiting next face encounter"
         return CreateFaceMessage_Response(
             accepted=True, task_id=task_id, person_id=person_id,
-            person_name=str(response["name"]), detail=detail,
+            person_name=str(response["name"]), object_id=object_info["id"],
+            object_label=object_info["label"], detail=detail,
         )
     except Exception as exc:  # noqa: BLE001
         log.exception("failed to save face message")
@@ -458,7 +564,7 @@ async def create_message(req: CreateFaceMessage_Request) -> CreateFaceMessage_Re
 
 
 @skill.mcp("robonix/skill/g1_face_greeting/list_messages")
-def list_messages(req: ListFaceMessages_Request) -> ListFaceMessages_Response:
+async def list_messages(req: ListFaceMessages_Request) -> ListFaceMessages_Response:
     """List recent tasks so Pilot can report pending and delivered results."""
     if _store is None:
         return ListFaceMessages_Response(detail="greeting skill is not active")
@@ -466,21 +572,25 @@ def list_messages(req: ListFaceMessages_Request) -> ListFaceMessages_Response:
     if status not in ("", "pending", "delivering", "delivered", "uncertain", "cancelled"):
         return ListFaceMessages_Response(detail="invalid status filter")
     try:
-        return ListFaceMessages_Response(tasks_json=json.dumps(_store.list(status), ensure_ascii=False), detail="ok")
+        tasks = await _refresh_object_statuses(_store.list(status))
+        return ListFaceMessages_Response(tasks_json=json.dumps(tasks, ensure_ascii=False), detail="ok")
     except Exception as exc:  # noqa: BLE001
         return ListFaceMessages_Response(detail=str(exc))
 
 
 @skill.mcp("robonix/skill/g1_face_greeting/message_status")
-def message_status(req: FaceMessageStatus_Request) -> FaceMessageStatus_Response:
+async def message_status(req: FaceMessageStatus_Request) -> FaceMessageStatus_Response:
     """Read one task; a speech-success response does not prove human receipt."""
     if _store is None:
         return FaceMessageStatus_Response(detail="greeting skill is not active")
     try:
         task = _store.get(req.task_id.strip())
+        if task and task.get("object_id"):
+            task = await _refresh_object_status(task)
         return FaceMessageStatus_Response(
             found=task is not None,
             task_json=json.dumps(task, ensure_ascii=False) if task else "",
+            object_status=str(task.get("object_status", "not_tracked")) if task else "",
             detail="ok" if task else "task not found",
         )
     except Exception as exc:  # noqa: BLE001

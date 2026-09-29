@@ -30,6 +30,7 @@ class MessageTests(unittest.TestCase):
         main._settings = main.Settings.parse({"message_store_path": str(self.path)})
         main._store = MessageStore(self.path)
         main._face_connection = SimpleNamespace(endpoint="face")
+        main._scene_connection = None
         main._speech_connection = SimpleNamespace(endpoint="speech")
         main._arm_connection = SimpleNamespace(endpoint="arm")
         main._last_greet.clear()
@@ -72,7 +73,7 @@ class MessageTests(unittest.TestCase):
                 )))
                 self.assertTrue(first.accepted)
                 self.assertTrue(second.accepted)
-                pending = main.list_messages(ListFaceMessages_Request(status="pending"))
+                pending = asyncio.run(main.list_messages(ListFaceMessages_Request(status="pending")))
                 self.assertEqual(len(json.loads(pending.tasks_json)), 2)
                 result = main._greet(self._event())
                 self.assertTrue(result["speech_ok"])
@@ -81,8 +82,39 @@ class MessageTests(unittest.TestCase):
                 self.assertIn("小红您好", calls[0][2]["text"])
                 self.assertIn("王老师托我告诉您：下午开会", calls[0][2]["text"])
                 self.assertIn("有人托我告诉您：带上材料", calls[0][2]["text"])
-                status = main.message_status(FaceMessageStatus_Request(task_id=first.task_id))
+                status = asyncio.run(main.message_status(FaceMessageStatus_Request(task_id=first.task_id)))
                 self.assertEqual(json.loads(status.task_json)["status"], "delivered")
+
+    def test_object_is_bound_at_creation_and_scene_absence_means_removed(self):
+        main._scene_connection = SimpleNamespace(endpoint="scene")
+
+        async def call_async(connection, tool, payload, timeout):
+            if tool == "resolve":
+                return {"found": True, "person_id": 8, "name": "小红"}
+            return {"objects": [{"id": "scene.object.cup_001", "label": "cup", "last_seen_unix": 10.0}]}
+
+        with patch.object(main, "_call_connection", side_effect=call_async):
+            created = asyncio.run(main.create_message(CreateFaceMessage_Request(
+                person_name="小红", message="请拿走杯子", sender="小C", object_label="cup",
+            )))
+        self.assertTrue(created.accepted)
+        self.assertEqual(created.object_id, "scene.object.cup_001")
+        self.assertEqual(main._store.get(created.task_id)["object_status"], "present")
+
+        async def absent(connection, tool, payload, timeout):
+            return {"objects": []}
+
+        with patch.object(main, "_call_connection", side_effect=absent):
+            status = asyncio.run(main.message_status(FaceMessageStatus_Request(task_id=created.task_id)))
+        self.assertEqual(status.object_status, "removed")
+        self.assertEqual(json.loads(status.task_json)["object_status"], "removed")
+
+    def test_object_scene_query_failure_is_unknown(self):
+        task_id, _ = main._store.create_or_get(8, "小红", "", "请拿走杯子", "cup-1", "cup")
+        main._scene_connection = SimpleNamespace(endpoint="scene")
+        with patch.object(main, "_call_connection", side_effect=RuntimeError("scene offline")):
+            status = asyncio.run(main.message_status(FaceMessageStatus_Request(task_id=task_id)))
+        self.assertEqual(status.object_status, "unknown")
 
     def test_old_event_does_not_deliver_and_cooldown_does_not_block_message(self):
         old_time = time.time() - 5

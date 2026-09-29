@@ -15,6 +15,16 @@ Build with `bash scripts/build.sh`, which creates a package venv containing Fast
 
 Pilot can call `create_message` with an exact registered `person_name`, verbatim `message`, and `sender` (empty string if unspecified). The skill resolves the name through `face_recognition/people/resolve`, then stores a one-time task bound to the registered person ID. `list_messages`, `message_status`, and `cancel_message` query or cancel tasks by ID. Multiple pending messages to the same person are spoken together during the next observed encounter, combined with the normal greeting in one speech request while the arm action starts in parallel. Greeting cooldown does not suppress a pending message. A prior buffered face event cannot deliver a message created later.
 
-Creation is idempotent for an identical pending target, sender, and message: repeated Pilot/tool calls return the original `task_id` instead of creating another task. Whitespace and terminal punctuation differences are ignored for this deduplication check. A task that is already `delivered` is not deduplicated, so a later explicit request can intentionally send the same words again.
+Creation is idempotent for an identical pending target, sender, message, and tracked object: repeated Pilot/tool calls return the original `task_id` instead of creating another task. Whitespace and terminal punctuation differences are ignored for this deduplication check. A task that is already `delivered` is not deduplicated, so a later explicit request can intentionally send the same words again.
+
+For the minimal object handoff flow, provide `object_label` to `create_message`, for example `cup`. The skill calls `robonix/system/scene/list_objects`, requires exactly one current object with that label, and stores its stable Scene `object_id` in the task. It does not infer relations such as "on the stool" and does not track by label after creation. `message_status` calls Scene again and reports `object_status`: `present` when that ID is still listed, `removed` when Scene no longer lists it, and `unknown` when Scene cannot be queried. Under the current agreed assumption, `removed` means the object was taken away. A missing/temporarily unavailable Scene response is never treated as removal.
+
+Example Pilot request:
+
+```text
+我把杯子放在机器人面前了。下次见到小B时，告诉他小C让他把杯子拿走。
+```
+
+Pilot should create the task with `person_name: 小B`, the spoken `message`, `sender: 小C`, and `object_label: cup`. After the encounter, a follow-up query for the task status refreshes the cup state before answering whether it remains in front of the robot.
 
 Set `message_store_path` in the deployment manifest to an absolute persistent SQLite path (the example uses `${ROBONIX_DEPLOY_DIR}/data/face_messages.sqlite3`, outside `rbnx-build`). Keep the skill activated after task creation so it continues consuming face events; a restart requires activation again. Task states are `pending`, `delivering`, `delivered`, `uncertain`, and `cancelled`. `delivered` means only that the speech service returned success; speech errors or restart during delivery become `uncertain` and are **not** automatically repeated. A task already being delivered cannot be cancelled. No unsolicited Pilot notification is sent; users can query task status. Task creation is limited to 160 characters per message and 180 combined pending message/sender characters per recipient, to keep one speech request bounded. The current mode still cannot detect robot motion, so do not activate it while navigating.
