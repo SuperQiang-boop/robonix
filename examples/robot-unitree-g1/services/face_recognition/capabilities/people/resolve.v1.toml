@@ -1,0 +1,12 @@
+[contract]
+id = "robonix/service/face_recognition/people/resolve"
+version = "1"
+kind = "service"
+idl = "face_recognition/srv/ResolveFacePerson.srv"
+description = "Resolve an exact registered face name to one person ID; reject missing or ambiguous names."
+
+[mode]
+type = "rpc"
+
+[semantics]
+user_invocable = false

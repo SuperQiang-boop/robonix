@@ -2,7 +2,7 @@
 
 This package is a Robonix service bridge for the external bundled `vsis_video_service/` C++ executable. The external program keeps ownership of camera capture, InspireFace inference, the face feature database, and `person/mapping.json`; greeting behavior is owned by `g1_face_greeting`.
 
-The bridge registers `robonix/service/face_recognition/driver` and `robonix/service/face_recognition/events/next`, validates the external executable during `CMD_INIT`, starts the VSIS executable, and reports `ACTIVE` only after the configured ready marker (`FACE_READY` by default) appears in the child output. The event capability returns confirmed registered-face encounters from a bounded queue.
+The bridge registers `robonix/service/face_recognition/driver`, `robonix/service/face_recognition/events/next`, and `robonix/service/face_recognition/people/resolve`. It validates the external executable during `CMD_INIT`, starts the VSIS executable, and reports `ACTIVE` only after the configured ready marker (`FACE_READY` by default) appears in the child output. The event capability returns confirmed registered-face encounters from a bounded queue with an `observed_at` time. The lookup resolves only an exact unique registered name to an ID; unknown or ambiguous names fail.
 
 The VSIS configuration remains in `<external_root>/config/cfg.yaml`. Its audio settings are retained for compatibility but are not used by the event-only bridge. Greeting speech is owned by `g1_face_greeting`.
 

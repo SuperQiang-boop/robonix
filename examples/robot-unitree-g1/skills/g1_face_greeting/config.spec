@@ -27,6 +27,9 @@ cooldown_sec:
   type: number
   default: 30
   range: [0, 3600]
+message_store_path:
+  type: string
+  description: Absolute SQLite file path in persistent deployment storage; do not use rbnx-build.
 action_level_1:
   type: string
   default: wave_under_head

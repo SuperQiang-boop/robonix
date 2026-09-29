@@ -1,0 +1,8 @@
+[contract]
+id = "robonix/skill/g1_face_greeting/message_status"
+version = "1"
+kind = "skill"
+idl = "g1_face_greeting/srv/FaceMessageStatus.srv"
+description = "Look up the delivery status of a face-message task by task_id; delivered means the speech service reported success, not proof a person heard it."
+[mode]
+type = "rpc"

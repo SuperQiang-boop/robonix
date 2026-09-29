@@ -10,14 +10,23 @@ import threading
 import time
 from collections import OrderedDict
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from robonix_api import ATLAS, Err, Ok, Skill
 from robonix_api.atlas_types import Transport
-from g1_face_greeting_mcp import GreetFace_Request, GreetFace_Response
+from g1_face_greeting_mcp import (
+    CancelFaceMessage_Request, CancelFaceMessage_Response,
+    CreateFaceMessage_Request, CreateFaceMessage_Response,
+    FaceMessageStatus_Request, FaceMessageStatus_Response,
+    GreetFace_Request, GreetFace_Response,
+    ListFaceMessages_Request, ListFaceMessages_Response,
+)
+from g1_face_greeting.messages import MessageStore
 
 log = logging.getLogger("g1_face_greeting")
 FACE_EVENTS = "robonix/service/face_recognition/events/next"
+FACE_RESOLVE = "robonix/service/face_recognition/people/resolve"
 SPEECH = "robonix/service/speech/speak"
 ARM = "robonix/skill/g1_arm_actions/run"
 ALLOWED_ACTIONS = {
@@ -38,6 +47,7 @@ class Settings:
     poll_wait_ms: int
     cooldown_sec: float
     actions: dict[int, str]
+    message_store_path: Path
 
     @classmethod
     def parse(cls, raw: dict[str, Any]) -> "Settings":
@@ -52,6 +62,7 @@ class Settings:
             "turn_to_face_enabled",
             "poll_wait_ms",
             "cooldown_sec",
+            "message_store_path",
             *(f"action_level_{level}" for level in range(1, 6)),
         }
         unknown = sorted(set(raw) - allowed)
@@ -102,6 +113,11 @@ class Settings:
             if action not in ALLOWED_ACTIONS:
                 raise ValueError(f"action_level_{level} is not allowlisted: {action}")
             actions[level] = action
+        store_path = Path(str(raw.get(
+            "message_store_path", Path.home() / ".local/share/robonix/face_messages.sqlite3"
+        ))).expanduser()
+        if not store_path.is_absolute() or store_path.name in ("", ".", ".."):
+            raise ValueError("message_store_path must be an absolute file path")
         return cls(
             text("face_provider_id", "face_recognition"),
             text("speech_provider_id", "speech"),
@@ -111,6 +127,7 @@ class Settings:
             poll,
             cooldown,
             actions,
+            store_path,
         )
 
 
@@ -123,6 +140,7 @@ _stop = threading.Event()
 _lock = threading.RLock()
 _last_greet: dict[int, float] = {}
 _seen_events: OrderedDict[str, None] = OrderedDict()
+_store: MessageStore | None = None
 
 
 def _find(contract: str, provider_id: str):
@@ -169,6 +187,14 @@ def _call_sync(connection: Any, tool: str, payload: dict[str, Any], timeout: flo
     return asyncio.run(_call(endpoint, tool, payload, timeout))
 
 
+async def _call_connection(connection: Any, tool: str, payload: dict[str, Any], timeout: float) -> dict[str, Any]:
+    """Call an MCP connection without creating a nested event loop in an MCP handler."""
+    endpoint = (connection.endpoint or "").strip()
+    if not endpoint:
+        raise RuntimeError(f"empty endpoint for {tool}")
+    return await _call(endpoint, tool, payload, timeout)
+
+
 def _timed_call(
     label: str,
     connection: Any,
@@ -201,22 +227,39 @@ def _greet(event: dict[str, Any]) -> dict[str, Any]:
     if level is None:
         return {"accepted": False, "detail": "intimacy level must be an integer in [1, 5]"}
     now = time.monotonic()
+    messages: list[dict] = []
     with _lock:
         if event_id and event_id in _seen_events:
             return {"accepted": False, "detail": "duplicate event"}
-        if person_id >= 0 and now - _last_greet.get(person_id, -1e9) < _settings.cooldown_sec:
+        greet_due = person_id < 0 or now - _last_greet.get(person_id, -1e9) >= _settings.cooldown_sec
+        observed_at = float(event.get("observed_at", 0.0))
+        if _store is not None and person_id >= 0 and observed_at > 0:
+            try:
+                messages = _store.claim(person_id, observed_at, event_id)
+                if messages:
+                    log.info("claimed %d face message(s) for person_id=%s event_id=%s", len(messages), person_id, event_id)
+            except Exception:  # noqa: BLE001
+                log.exception("face message claim failed for person_id=%s", person_id)
+        if not greet_due and not messages:
             return {"accepted": False, "detail": "greeting cooldown"}
         if event_id:
             _seen_events[event_id] = None
             if len(_seen_events) > 512:
                 _seen_events.popitem(last=False)
-        _last_greet[person_id] = now
+        if greet_due:
+            _last_greet[person_id] = now
 
     action = _settings.actions[level]
     speech_ok = False
     action_ok = False
     details: list[str] = []
-    speech_text = str(event.get("hello", "您好！"))
+    speech_parts = [str(event.get("hello", "您好！")).strip() or "您好！"] if greet_due else []
+    for message in messages:
+        prefix = f"{message['sender']}托我告诉您：" if message["sender"] else "有人托我告诉您："
+        speech_parts.append(f"{prefix}{message['body']}")
+    speech_text = "。".join(
+        part.rstrip("。！？!?；;，,") for part in speech_parts if part.strip()
+    ) + "。"
     with concurrent.futures.ThreadPoolExecutor(
         max_workers=2,
         thread_name_prefix="g1-face-greeting",
@@ -227,7 +270,7 @@ def _greet(event: dict[str, Any]) -> dict[str, Any]:
             _speech_connection,
             "speak",
             {"target": "", "text": speech_text},
-            65.0,
+            max(65.0, min(240.0, len(speech_text) * 1.2)),
         )
         action_future = executor.submit(
             _timed_call,
@@ -244,6 +287,13 @@ def _greet(event: dict[str, Any]) -> dict[str, Any]:
         except Exception as exc:  # noqa: BLE001
             details.append(f"speech_error={exc}")
             log.exception("speech failed for person_id=%s", person_id)
+        if messages:
+            try:
+                assert _store is not None
+                _store.finish([message["task_id"] for message in messages], speech_ok, details[-1])
+                log.info("face message delivery person_id=%s count=%d status=%s", person_id, len(messages), "delivered" if speech_ok else "uncertain")
+            except Exception:  # noqa: BLE001
+                log.exception("failed to save face message delivery result")
         try:
             arm = action_future.result()
             action_ok = bool(arm.get("accepted", False))
@@ -293,14 +343,16 @@ def init(config: dict[str, Any]):
 
 @skill.on_activate
 def activate():
-    global _face_connection, _speech_connection, _arm_connection, _worker
+    global _face_connection, _speech_connection, _arm_connection, _worker, _store
     with _lock:
         if _settings is None:
             return Err("skill has not been initialized")
         if _worker is not None:
             return Err("skill is already active")
         try:
+            _store = MessageStore(_settings.message_store_path)
             _face_connection = skill.connect_capability(_find(FACE_EVENTS, _settings.face_provider_id), FACE_EVENTS, Transport.MCP)
+            _find(FACE_RESOLVE, _settings.face_provider_id)
             _speech_connection = skill.connect_capability(_find(SPEECH, _settings.speech_provider_id), SPEECH, Transport.MCP)
             _arm_connection = skill.connect_capability(_find(ARM, _settings.arm_provider_id), ARM, Transport.MCP)
             _last_greet.clear()
@@ -317,7 +369,7 @@ def activate():
 
 @skill.on_deactivate
 def deactivate():
-    global _face_connection, _speech_connection, _arm_connection, _worker
+    global _face_connection, _speech_connection, _arm_connection, _worker, _store
     with _lock:
         _stop.set()
         if _worker is not None and _worker is not threading.current_thread():
@@ -335,6 +387,7 @@ def deactivate():
                 errors.append(str(exc))
         _last_greet.clear()
         _seen_events.clear()
+        _store = None
         if errors:
             return Err("connection cleanup failed: " + "; ".join(errors))
         return Ok()
@@ -364,6 +417,88 @@ def greet(req: GreetFace_Request) -> GreetFace_Response:
         action=str(result.get("action", "")),
         detail=str(result.get("detail", "")),
     )
+
+
+@skill.mcp("robonix/skill/g1_face_greeting/create_message")
+async def create_message(req: CreateFaceMessage_Request) -> CreateFaceMessage_Response:
+    """Store a verbatim one-time message for an unambiguous registered person."""
+    if _settings is None or _store is None or _face_connection is None:
+        return CreateFaceMessage_Response(detail="greeting skill is not active")
+    person_name, body, sender = req.person_name.strip(), req.message.strip(), req.sender.strip()
+    if not person_name or not body or len(body) > 160 or len(sender) > 30:
+        return CreateFaceMessage_Response(detail="person_name and message are required; message <=160 and sender <=30 characters")
+    if any(ord(char) < 32 for char in body + sender):
+        return CreateFaceMessage_Response(detail="message and sender must not contain control characters")
+    try:
+        response = await _call_connection(_face_connection, "resolve", {"name": person_name}, 8.0)
+        if not response.get("found"):
+            return CreateFaceMessage_Response(detail=str(response.get("detail", "person not registered")))
+        person_id = int(response["person_id"])
+        task_id, created = _store.create_or_get(person_id, str(response["name"]), sender, body)
+        log.info(
+            "face message %s task_id=%s requested_name=%s resolved_name=%s person_id=%s sender=%s",
+            "created" if created else "deduplicated",
+            task_id,
+            person_name,
+            response["name"],
+            person_id,
+            sender or "<unknown>",
+        )
+        if created:
+            detail = "saved; awaiting next face encounter"
+        else:
+            detail = "an identical pending task already exists; awaiting next face encounter"
+        return CreateFaceMessage_Response(
+            accepted=True, task_id=task_id, person_id=person_id,
+            person_name=str(response["name"]), detail=detail,
+        )
+    except Exception as exc:  # noqa: BLE001
+        log.exception("failed to save face message")
+        return CreateFaceMessage_Response(detail=str(exc))
+
+
+@skill.mcp("robonix/skill/g1_face_greeting/list_messages")
+def list_messages(req: ListFaceMessages_Request) -> ListFaceMessages_Response:
+    """List recent tasks so Pilot can report pending and delivered results."""
+    if _store is None:
+        return ListFaceMessages_Response(detail="greeting skill is not active")
+    status = req.status.strip()
+    if status not in ("", "pending", "delivering", "delivered", "uncertain", "cancelled"):
+        return ListFaceMessages_Response(detail="invalid status filter")
+    try:
+        return ListFaceMessages_Response(tasks_json=json.dumps(_store.list(status), ensure_ascii=False), detail="ok")
+    except Exception as exc:  # noqa: BLE001
+        return ListFaceMessages_Response(detail=str(exc))
+
+
+@skill.mcp("robonix/skill/g1_face_greeting/message_status")
+def message_status(req: FaceMessageStatus_Request) -> FaceMessageStatus_Response:
+    """Read one task; a speech-success response does not prove human receipt."""
+    if _store is None:
+        return FaceMessageStatus_Response(detail="greeting skill is not active")
+    try:
+        task = _store.get(req.task_id.strip())
+        return FaceMessageStatus_Response(
+            found=task is not None,
+            task_json=json.dumps(task, ensure_ascii=False) if task else "",
+            detail="ok" if task else "task not found",
+        )
+    except Exception as exc:  # noqa: BLE001
+        return FaceMessageStatus_Response(detail=str(exc))
+
+
+@skill.mcp("robonix/skill/g1_face_greeting/cancel_message")
+def cancel_message(req: CancelFaceMessage_Request) -> CancelFaceMessage_Response:
+    """Cancel pending work, but never interrupt an in-progress utterance."""
+    if _store is None:
+        return CancelFaceMessage_Response(detail="greeting skill is not active")
+    try:
+        cancelled = _store.cancel(req.task_id.strip())
+        return CancelFaceMessage_Response(
+            cancelled=cancelled, detail="cancelled" if cancelled else "task is not pending or not found"
+        )
+    except Exception as exc:  # noqa: BLE001
+        return CancelFaceMessage_Response(detail=str(exc))
 
 
 if __name__ == "__main__":

@@ -18,3 +18,11 @@ capabilities:
     path: capabilities/driver.v1.toml
   - name: robonix/skill/g1_face_greeting/greet
     path: capabilities/greet.v1.toml
+  - name: robonix/skill/g1_face_greeting/create_message
+    path: capabilities/create_message.v1.toml
+  - name: robonix/skill/g1_face_greeting/list_messages
+    path: capabilities/list_messages.v1.toml
+  - name: robonix/skill/g1_face_greeting/message_status
+    path: capabilities/message_status.v1.toml
+  - name: robonix/skill/g1_face_greeting/cancel_message
+    path: capabilities/cancel_message.v1.toml

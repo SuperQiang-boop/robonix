@@ -1,0 +1,8 @@
+[contract]
+id = "robonix/skill/g1_face_greeting/cancel_message"
+version = "1"
+kind = "skill"
+idl = "g1_face_greeting/srv/CancelFaceMessage.srv"
+description = "Cancel a pending face-message task by task_id; a task already being spoken cannot be cancelled."
+[mode]
+type = "rpc"

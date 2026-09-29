@@ -10,4 +10,5 @@ int32 encounter_count
 int32 base_intimacy_level
 int32 intimacy_level
 string timestamp
+float64 observed_at
 string detail

@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <array>
 #include <cerrno>
+#include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <iostream>
@@ -20,6 +21,9 @@ namespace {
 
 constexpr std::size_t kSdkChunkBytes = 96000;
 constexpr std::uint64_t kMaxRequestBytes = 32ULL * 1024ULL * 1024ULL;
+constexpr double kPcmSampleRate = 16000.0;
+constexpr double kPcmBytesPerSample = 2.0;
+constexpr double kPlaybackGuardSeconds = 0.15;
 constexpr char kAppName[] = "robonix_g1_audio";
 
 bool read_all(int fd, void* data, std::size_t size) {
@@ -115,6 +119,14 @@ int main(int argc, char** argv) {
         if (status != 0) break;
         if (end < pcm.size()) unitree::common::Sleep(1);
       }
+      const double playback_seconds =
+          static_cast<double>(pcm.size()) /
+          (kPcmSampleRate * kPcmBytesPerSample);
+      std::cerr << "[g1-audio-sdk] waiting for playback duration="
+                << playback_seconds << "s\n";
+      const auto playback_wait_ms = static_cast<std::uint64_t>(std::ceil(
+          (playback_seconds + kPlaybackGuardSeconds) * 1000.0));
+      unitree::common::MilliSleep(playback_wait_ms);
       client->PlayStop(stream_id);
       if (!send_status(ipc_fd, status)) break;
     }

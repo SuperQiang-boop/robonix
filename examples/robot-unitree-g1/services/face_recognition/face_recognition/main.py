@@ -18,6 +18,8 @@ from robonix_api import Err, Ok, Service
 from face_recognition_mcp import (
     GetFaceRecognitionEvent_Request,
     GetFaceRecognitionEvent_Response,
+    ResolveFacePerson_Request,
+    ResolveFacePerson_Response,
 )
 
 log = logging.getLogger("face_recognition")
@@ -136,6 +138,7 @@ def _drain_output(proc: subprocess.Popen[str], marker: str) -> None:
             try:
                 event = json.loads(payload)
                 if event.get("event_type") == "face_encounter":
+                    event["observed_at"] = time.time()
                     try:
                         _events.put_nowait(event)
                     except queue.Full:
@@ -202,10 +205,37 @@ def next_event(req: GetFaceRecognitionEvent_Request) -> GetFaceRecognitionEvent_
             base_intimacy_level=int(event.get("base_intimacy_level", 1)),
             intimacy_level=int(event.get("intimacy_level", 1)),
             timestamp=str(event.get("timestamp", "")),
+            observed_at=float(event.get("observed_at", 0.0)),
             detail="ok",
         )
     finally:
         _events.task_done()
+
+
+@service.mcp("robonix/service/face_recognition/people/resolve")
+def resolve_person(req: ResolveFacePerson_Request) -> ResolveFacePerson_Response:
+    """Resolve a unique exact registered name without exposing the private face mapping."""
+    if _settings is None:
+        return ResolveFacePerson_Response(detail="face recognition has not been initialized")
+    name = req.name.strip()
+    if not name:
+        return ResolveFacePerson_Response(detail="name must not be empty")
+    mapping = _settings.external_root / "person" / "mapping.json"
+    try:
+        people = json.loads(mapping.read_text(encoding="utf-8"))
+        if not isinstance(people, list):
+            raise ValueError("mapping is not a list")
+        matches = [person for person in people if isinstance(person, dict) and person.get("name") == name]
+        if len(matches) != 1:
+            reason = "not registered" if not matches else "ambiguous registered name"
+            return ResolveFacePerson_Response(detail=f"{name}: {reason}")
+        person_id = matches[0]["id"]
+        if isinstance(person_id, bool) or not isinstance(person_id, int) or person_id < 0:
+            raise ValueError("invalid registered person ID")
+        return ResolveFacePerson_Response(found=True, person_id=person_id, name=name, detail="ok")
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        log.warning("failed to resolve registered person: %s", exc)
+        return ResolveFacePerson_Response(detail=f"face mapping unavailable: {exc}")
 
 
 @service.on_init

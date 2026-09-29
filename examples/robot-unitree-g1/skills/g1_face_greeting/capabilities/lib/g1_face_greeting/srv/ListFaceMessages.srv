@@ -1,0 +1,4 @@
+string status
+---
+string tasks_json
+string detail

@@ -12,3 +12,5 @@ capabilities:
   - name: robonix/service/face_recognition/driver
   - name: robonix/service/face_recognition/events/next
     path: capabilities/events/next.v1.toml
+  - name: robonix/service/face_recognition/people/resolve
+    path: capabilities/people/resolve.v1.toml
