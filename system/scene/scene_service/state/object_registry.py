@@ -343,16 +343,20 @@ class ObjectRegistry:
         obj.missing = True
         obj.attributes.pop("cg_uuid", None)
 
-    def prune_expired(self, now: float, ttl_s: float) -> list[str]:
+    def prune_expired(
+        self, now: float, ttl_s: float, *, exclude_oids: Optional[Iterable[str]] = None,
+    ) -> list[str]:
         """Hard-delete `missing` perception records whose `last_seen` is older
         than `ttl_s`; returns the deleted object_ids. Bounds growth of
         soft-evicted records — dedup survivors' stale twins and objects that
         truly left the scene. The robot self-record and warm-restored records
         (kept indefinitely until re-seen) are never pruned here. Caller must
-        hold the lock."""
+        hold the lock. `exclude_oids` protects objects still retained in the
+        perception map, including those currently outside camera view."""
+        excluded = set(exclude_oids or ())
         doomed = [
             oid for oid, o in self._objects.items()
-            if o.missing
+            if oid not in excluded and o.missing
             and not o.attributes.get("is_robot")
             and not o.attributes.get("restored")
             and (now - o.last_seen) > ttl_s

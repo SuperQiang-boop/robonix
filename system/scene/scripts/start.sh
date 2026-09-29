@@ -34,6 +34,30 @@ fi
 CT="${ROBONIX_SCENE_CONTAINER:-robonix_scene}"
 IMG="${ROBONIX_SCENE_IMAGE:-robonix-scene}"
 RUNTIME_PROTO_TMP=""
+SCENE_DEPLOY_MANIFEST=""
+
+if [[ -n "${ROBONIX_DEPLOY_DIR:-}" ]]; then
+    SCENE_DEPLOY_MANIFEST="${ROBONIX_DEPLOY_DIR}/robonix_manifest.yaml"
+    if [[ ! -f "$SCENE_DEPLOY_MANIFEST" || ! -r "$SCENE_DEPLOY_MANIFEST" ]]; then
+        echo "[scene/start] deployment manifest is not readable: $SCENE_DEPLOY_MANIFEST" >&2
+        exit 2
+    fi
+fi
+
+# Docker does not inherit the host's Fast DDS profile or its file. Validate
+# before touching containers; an unset override preserves the image default.
+declare -a FASTRTPS_ARGS=()
+if [[ -n "${FASTRTPS_DEFAULT_PROFILES_FILE:-}" ]]; then
+    if [[ ! -f "$FASTRTPS_DEFAULT_PROFILES_FILE" || ! -r "$FASTRTPS_DEFAULT_PROFILES_FILE" ]]; then
+        echo "[scene/start] Fast DDS profile is not a readable file: $FASTRTPS_DEFAULT_PROFILES_FILE" >&2
+        exit 2
+    fi
+    FASTRTPS_PROFILE="$(realpath -- "$FASTRTPS_DEFAULT_PROFILES_FILE")"
+    FASTRTPS_ARGS=(
+        -v "$FASTRTPS_PROFILE:/tmp/robonix-fastrtps.xml:ro"
+        -e FASTRTPS_DEFAULT_PROFILES_FILE=/tmp/robonix-fastrtps.xml
+    )
+fi
 
 cleanup() {
     timeout 15s docker stop "$CT" >/dev/null 2>&1 || true
@@ -117,6 +141,9 @@ declare -a EXTRA_MOUNTS=()
 if [[ -n "${RBNX_CONFIG_FILE:-}" ]]; then
     EXTRA_MOUNTS+=(-v "${RBNX_CONFIG_FILE}:${RBNX_CONFIG_FILE}:ro")
 fi
+if [[ -n "$SCENE_DEPLOY_MANIFEST" && "$SCENE_DEPLOY_MANIFEST" != "${RBNX_CONFIG_FILE:-}" ]]; then
+    EXTRA_MOUNTS+=(-v "$SCENE_DEPLOY_MANIFEST:$SCENE_DEPLOY_MANIFEST:ro")
+fi
 
 declare -a ZENOH_ARGS=()
 if [[ -n "${ROBONIX_ZENOH_ROUTER:-}" ]]; then
@@ -174,6 +201,7 @@ exec docker run --rm \
     -e ROBONIX_ADVERTISE_HOST="${ROBONIX_ADVERTISE_HOST:-}" \
     -e ROBONIX_CAPABILITY_ID="${ROBONIX_CAPABILITY_ID:-com.robonix.system.scene}" \
     -e ROBONIX_PKG_HOST_DIR="$(pwd)" \
+    -e ROBONIX_DEPLOY_DIR="${ROBONIX_DEPLOY_DIR:-}" \
     -e SCENE_WEB_PORT="${SCENE_WEB_PORT:-50107}" \
     -e SCENE_WEB_HOST="${SCENE_WEB_HOST-0.0.0.0}" \
     -e SCENE_LOG_LEVEL="${SCENE_LOG_LEVEL:-INFO}" \
@@ -187,6 +215,7 @@ exec docker run --rm \
     -e SCENE_CG_MERGE_VISUAL_SIM_THRESH="${SCENE_CG_MERGE_VISUAL_SIM_THRESH:-}" \
     -e SCENE_CG_SAME_CLASS_MERGE_DIST_M="${SCENE_CG_SAME_CLASS_MERGE_DIST_M:-}" \
     -e SCENE_CG_MERGE_CLASS_GROUPS="${SCENE_CG_MERGE_CLASS_GROUPS:-}" \
+    -e SCENE_CG_MISSING_DETECTIONS="${SCENE_CG_MISSING_DETECTIONS:-3}" \
     -e SCENE_OBJECT_TTL_SEC="${SCENE_OBJECT_TTL_SEC:-}" \
     -e SCENE_DETECT_PERIOD_S="${SCENE_DETECT_PERIOD_S:-3.0}" \
     -e SCENE_CG_OBJ_MAX_POINTS="${SCENE_CG_OBJ_MAX_POINTS:-1500}" \
@@ -215,6 +244,7 @@ exec docker run --rm \
     -e ROS_DOMAIN_ID="${ROS_DOMAIN_ID:-0}" \
     -e RMW_IMPLEMENTATION="${RMW_IMPLEMENTATION:-rmw_zenoh_cpp}" \
     -e CYCLONEDDS_URI="${CYCLONEDDS_URI:-}" \
+    "${FASTRTPS_ARGS[@]}" \
     "${ZENOH_ARGS[@]}" \
     -v "$(pwd)":/scene \
     -v "$PKG/rbnx-build/codegen/scene_proto_gen:/scene/rbnx-build/codegen/proto_gen:ro" \

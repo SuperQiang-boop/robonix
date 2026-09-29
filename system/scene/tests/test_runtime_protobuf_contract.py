@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import shlex
 import shutil
 import subprocess
 import tempfile
@@ -16,6 +17,7 @@ SCENE_ROOT = Path(__file__).resolve().parents[1]
 
 class RuntimeProtobufContractTests(unittest.TestCase):
     def test_launcher_generates_with_runtime_image_without_network(self):
+        """Exercise codegen and profile forwarding without starting real containers."""
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             scene = root / "scene"
@@ -74,6 +76,8 @@ exit 0
                 executable.chmod(0o755)
 
             env = os.environ.copy()
+            profile = root / "Fast DDS profile.xml"
+            profile.write_text('<profiles/>', encoding="utf-8")
             env.update(
                 {
                     "PATH": f"{fake_bin}{os.pathsep}{env['PATH']}",
@@ -82,6 +86,9 @@ exit 0
                     "SCENE_DATA_DIR": str(root / "scene-data"),
                     "FAKE_RUNTIME_PROTO": str(runtime_proto),
                     "FAKE_DOCKER_LOG": str(docker_log),
+                    "FASTRTPS_DEFAULT_PROFILES_FILE": str(profile),
+                    "ROBONIX_SCENE_FORCE": "docker",
+                    "ROBONIX_FORCE_CPU": "1",
                 }
             )
             subprocess.run(
@@ -97,6 +104,12 @@ exit 0
             lines = docker_log.read_text(encoding="utf-8").splitlines()
             codegen = next(line for line in lines if "--network none" in line)
             service = next(line for line in lines if "--network host" in line)
+            service_args = shlex.split(service)
+            self.assertIn(f"{profile}:/tmp/robonix-fastrtps.xml:ro", service_args)
+            self.assertIn(
+                "FASTRTPS_DEFAULT_PROFILES_FILE=/tmp/robonix-fastrtps.xml",
+                service_args,
+            )
             self.assertIn("--entrypoint sh", codegen)
             self.assertIn("grpc_tools.protoc", codegen)
             self.assertIn("--entrypoint /scene/docker/entrypoint.sh", service)
@@ -109,6 +122,28 @@ exit 0
             self.assertTrue(
                 (scene / "rbnx-build" / "codegen" / "scene_proto_gen" / "atlas_pb2.py").is_file()
             )
+
+            # Unset exports must retain the Docker image's existing default.
+            env.pop("FASTRTPS_DEFAULT_PROFILES_FILE")
+            docker_log.write_text("", encoding="utf-8")
+            subprocess.run(
+                ["bash", "scripts/start.sh"], cwd=scene, env=env, check=True,
+                text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            )
+            self.assertNotIn("robonix-fastrtps.xml", docker_log.read_text())
+
+            # Missing files and directories fail before docker rm/stop/run.
+            for invalid_profile in (root / "missing.xml", root):
+                with self.subTest(profile=str(invalid_profile)):
+                    env["FASTRTPS_DEFAULT_PROFILES_FILE"] = str(invalid_profile)
+                    docker_log.write_text("", encoding="utf-8")
+                    result = subprocess.run(
+                        ["bash", "scripts/start.sh"], cwd=scene, env=env,
+                        text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                    )
+                    self.assertEqual(result.returncode, 2)
+                    self.assertIn("not a readable file", result.stderr)
+                    self.assertEqual(docker_log.read_text(), "")
 
     def test_entrypoint_has_no_ambient_codegen_fallback(self):
         entrypoint = (SCENE_ROOT / "docker" / "entrypoint.sh").read_text(

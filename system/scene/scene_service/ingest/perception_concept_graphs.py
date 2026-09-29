@@ -200,6 +200,9 @@ _CFG_DEFAULTS = {
     # Saves ~65 % GPU on the common "robot sitting still" case without
     # losing new-object discovery (just delayed by 1–2 ticks).
     "detection_interval_ticks": 3,
+    # Remove an object only after this many fresh, successful detections miss
+    # its still-visible, unobstructed position. Objects outside view stay mapped.
+    "missing_detection_limit": 3,
     # A jump larger than this between consecutive map-frame estimates means
     # the target needs a fresh stability streak before navigation.
     "stable_pose_jump_m": 0.30,
@@ -254,6 +257,46 @@ _CFG_DEFAULTS = {
     "same_class_merge_dist_m": 0.4,
     "same_class_merge_interval_ticks": 10,
 }
+
+
+def _configured_missing_detections(config: dict) -> int:
+    """Resolve the positive miss limit from Scene config, deployment YAML, or env.
+
+    A supplied Scene config wins. Otherwise ROBONIX_DEPLOY_DIR selects the
+    deployment's system.scene block, which overrides the environment fallback.
+    Invalid explicit configuration stops startup instead of reverting to 3.
+    """
+    key = "SCENE_CG_MISSING_DETECTIONS"
+    if key in config:
+        raw = config[key]
+    else:
+        raw = os.environ.get(key, "").strip() or _CFG_DEFAULTS["missing_detection_limit"]
+        deploy_dir = os.environ.get("ROBONIX_DEPLOY_DIR", "").strip()
+        if deploy_dir:
+            from pathlib import Path
+
+            import yaml
+
+            path = Path(deploy_dir) / "robonix_manifest.yaml"
+            try:
+                manifest = yaml.safe_load(path.read_text(encoding="utf-8"))
+            except (OSError, yaml.YAMLError) as exc:
+                raise RuntimeError(f"failed to read Scene deployment config {path}") from exc
+            if not isinstance(manifest, dict):
+                raise ValueError(f"deployment config must be a mapping: {path}")
+            system = manifest.get("system", {})
+            if not isinstance(system, dict):
+                raise ValueError(f"deployment system config must be a mapping: {path}")
+            scene_config = system.get("scene", {})
+            if not isinstance(scene_config, dict):
+                raise ValueError(f"deployment system.scene config must be a mapping: {path}")
+            if key in scene_config:
+                raw = scene_config[key]
+    if isinstance(raw, str) and raw.strip().isdecimal():
+        raw = int(raw.strip())
+    if isinstance(raw, bool) or not isinstance(raw, int) or raw < 1:
+        raise ValueError(f"{key} must be a positive integer")
+    return raw
 
 
 def _parse_merge_class_groups(raw: str) -> dict[str, str]:
@@ -449,6 +492,9 @@ class ConceptGraphsDetector:
         self._inference_lock = threading.Lock()
         self._classes = _resolved_classes()
         self._tick_idx = 0
+        self._last_detection_frames: Optional[tuple[Any, Any]] = None
+        self._missed_detections: dict[str, int] = {}
+        self._frame_observed_at: dict[int, float] = {}
         # Set in start() so worker-thread `_project_to_registry` can
         # schedule the actual mutation on the asyncio loop (the registry
         # uses asyncio.Lock, not a sync lock).
@@ -493,7 +539,14 @@ class ConceptGraphsDetector:
                 except ValueError:
                     pass
 
-        # uuid → registry object_id binding (see _apply_snapshot). Initialised
+        # Explicit Scene configuration takes precedence over legacy env knobs.
+        missing_config = (
+            {"SCENE_CG_MISSING_DETECTIONS": cfg_overrides["missing_detection_limit"]}
+            if cfg_overrides and "missing_detection_limit" in cfg_overrides else {}
+        )
+        self.cfg["missing_detection_limit"] = _configured_missing_detections(missing_config)
+
+        # uuid -> registry object_id binding (see _apply_snapshot). Initialised
         # here (not lazily) so _apply_snapshot is safe to call before the first
         # _project_to_registry tick — including from unit tests.
         self._uuid_to_oid: dict[str, str] = {}
@@ -543,11 +596,12 @@ class ConceptGraphsDetector:
         self._task = asyncio.create_task(self._loop(), name="scene-cg-detector")
         log.info(
             "ConceptGraphsDetector started (period=%.1fs, idle=%.1fs, "
-            "det_interval=%d, classes=%d, device=%s, voxel=%s, merge_threshold=%s)",
+            "det_interval=%d, classes=%d, device=%s, voxel=%s, merge_threshold=%s, missing_limit=%d)",
             self._period_s, self._idle_period_s,
             int(self.cfg.get("detection_interval_ticks", 1)),
             len(self._classes), self._device,
             self.cfg["downsample_voxel_size"], self.cfg["merge_threshold"],
+            self.cfg["missing_detection_limit"],
         )
 
     async def stop(self) -> None:
@@ -610,9 +664,9 @@ class ConceptGraphsDetector:
         # which never matches the 2D view's count.
         live_uuids = getattr(self, "_uuid_to_oid", None)
         for obj_idx, obj in enumerate(map_objs):
-            if live_uuids is not None and live_uuids:
+            if live_uuids is not None:
                 u = str(obj.get("id", ""))
-                if u and u not in live_uuids:
+                if not u or u not in live_uuids:
                     continue
             try:
                 pcd = obj.get("pcd")
@@ -777,6 +831,7 @@ class ConceptGraphsDetector:
             self._tick_locked()
 
     def _tick_locked(self) -> None:
+        """Process a fresh RGB-D frame; only successful inference can remove objects."""
         rgb_msg = self._rgb_msg()
         depth_msg = self._depth_msg()
         if rgb_msg is None or depth_msg is None:
@@ -819,6 +874,24 @@ class ConceptGraphsDetector:
             self._project_to_registry()
             return
 
+        previous = self._last_detection_frames
+        if previous is not None and (
+            self._same_frame(rgb_msg, previous[0])
+            or self._same_frame(depth_msg, previous[1])
+        ):
+            return
+        self._last_detection_frames = (rgb_msg, depth_msg)
+        world_frame = str(self._world_frame_fn() or "").strip()
+        trans_pose = self._build_camera_to_map_transform(
+            expected_world_frame=world_frame,
+        )
+        if trans_pose is None or not world_frame:
+            if not getattr(self, "_spatial_not_ready_logged", False):
+                log.warning("camera pose/extrinsics unavailable; withholding spatial detections")
+                self._spatial_not_ready_logged = True
+            return
+        self._spatial_not_ready_logged = False
+
         # YOLO-World predict expects RGB in standard channel order.
         # Internal Ultralytics handles BGR-as-input fine but CLIP later
         # needs RGB. Convert once here.
@@ -841,9 +914,10 @@ class ConceptGraphsDetector:
             return
         r0 = yolo_results[0]
         boxes = getattr(r0, "boxes", None)
-        if boxes is None or len(boxes) == 0:
-            self._tick_idx += 1
-            self._maybe_periodic_cleanup()
+        if boxes is None:
+            return
+        if len(boxes) == 0:
+            self._finish_detection(K, trans_pose, rgb.shape[:2], depth, [])
             return
 
         try:
@@ -853,7 +927,14 @@ class ConceptGraphsDetector:
         except Exception:  # noqa: BLE001
             return
         if xyxy.shape[0] == 0:
+            self._finish_detection(K, trans_pose, rgb.shape[:2], depth, [])
             return
+
+        names = getattr(r0, "names", None) or {i: c for i, c in enumerate(self._classes)}
+        detected_boxes = [
+            (_canon_class(str(names.get(int(c), f"class_{c}"))), box)
+            for c, box in zip(cls_idx, xyxy)
+        ]
 
         # Cap the count so SAM doesn't get a 200-bbox dump.
         if xyxy.shape[0] > self._max_dets:
@@ -862,7 +943,6 @@ class ConceptGraphsDetector:
             confs = confs[top]
             cls_idx = cls_idx[top]
 
-        names = getattr(r0, "names", None) or {i: c for i, c in enumerate(self._classes)}
         # Per-tick diagnostic: how many bboxes did YOLO-World return,
         # what classes? Throttled to once every 25 ticks (~15s @ 0.6s
         # period). Without this it's impossible to tell whether
@@ -881,8 +961,7 @@ class ConceptGraphsDetector:
             for cidx in cls_idx
         ], dtype=bool)
         if not keep.any():
-            self._tick_idx += 1
-            self._maybe_periodic_cleanup()
+            self._finish_detection(K, trans_pose, rgb.shape[:2], depth, detected_boxes)
             return
         xyxy = xyxy[keep]
         confs = confs[keep]
@@ -970,19 +1049,6 @@ class ConceptGraphsDetector:
             [0,    K.fy, K.cy],
             [0,    0,    1.0],
         ], dtype=np.float32)
-        world_frame = str(self._world_frame_fn() or "").strip()
-        trans_pose = self._build_camera_to_map_transform(
-            expected_world_frame=world_frame,
-        )
-        if trans_pose is None or not world_frame:
-            if not getattr(self, "_spatial_not_ready_logged", False):
-                log.warning(
-                    "camera pose/extrinsics unavailable; withholding spatial "
-                    "detections until contracts or header-derived TF are ready"
-                )
-                self._spatial_not_ready_logged = True
-            return
-        self._spatial_not_ready_logged = False
         try:
             obj_pcds_and_bboxes = self._cg["detections_to_obj_pcd_and_bbox"](
                 depth_array=depth.astype(np.float32),
@@ -1080,8 +1146,7 @@ class ConceptGraphsDetector:
             det_list.append(d)
 
         if len(det_list) == 0:
-            self._tick_idx += 1
-            self._maybe_periodic_cleanup()
+            self._finish_detection(K, trans_pose, rgb.shape[:2], depth, detected_boxes)
             return
 
         # ── Concept-graphs merge ─────────────────────────────────────
@@ -1227,8 +1292,101 @@ class ConceptGraphsDetector:
                     log.warning("concept-graphs merge pipeline failed: %s", e)
                 return
 
+        self._finish_detection(K, trans_pose, rgb.shape[:2], depth, detected_boxes)
+
+    @staticmethod
+    def _same_frame(current: Any, previous: Any) -> bool:
+        """Compare image stamps, falling back to identity for unstamped messages."""
+        stamp = getattr(getattr(current, "header", None), "stamp", None)
+        old_stamp = getattr(getattr(previous, "header", None), "stamp", None)
+        if stamp is not None and old_stamp is not None:
+            key = (stamp.sec, stamp.nanosec)
+            if key != (0, 0):
+                return key == (old_stamp.sec, old_stamp.nanosec)
+        return current is previous
+
+    def _absence_check(
+        self, obj: dict, K: _CamIntrinsics, map_to_camera: np.ndarray,
+        image_shape: tuple[int, int], depth: np.ndarray, detected_boxes: list,
+    ) -> Optional[bool]:
+        """Return True for checkable absence, None outside view, False when uncertain.
+
+        Sample stored surface points deterministically. Nearer measured depth
+        indicates occlusion; missing depth cannot prove absence. A same-class
+        YOLO box at the old position also protects detections that failed lifting.
+        """
+        pts = np.asarray(obj["pcd"].points)
+        pts = pts[np.all(np.isfinite(pts), axis=1)]
+        if len(pts) < 4:
+            return False
+        pts = pts[np.linspace(0, len(pts) - 1, min(64, len(pts)), dtype=int)]
+        cam = pts @ map_to_camera[:3, :3].T + map_to_camera[:3, 3]
+        z = cam[:, 2]
+        if not np.all(np.isfinite(cam)):
+            return False
+        if np.any(z <= 0):
+            return None
+        height, width = image_shape
+        u = K.fx * cam[:, 0] / z + K.cx
+        v = K.fy * cam[:, 1] / z + K.cy
+        in_frame = (u >= 4) & (u < width - 4) & (v >= 4) & (v < height - 4)
+        if np.mean(in_frame) < 0.8:
+            return None
+        u, v, z = u[in_frame], v[in_frame], z[in_frame]
+        cls = _canon_class(obj.get("class_name", ""))
+        for detected_cls, box in detected_boxes:
+            covered = (u >= box[0]) & (u <= box[2]) & (v >= box[1]) & (v <= box[3])
+            if detected_cls == cls and np.mean(covered) >= 0.5:
+                return False
+        dh, dw = depth.shape[:2]
+        measured = depth[(v * dh / height).astype(int), (u * dw / width).astype(int)]
+        valid = np.isfinite(measured) & (measured > 0)
+        if np.mean(valid) < 0.8:
+            return False
+        tolerance = np.maximum(0.10, z[valid] * 0.05)
+        return bool(np.mean(measured[valid] < z[valid] - tolerance) <= 0.2)
+
+    def _finish_detection(
+        self, K: _CamIntrinsics, trans_pose: np.ndarray,
+        image_shape: tuple[int, int], depth: np.ndarray, detected_boxes: list,
+    ) -> None:
+        """Count visible misses after successful inference and reconcile removals.
+
+        Outside-view objects lose their miss streak; occluded objects pause it.
+        Confirmed removals leave both the map cache and registry, bypassing TTL.
+        Observation timestamps follow image indices through cleanup merges.
+        """
+        map_to_camera = np.linalg.inv(trans_pose)
+        self._frame_observed_at[self._tick_idx] = time.time()
+        removed = set()
+        limit = max(1, int(self.cfg["missing_detection_limit"]))
+        for obj in self._map_objects:
+            u = str(obj["id"])
+            if self._tick_idx in obj.get("image_idx", []):
+                self._missed_detections.pop(u, None)
+                continue
+            check = self._absence_check(obj, K, map_to_camera, image_shape, depth, detected_boxes)
+            if check is None:
+                self._missed_detections.pop(u, None)
+            if not check:
+                continue
+            misses = self._missed_detections.get(u, 0) + 1
+            self._missed_detections[u] = misses
+            if misses >= limit:
+                removed.add(u)
+        if removed:
+            self._map_objects = type(self._map_objects)(
+                obj for obj in self._map_objects if str(obj["id"]) not in removed
+            )
+            log.info("[scene-cg] removed %d objects after %d visible misses", len(removed), limit)
         self._maybe_periodic_cleanup()
-        self._project_to_registry()
+        live = {str(obj["id"]) for obj in self._map_objects}
+        self._missed_detections = {u: n for u, n in self._missed_detections.items() if u in live}
+        latest_indices = {max(obj.get("image_idx") or [-1]) for obj in self._map_objects}
+        self._frame_observed_at = {
+            idx: stamp for idx, stamp in self._frame_observed_at.items() if idx in latest_indices
+        }
+        self._project_to_registry(removed_uuids=removed)
 
     # ── Voxel pcd-overlap (replaces concept-graphs `overlap` mode) ──
     @staticmethod
@@ -1775,7 +1933,7 @@ class ConceptGraphsDetector:
         )
 
     # ── Project MapObjectList → ObjectRegistry ──────────────────────
-    def _project_to_registry(self) -> None:
+    def _project_to_registry(self, *, removed_uuids: Optional[set[str]] = None) -> None:
         """Replace registry's perception-source objects with a snapshot
         of the current MapObjectList. Robot self-record is preserved.
 
@@ -1868,6 +2026,7 @@ class ConceptGraphsDetector:
                     "source_observation_count": int(
                         obj.get("num_detections", len(conf_list) or 1)
                     ),
+                    "observed_at": self._frame_observed_at.get(max(obj.get("image_idx") or [-1])),
                 })
             except Exception:  # noqa: BLE001
                 continue
@@ -1876,19 +2035,21 @@ class ConceptGraphsDetector:
         # serializes with the snapshot reader (same asyncio.Lock).
         try:
             asyncio.run_coroutine_threadsafe(
-                self._apply_snapshot(snapshots), self._asyncio_loop,
+                self._apply_snapshot(snapshots, removed_uuids=removed_uuids), self._asyncio_loop,
             )
         except Exception as e:  # noqa: BLE001
             log.debug("schedule registry update failed: %s", e)
 
-    async def _apply_snapshot(self, snapshots: list[dict]) -> None:
+    async def _apply_snapshot(
+        self, snapshots: list[dict], *, removed_uuids: Optional[set[str]] = None,
+    ) -> None:
         """Reconcile concept-graphs MapObjectList state into the
         registry **incrementally**. Robot self-record and non-
         perception objects are preserved; for our own objects we:
 
-          - REUSE the existing registry record when the
-            MapObjectList uuid is already mapped (just refresh
-            pose / bbox / confidence and bump observation_count)
+          - REUSE the existing registry record when the MapObjectList uuid
+            is mapped; only a new image observation refreshes last_seen,
+            clears missing, and increments observation_count
           - RE-BIND a warm-restored object of the same class within
             the merge-distance gate to a fresh detection before minting
             a new id, so a remembered object keeps its stable id on
@@ -1910,7 +2071,8 @@ class ConceptGraphsDetector:
         record the old uuid is about to vacate (the orphan must still
         exist when the snapshot loop runs). Records touched this tick are
         spared from eviction via `adopted_oids`; observation_count is
-        registry-owned (one per tick seen), so it survives a uuid swap.
+        registry-owned (one per new observation), so it survives a uuid swap.
+        Confirmed in-view removals are hard-deleted before reconciliation.
 
         The previous "drop everything, re-insert everything" approach
         churned object_ids on every tick (the visible `<cls>_NNN`
@@ -1920,6 +2082,10 @@ class ConceptGraphsDetector:
         now = time.time()
         live_uuids = {s["uuid"] for s in snapshots if s.get("uuid")}
         async with self._registry.lock():
+            for u in removed_uuids or ():
+                oid = self._uuid_to_oid.pop(u, None)
+                if oid is not None:
+                    self._registry._objects.pop(oid, None)
             wf = self._world_frame_fn()
             if not wf:
                 log.warning(
@@ -1931,6 +2097,9 @@ class ConceptGraphsDetector:
             # stop two detections claiming the same orphan and (b) spare a
             # touched record from the eviction sweep below.
             adopted_oids: set[str] = set()
+            retained_oids = {
+                oid for u, oid in self._uuid_to_oid.items() if u in live_uuids
+            }
             # Bind / adopt / insert FIRST; eviction runs after. The new winning
             # uuid of a merged or regenerated object must be able to adopt the
             # record the old uuid is about to vacate, so the orphan has to still
@@ -1968,7 +2137,7 @@ class ConceptGraphsDetector:
                             s["cls"], pose,
                             float(self.cfg.get("max_merge_dist_m", 1.5)),
                             only_missing=True,
-                            exclude_oids=adopted_oids,
+                            exclude_oids=adopted_oids | retained_oids,
                         )
                     # Orphan-adoption needs a uuid to rebind to; a uuid-less
                     # detection can't bind durably, so it must not consume an
@@ -1994,7 +2163,7 @@ class ConceptGraphsDetector:
                             self._uuid_to_oid[u] = existing.object_id
                 if existing is not None:
                     # Update in place. Preserve oid + first_seen. The count is
-                    # registry-owned (one per tick seen) so it survives a uuid
+                    # registry-owned (one per observed frame) so it survives a uuid
                     # swap instead of resetting to the CG object's num_detections.
                     was_missing = bool(existing.missing)
                     was_restored = bool(existing.attributes.get("restored"))
@@ -2005,6 +2174,9 @@ class ConceptGraphsDetector:
                         s.get("source_observation_count", previous_source_count + 1)
                     )
                     has_new_observation = source_count > previous_source_count
+                    observed_at = s.get("observed_at", now)
+                    if "observed_at" in s:
+                        has_new_observation = observed_at is not None and observed_at > existing.last_seen
                     pose_jump_m = math.hypot(
                         float(pose.x) - float(existing.pose.x),
                         float(pose.y) - float(existing.pose.y),
@@ -2027,15 +2199,16 @@ class ConceptGraphsDetector:
                     elif has_new_observation:
                         stable_count += 1
                     if has_new_observation:
-                        existing.attributes["stable_observation_at"] = now
+                        existing.attributes["stable_observation_at"] = observed_at
                     existing.attributes["stable_observation_count"] = stable_count
                     existing.attributes["cg_observation_count"] = source_count
                     existing.pose = pose
                     existing.bbox = bbox
                     existing.confidence = max(0.0, min(1.0, s["confidence"]))
-                    existing.last_seen = now
-                    existing.missing = False
-                    existing.observation_count += 1
+                    if has_new_observation:
+                        existing.last_seen = observed_at
+                        existing.missing = False
+                        existing.observation_count += 1
                     adopted_oids.add(existing.object_id)
                 else:
                     obj = self._registry.insert_object(
@@ -2043,16 +2216,16 @@ class ConceptGraphsDetector:
                         pose=pose,
                         bbox=bbox,
                         confidence=s["confidence"],
-                        now=now,
+                        now=s.get("observed_at") or now,
                         source="concept_graphs",
                     )
-                    # insert_object seeds observation_count=1; it is
-                    # registry-owned from here (see the += 1 on re-sighting).
+                    # insert_object seeds observation_count=1; subsequent
+                    # increments require a new image observation.
                     if u:
                         obj.attributes["cg_uuid"] = u
                         self._uuid_to_oid[u] = obj.object_id
                     obj.attributes["stable_observation_count"] = 1
-                    obj.attributes["stable_observation_at"] = now
+                    obj.attributes["stable_observation_at"] = obj.last_seen
                     obj.attributes["cg_observation_count"] = int(
                         s.get("source_observation_count", 1)
                     )
@@ -2092,7 +2265,7 @@ class ConceptGraphsDetector:
             # stale one, so soft eviction does not resurrect duplicates.
             for obj in doomed:
                 self._registry.soft_evict(obj)
-            self._registry.prune_expired(now, self._object_ttl_s)
+            self._registry.prune_expired(now, self._object_ttl_s, exclude_oids=adopted_oids)
 
     def _rebind_restored(self, cls: str, pose: Pose3D) -> Optional[SceneObject]:
         """Nearest warm-restored, not-yet-rebound object of class `cls` whose

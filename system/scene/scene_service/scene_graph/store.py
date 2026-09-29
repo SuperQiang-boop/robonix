@@ -184,11 +184,20 @@ class SceneGraphStore:
         self._relation_cache[self._relation_key(a, b, hint, semantic_only)] = edge
 
     def prune_relations(self, live_object_ids: set[str]) -> int:
-        """Drop cached edges with an endpoint no longer in the registry.
+        """Drop cached and published edges with an endpoint no longer in the registry.
         Returns how many were evicted. Complements put_cached_relation's
         keep-latest-per-pair eviction: that bounds growth across an
         object's *moves*, this bounds it across object *departures*.
-        Called by the builder each rebuild before flushing to disk."""
+        Called by the geometric loop each tick and builder before flushing
+        caches, so deletion does not wait for the next VLM rebuild."""
+        self._geometric_edges = [
+            e for e in self._geometric_edges
+            if e.source_id in live_object_ids and e.target_id in live_object_ids
+        ]
+        self._semantic_edges = [
+            e for e in self._semantic_edges
+            if e.source_id in live_object_ids and e.target_id in live_object_ids
+        ]
         stale = [
             k for k, e in self._relation_cache.items()
             if e.source_id not in live_object_ids

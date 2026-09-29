@@ -165,6 +165,7 @@ class GeometricRelationLoop:
         raw = self._reachable_edges(objects, stable)
         emitted = self._debounce(raw)
         self.store.set_geometric(nodes, emitted)
+        self.store.prune_relations(set(objs_dict))
 
     def _reachable_edges(
         self, objects: list[SceneObject], stable: list[SceneObject]

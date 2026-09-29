@@ -42,7 +42,10 @@ from .map_binding import MapBinding, choose_map_binding, read_latched_lifecycle
 from .object_watchdog import ObjectWatchdog
 from .map_meta import MapMetaStore
 from .robot_geometry import RobotGeometryState, reconcile_robot_geometry
-from .ingest.perception_concept_graphs import ConceptGraphsDetector
+from .ingest.perception_concept_graphs import (
+    ConceptGraphsDetector,
+    _configured_missing_detections,
+)
 from .ingest.perception_vlm import VLMObjectDetector, _CamIntrinsics
 from .ingest.ros_subscribers import (
     SubscribersHub,
@@ -658,6 +661,9 @@ async def _start_ros_ingest(
             world_frame_fn=lambda: self_tracker.world_frame_id,
             on_detections=lambda dets: _ingest_detections(registry, dets),
             registry=registry,
+            cfg_overrides={
+                "missing_detection_limit": _configured_missing_detections(config),
+            },
             robot_base_frame_fn=_active_base_frame,
             # Pass the hub so the detector can compose camera→world from
             # Atlas-resolved pose and camera-extrinsics contracts.

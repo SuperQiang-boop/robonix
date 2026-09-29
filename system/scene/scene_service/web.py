@@ -510,6 +510,7 @@ def _state_payload(registry: ObjectRegistry,
     out_relations = [
         {"subject": e.source_id, "predicate": e.relation, "target": e.target_id}
         for e in geo_edges
+        if e.source_id in objs_dict and e.target_id in objs_dict
     ]
 
     # Scene graph edges from the LLM-enhanced layer (if enabled).
@@ -526,6 +527,7 @@ def _state_payload(registry: ObjectRegistry,
                         "confidence": round(e.confidence, 2),
                     }
                     for e in snap.edges
+                    if e.source_id in objs_dict and e.target_id in objs_dict
                 ],
                 "updated_at": snap.updated_at,
             }

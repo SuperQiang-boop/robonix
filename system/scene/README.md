@@ -52,6 +52,18 @@ The metric pipeline is ConceptGraphs-style per-frame perception with 4 stages:
 
 Periodic cleanup (every 30 ticks) runs concept-graphs's `denoise_objects` + `filter_objects` + `merge_overlap_objects` so duplicates from edge-case detections eventually collapse.
 
+RGB-D perception removes an object after three fresh, successful detection
+rounds miss its last position while that position remains in camera view.
+Stored surface points must mostly project inside the image and have valid,
+unobstructed depth; nearer depth pauses the count. A same-class detection at
+that position also pauses the count if its 3D projection failed. Re-detection
+resets the count, and leaving camera view resets the count without deleting
+the object. Repeated RGB/depth frames, skipped inference, unavailable camera
+geometry, and inference failures do not count. Confirmed removals clear the
+live registry and point cloud; web objects and their relations disappear on
+the next poll. Historical synchronization does not increase observation counts
+or refresh `last_seen`. This applies to the RGB-D ConceptGraphs path.
+
 ## Deployment targets (x86 / Jetson)
 
 Unlike the Rust system binaries (atlas / executor / pilot / liaison — one
@@ -187,6 +199,11 @@ deployments the default local router/session is used; advanced deployments can
 override it with `ROBONIX_ZENOH_ROUTER`, `ROBONIX_ZENOH_MODE`, and
 `ROBONIX_ZENOH_LISTEN`. Fast DDS can still be tested by setting
 `RMW_IMPLEMENTATION=rmw_fastrtps_cpp`, but it is not the default path.
+When `FASTRTPS_DEFAULT_PROFILES_FILE` is exported, `scripts/start.sh` mounts
+that readable host XML file read-only and forwards its container path. This
+preserves interface whitelists on hosts with wired and wireless adapters.
+An invalid path fails before container startup; leaving it unset retains the
+image's UDP-only profile.
 
 Useful input contracts include:
 
@@ -265,6 +282,7 @@ Hugging Face mirror endpoint (default `https://hf-mirror.com`); the canonical
 | `SCENE_CG_MERGE_THRESHOLD` | `0.55` | per-tick merge threshold |
 | `SCENE_CG_MAX_MERGE_DIST_M` | `1.5` | hard distance gate |
 | `SCENE_CG_OBJ_MIN_POINTS` | `20` | periodic-cleanup cull gate; raise to drop sparse/thin objects, lower to keep them (thin objects like keyboards backproject to sparse clouds) |
+| `SCENE_CG_MISSING_DETECTIONS` | `3` | consecutive valid RGB-D detection rounds missing an in-view, unobstructed object before removal; positive integer; deployment `system.scene.SCENE_CG_MISSING_DETECTIONS` takes precedence |
 | `SCENE_CG_CROSS_CLASS_CENTROID_MAX_M` | `0.5` | per-tick class-gate bypass radius: a detection within this of an existing object may merge despite a different class label (handles YOLO label flicker on one fixture) |
 | `SCENE_CG_CROSS_CLASS_IOU_THRESH` / `SCENE_CG_CROSS_CLASS_OVERLAP_THRESH` | `0.30` / `0.50` | periodic class-agnostic collapse: fold two records when AABB IoU ≥ first **or** one-inside-other overlap ≥ second, regardless of class/visual sim. Lower to be more aggressive on a flickering desk (`chair` vs `table` split) |
 | `SCENE_CG_MERGE_OVERLAP_THRESH` / `SCENE_CG_MERGE_VISUAL_SIM_THRESH` | `0.50` / `0.65` | periodic `merge_overlap` pass: fold pairs with pcd-overlap ≥ first **and** CLIP cosine ≥ second |
@@ -283,6 +301,23 @@ Hugging Face mirror endpoint (default `https://hf-mirror.com`); the canonical
 | `SCENE_MAP_META_DIR` | sibling `scene_maps/` of the annotations dir | epoch sidecar files pairing each saved map with the object-snapshot partition written at its Save (see "Map library") |
 | `SCENE_RESTORE_ON_START` | `false` | LEGACY mode: bind the startup map id, restore its objects at boot, and let the scene-graph builder persist continuously. Default off — a boot starts a fresh live session and objects are only persisted by an explicit Save |
 | `VLM_REASONING_EFFORT` | `` (unset) | opt-in, forwarded to all scene VLM/LLM calls (relation inference + VLM perception): `minimal`\|`low`\|`medium`\|`high`. **Unset → the field is omitted**, so non-reasoning models and strict endpoints are unaffected. Set `minimal` (= no thinking) to keep a reasoning `VLM_MODEL` (e.g. `doubao-seed-2-1-pro`) answering in ~2 s instead of timing out |
+
+Configure the RGB-D removal threshold in the deployment manifest:
+
+```yaml
+system:
+  scene:
+    SCENE_CG_MISSING_DETECTIONS: 3
+```
+
+Scene reads this field from `${ROBONIX_DEPLOY_DIR}/robonix_manifest.yaml`;
+the Docker launcher mounts that file read-only and forwards
+`ROBONIX_DEPLOY_DIR`, while native launches inherit it. An explicit Scene
+config file carrying the same key has first priority, followed by the
+deployment field, the environment variable, and the default `3`. Invalid
+values stop startup. Restart Scene to read a changed manifest; an existing
+container created before the deployment mount was added must be recreated
+through the deployment's normal launch flow first.
 
 ## Object memory (Save/Load snapshots)
 
