@@ -80,7 +80,11 @@ void BaseRealSenseNode::getParameters()
 
     param_name = std::string("base_frame_id");
     _base_frame_id = _parameters->setParam<std::string>(param_name, DEFAULT_BASE_FRAME_ID);
-    _base_frame_id = (static_cast<std::ostringstream&&>(std::ostringstream() << _camera_name << "_" << _base_frame_id)).str();
+    // Prefix the default camera-local frame, but keep a robot frame such as
+    // d435_link verbatim instead of creating the invalid camera_d435_link.
+    if (_base_frame_id == DEFAULT_BASE_FRAME_ID || _base_frame_id == "link") {
+        _base_frame_id = (static_cast<std::ostringstream&&>(std::ostringstream() << _camera_name << "_" << _base_frame_id)).str();
+    }
     _parameters_names.push_back(param_name);
 
 #if defined (ACCELERATE_GPU_WITH_GLSL)
@@ -165,4 +169,3 @@ void BaseRealSenseNode::clearParameters()
         _parameters_names.pop_back();        
     }
 }
-

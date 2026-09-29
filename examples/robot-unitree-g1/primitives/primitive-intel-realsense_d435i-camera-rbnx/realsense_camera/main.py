@@ -354,7 +354,11 @@ def _configured_extrinsics(cfg: dict, base_frame: str, camera_frame: str):
 # ── lifecycle ────────────────────────────────────────────────────────────────
 @cap.on_init
 def init(cfg: dict):
-    """REGISTERED → INACTIVE: start streams and publish camera contracts."""
+    """Publish camera contracts after the local streams become available.
+
+    Launch the RealSense node by default; a pre-existing local ROS publisher
+    can supply the streams instead when launch_realsense is false.
+    """
     global _extrinsics_pub, _extrinsics_tf_broadcaster
     global _extrinsics_stop, _extrinsics_thread
     cam = cfg.get("camera_name", "camera_435i")
@@ -370,10 +374,12 @@ def init(cfg: dict):
     )
     sentinel_timeout = float(cfg.get("sentinel_timeout_s", 30.0))
 
-    try:
-        _spawn_realsense(cfg)
-    except Exception as e:  # noqa: BLE001
-        return Err(f"spawn realsense failed: {e}")
+    launch_realsense = cfg.get("launch_realsense", True)
+    if launch_realsense:
+        try:
+            _spawn_realsense(cfg)
+        except Exception as e:  # noqa: BLE001
+            return Err(f"spawn realsense failed: {e}")
 
     # Subscribe RGB + depth via robonix_api (declare=False — we declare
     # the ros2 topic_out interfaces explicitly below, after sentinel passes).
@@ -392,6 +398,10 @@ def init(cfg: dict):
     if not cap.wait_for_topic(rgb_topic, "Image", sentinel_timeout):
         _kill_realsense()
         return Err(f"no Image on {rgb_topic} within {sentinel_timeout:.1f}s")
+    if not launch_realsense:
+        for topic, msg_type in ((depth_topic, "Image"), (intrinsics_topic, "CameraInfo")):
+            if not cap.wait_for_topic(topic, msg_type, sentinel_timeout):
+                return Err(f"no {msg_type} on {topic} within {sentinel_timeout:.1f}s")
 
     cap.declare_ros2_topic(
         "robonix/primitive/camera/rgb",
