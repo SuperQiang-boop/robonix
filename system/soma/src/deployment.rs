@@ -60,6 +60,10 @@ pub struct PackageLaunchTarget {
     /// as a config file, never exported as an env var. Matches the
     /// v0.1 layering invariant in rbnx deploy.rs.
     pub config: serde_yaml::Value,
+    /// Whether a skill should receive Driver(CMD_ACTIVATE) immediately
+    /// after a successful Driver(CMD_INIT). Defaults to false so skills
+    /// retain the normal executor-driven lazy activation behavior.
+    pub activate_on_boot: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -104,6 +108,10 @@ struct ManifestEntry {
     /// time. Default = null, matches rbnx's behaviour.
     #[serde(default)]
     config: serde_yaml::Value,
+    /// Skills normally remain INACTIVE until Executor routes their first
+    /// call. This opt-in makes a long-running skill active at boot.
+    #[serde(default)]
+    activate_on_boot: bool,
 }
 
 impl Deployment {
@@ -220,6 +228,7 @@ fn resolve_entry(
         package_manifest_path,
         manifest_override: entry.manifest.clone(),
         config: entry.config.clone(),
+        activate_on_boot: entry.activate_on_boot,
     })
 }
 
@@ -300,6 +309,23 @@ mod tests {
             "got {}",
             target.package_manifest_path.display()
         );
+        assert!(!target.activate_on_boot);
+    }
+
+    #[test]
+    fn skill_activate_on_boot_is_opt_in() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let deployment_dir = tmp.path().join("deploy");
+        std::fs::create_dir_all(&deployment_dir).expect("create deploy dir");
+        std::fs::write(
+            deployment_dir.join("robonix_manifest.yaml"),
+            "skill:\n  - name: face_greeting\n    path: skills/face_greeting\n    activate_on_boot: true\n",
+        )
+        .expect("write manifest");
+
+        let deployment = Deployment::load(&deployment_dir).expect("load deployment");
+        assert_eq!(deployment.skills.len(), 1);
+        assert!(deployment.skills[0].activate_on_boot);
     }
 
     #[test]

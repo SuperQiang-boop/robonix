@@ -18,6 +18,7 @@ from g1_face_greeting import main  # noqa: E402
 from g1_face_greeting.messages import MessageStore  # noqa: E402
 from g1_face_greeting_mcp import (  # noqa: E402
     CancelFaceMessage_Request, CreateFaceMessage_Request,
+    CreateObjectFaceMessage_Request,
     FaceMessageStatus_Request, ListFaceMessages_Request,
 )
 
@@ -85,6 +86,23 @@ class MessageTests(unittest.TestCase):
                 status = asyncio.run(main.message_status(FaceMessageStatus_Request(task_id=first.task_id)))
                 self.assertEqual(json.loads(status.task_json)["status"], "delivered")
 
+    def test_ordinary_message_never_queries_scene(self):
+        async def resolve(connection, tool, payload, timeout):
+            self.assertEqual(tool, "resolve")
+            return {"found": True, "person_id": 8, "name": "小红"}
+
+        main._scene_connection = SimpleNamespace(endpoint="scene")
+        with patch.object(main, "_call_connection", side_effect=resolve) as call:
+            result = asyncio.run(main.create_message(CreateFaceMessage_Request(
+                person_name="小红", message="下午开会", sender="王老师",
+            )))
+        self.assertTrue(result.accepted)
+        self.assertEqual(call.call_count, 1)
+        self.assertEqual(call.call_args.args[1], "resolve")
+        task = main._store.get(result.task_id)
+        self.assertEqual(task["object_id"], "")
+        self.assertEqual(task["object_status"], "not_tracked")
+
     def test_object_is_bound_at_creation_and_scene_absence_means_removed(self):
         main._scene_connection = SimpleNamespace(endpoint="scene")
 
@@ -94,7 +112,7 @@ class MessageTests(unittest.TestCase):
             return {"objects": [{"id": "scene.object.cup_001", "label": "cup", "last_seen_unix": 10.0}]}
 
         with patch.object(main, "_call_connection", side_effect=call_async):
-            created = asyncio.run(main.create_message(CreateFaceMessage_Request(
+            created = asyncio.run(main.create_object_message(CreateObjectFaceMessage_Request(
                 person_name="小红", message="请拿走杯子", sender="小C", object_label="cup",
             )))
         self.assertTrue(created.accepted)

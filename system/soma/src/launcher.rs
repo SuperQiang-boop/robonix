@@ -288,10 +288,13 @@ impl PackageLauncher {
         }
 
         if target.kind == PackageKind::Skill {
-            // Skill: stop at INACTIVE; executor sends CMD_ACTIVATE on
-            // first MCP call.
-            info!("{who}: INIT ok (INACTIVE — awaits executor activate)");
-            return PackageStartupStatus::Spawned { command };
+            if !target.activate_on_boot {
+                // Default skill behavior: stop at INACTIVE; executor sends
+                // CMD_ACTIVATE on the first MCP call.
+                info!("{who}: INIT ok (INACTIVE — awaits executor activate)");
+                return PackageStartupStatus::Spawned { command };
+            }
+            info!("{who}: INIT ok; activate_on_boot=true, activating skill");
         }
 
         if let Err(e) = call_driver_cmd(
@@ -507,6 +510,7 @@ mod tests {
             ),
             manifest_override: None,
             config: serde_yaml::Value::Null,
+            activate_on_boot: false,
         };
 
         assert_eq!(
@@ -530,6 +534,7 @@ mod tests {
             ),
             manifest_override: None,
             config: serde_yaml::Value::Null,
+            activate_on_boot: false,
         };
 
         assert_eq!(

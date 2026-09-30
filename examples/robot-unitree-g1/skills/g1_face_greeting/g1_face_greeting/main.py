@@ -18,6 +18,7 @@ from robonix_api.atlas_types import Transport
 from g1_face_greeting_mcp import (
     CancelFaceMessage_Request, CancelFaceMessage_Response,
     CreateFaceMessage_Request, CreateFaceMessage_Response,
+    CreateObjectFaceMessage_Request, CreateObjectFaceMessage_Response,
     FaceMessageStatus_Request, FaceMessageStatus_Response,
     GreetFace_Request, GreetFace_Response,
     ListFaceMessages_Request, ListFaceMessages_Response,
@@ -521,11 +522,10 @@ def greet(req: GreetFace_Request) -> GreetFace_Response:
 
 @skill.mcp("robonix/skill/g1_face_greeting/create_message")
 async def create_message(req: CreateFaceMessage_Request) -> CreateFaceMessage_Response:
-    """Store a verbatim one-time message for an unambiguous registered person."""
+    """Store an ordinary one-time message without querying Scene."""
     if _settings is None or _store is None or _face_connection is None:
         return CreateFaceMessage_Response(detail="greeting skill is not active")
     person_name, body, sender = req.person_name.strip(), req.message.strip(), req.sender.strip()
-    object_label = req.object_label.strip()
     if not person_name or not body or len(body) > 160 or len(sender) > 30:
         return CreateFaceMessage_Response(detail="person_name and message are required; message <=160 and sender <=30 characters")
     if any(ord(char) < 32 for char in body + sender):
@@ -535,11 +535,7 @@ async def create_message(req: CreateFaceMessage_Request) -> CreateFaceMessage_Re
         if not response.get("found"):
             return CreateFaceMessage_Response(detail=str(response.get("detail", "person not registered")))
         person_id = int(response["person_id"])
-        object_info = await _resolve_scene_object(object_label) if object_label else {"id": "", "label": ""}
-        task_id, created = _store.create_or_get(
-            person_id, str(response["name"]), sender, body,
-            object_id=object_info["id"], object_label=object_info["label"],
-        )
+        task_id, created = _store.create_or_get(person_id, str(response["name"]), sender, body)
         log.info(
             "face message %s task_id=%s requested_name=%s resolved_name=%s person_id=%s sender=%s",
             "created" if created else "deduplicated",
@@ -555,12 +551,67 @@ async def create_message(req: CreateFaceMessage_Request) -> CreateFaceMessage_Re
             detail = "an identical pending task already exists; awaiting next face encounter"
         return CreateFaceMessage_Response(
             accepted=True, task_id=task_id, person_id=person_id,
-            person_name=str(response["name"]), object_id=object_info["id"],
-            object_label=object_info["label"], detail=detail,
+            person_name=str(response["name"]), detail=detail,
         )
     except Exception as exc:  # noqa: BLE001
         log.exception("failed to save face message")
         return CreateFaceMessage_Response(detail=str(exc))
+
+
+@skill.mcp("robonix/skill/g1_face_greeting/create_object_message")
+async def create_object_message(
+    req: CreateObjectFaceMessage_Request,
+) -> CreateObjectFaceMessage_Response:
+    """Store a one-time message bound to one unique current Scene object."""
+    if _settings is None or _store is None or _face_connection is None:
+        return CreateObjectFaceMessage_Response(detail="greeting skill is not active")
+    person_name = req.person_name.strip()
+    body = req.message.strip()
+    sender = req.sender.strip()
+    object_label = req.object_label.strip()
+    if not person_name or not body or not object_label or len(body) > 160 or len(sender) > 30:
+        return CreateObjectFaceMessage_Response(
+            detail="person_name, message, and object_label are required; message <=160 and sender <=30 characters"
+        )
+    if any(ord(char) < 32 for char in body + sender + object_label):
+        return CreateObjectFaceMessage_Response(detail="message, sender, and object_label must not contain control characters")
+    try:
+        response = await _call_connection(_face_connection, "resolve", {"name": person_name}, 8.0)
+        if not response.get("found"):
+            return CreateObjectFaceMessage_Response(detail=str(response.get("detail", "person not registered")))
+        person_id = int(response["person_id"])
+        object_info = await _resolve_scene_object(object_label)
+        task_id, created = _store.create_or_get(
+            person_id, str(response["name"]), sender, body,
+            object_id=object_info["id"], object_label=object_info["label"],
+        )
+        log.info(
+            "face object message %s task_id=%s requested_name=%s resolved_name=%s person_id=%s object_id=%s sender=%s",
+            "created" if created else "deduplicated",
+            task_id,
+            person_name,
+            response["name"],
+            person_id,
+            object_info["id"],
+            sender or "<unknown>",
+        )
+        detail = (
+            "saved; awaiting next face encounter"
+            if created
+            else "an identical pending task already exists; awaiting next face encounter"
+        )
+        return CreateObjectFaceMessage_Response(
+            accepted=True,
+            task_id=task_id,
+            person_id=person_id,
+            person_name=str(response["name"]),
+            object_id=object_info["id"],
+            object_label=object_info["label"],
+            detail=detail,
+        )
+    except Exception as exc:  # noqa: BLE001
+        log.exception("failed to save object face message")
+        return CreateObjectFaceMessage_Response(detail=str(exc))
 
 
 @skill.mcp("robonix/skill/g1_face_greeting/list_messages")

@@ -20,6 +20,8 @@ capabilities:
     path: capabilities/greet.v1.toml
   - name: robonix/skill/g1_face_greeting/create_message
     path: capabilities/create_message.v1.toml
+  - name: robonix/skill/g1_face_greeting/create_object_message
+    path: capabilities/create_object_message.v1.toml
   - name: robonix/skill/g1_face_greeting/list_messages
     path: capabilities/list_messages.v1.toml
   - name: robonix/skill/g1_face_greeting/message_status
