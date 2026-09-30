@@ -22,6 +22,21 @@ RGBD/AngularUpdate: 0.1
 RGBD/LinearUpdate: 0.1
 Vis/MinInliers: 12
 Rtabmap/DetectionRate: 1.0
+# The chassis publishes an identity odometry sample while its driver is
+# reconnecting after boot. Do not split the restored graph into a new map on
+# that transient reset; wait for a sustained reset before accepting it.
+# Keep the database on disk with a recoverable SQLite journal. Working-memory
+# nodes still require the periodic /backup or a graceful engine shutdown.
+DbSqlite3/InMemory: false
+DbSqlite3/JournalMode: 0
+DbSqlite3/Synchronous: 2
+# Make earlier sessions available for matching when extending the saved map.
+# This trades startup time and RAM for historical coverage.
+Mem/InitWMWithAllNodes: true
+# Keep the restored database in its existing internal map. The chassis emits
+# identity odometry while reconnecting; RTAB-Map counts every such message,
+# so zero or a small value would quickly hide historical nodes in a new map.
+Odom/ResetCountdown: 1000000
 Icp/MaxCorrespondenceDistance: 0.2
 Icp/MaxTranslation: 0.5
 Icp/MaxRotation: 0.78

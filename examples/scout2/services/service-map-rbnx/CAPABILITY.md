@@ -21,7 +21,7 @@ which engine runs — they only bind the `robonix/service/map/*` contracts.
 | `robonix/service/map/pointcloud` | ros2 topic | `sensor_msgs/PointCloud2` | 3D fused cloud |
 | `robonix/service/map/pose` | ros2 topic | `geometry_msgs/PoseWithCovarianceStamped` | SLAM-corrected, map frame; can jump on loop closure |
 | `robonix/service/map/odom` | ros2 topic | `nav_msgs/Odometry` | SLAM-corrected, odom frame; continuous between closures |
-| `robonix/service/map/lifecycle` | ros2 topic | `map/msg/MapLifecycle` | `{map_id, mode, generation}`, latched (transient_local): current map identity for consumers keying state by map (scene). Re-published on init / load / reset / mode switch; `generation` bumps whenever the map origin may have changed (mapping-mode session start, reset) and is persisted per named map, so a localization round-trip keeps the same value. Bridge-owned + algo-independent. |
+| `robonix/service/map/lifecycle` | ros2 topic | `map/msg/MapLifecycle` | `{map_id, mode, generation}`, latched (transient_local): current map identity for consumers keying state by map (scene). Re-published on init / load / reset / mode switch; `generation` bumps on a fresh map or reset, while resuming the same named graph keeps its persisted value. Bridge-owned + algo-independent. |
 | `robonix/service/map/save_map` | grpc + mcp | `map_id, note → ok, map_id, detail` | snapshot the live map under a stable id |
 | `robonix/service/map/list_maps` | grpc + mcp | `→ ok, detail, maps_json` | list saved map metadata by map id; artifacts remain opaque |
 | `robonix/service/map/load_map` | grpc + mcp | `map_id, mode, [x,y,theta] → ok` | switch onto a saved map (localization / mapping) |
@@ -104,12 +104,12 @@ pgm/png + cloud pcd + meta), one directory per `map_id` — the same id scene
 keys its semantic objects to.
 
 - **save_map** `(map_id, note)` → `(ok, map_id, detail)`. Roam to build
-  coverage, then checkpoint the live spatial artifact under `map_id`. The
-  provider may use RTAB-Map internally, but callers treat the artifact as opaque.
-  Non-destructive — mapping continues.
+  coverage, then checkpoint the live spatial artifact under `map_id`. Reusing
+  the same id updates the published checkpoint atomically; the writable
+  runtime database remains active so mapping continues.
 - **load_map** `(map_id, mode, [x,y,theta])` → `(ok, detail)`. Switch onto a
   saved map in localization mode through a private runtime copy, keeping the
-  published artifact immutable and its map frame stable across runs. Pass
+  published artifact unchanged by loading. Pass
   `has_initial_pose` + `x,y,theta` to seed convergence.
 - **pose_estimate** `(x, y, theta)` → `(ok, detail)`. Publish a pose guess
   (map frame) to `/initialpose` so rtabmap's localization re-converges — global
@@ -130,16 +130,22 @@ maps/lab_3f/
   meta.yaml        map_id, saved_at, frame_id, resolution, size, origin
 ```
 
-- **`map_mode: mapping`** always builds a fresh private runtime database.
-  Call `save_map(map_id)` to atomically publish an immutable spatial artifact.
+- **`map_mode: mapping`** resumes the named persistent runtime database when it
+  exists, or creates one on the first boot. Call `save_map(map_id)` to
+  atomically publish or update the stable spatial artifact.
 - **`map_mode: localization`** requires `map_id`; mapping copies the saved db
   to a private runtime DB, then re-localizes against that copy. The saved
   artifact and its map-frame origin remain unchanged across restarts.
-- Omit `map_id` for normal fresh mapping. Set it only when intentionally
-  booting directly into localization of a previously saved map.
+- `checkpoint_interval_s: 60` flushes memory and updates the checkpoint
+  periodically; normal mapping shutdown also saves. This does not guarantee
+  zero data loss on power failure. Preview export can lag the saved database.
+- `reset_map: true` preserves the old runtime in a `previous-*` directory and
+  starts over on every boot. Omit `map_id` only for intentionally ephemeral mapping.
+- Resuming a database does not establish the robot's current position. Verify
+  localization against the old map before navigation or entering new areas.
 
 **Binding contract:** after `load_map(map_id)`, scene binds its semantic
-objects to the same id. During fresh mapping there is no saved map identity.
+objects to the same id. Only unnamed ephemeral mapping has no named map identity.
 
 ## Deployment targets
 

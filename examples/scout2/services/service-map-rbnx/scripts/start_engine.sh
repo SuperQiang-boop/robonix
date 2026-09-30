@@ -98,7 +98,9 @@ case "$ALGO" in
         # contents and log them into mapping.log. Without this the only
         # way to find that file is `ps -ef | grep rtabmap`, which is
         # hostile to debugging parameter resolution.
-        ros2 launch "${MAPPING_LAUNCH_DIR:-/mapping/launch}/rtabmap_2d.launch.py" \
+        # A dedicated process group lets shutdown reach both ROS launch and
+        # its children, just as a terminal Ctrl-C would.
+        setsid ros2 launch --noninteractive "${MAPPING_LAUNCH_DIR:-/mapping/launch}/rtabmap_2d.launch.py" \
             scan_topic:="$SCAN_TOPIC" \
             scan_cloud_topic:="$SCAN_CLOUD_TOPIC" \
             odom_topic:="$ODOM_TOPIC" \
@@ -118,6 +120,14 @@ case "$ALGO" in
             "${OVERRIDES_ARG[@]}" \
             "${DB_ARG[@]}" &
         LAUNCH_PID=$!
+        # Forward termination to ros2 launch and wait for RTAB-Map to close its
+        # database. Killing only this waiting shell would orphan the engine.
+        stop_launch() {
+            trap '' INT TERM
+            kill -INT -- "-$LAUNCH_PID" 2>/dev/null || true
+            wait "$LAUNCH_PID" || true
+        }
+        trap 'stop_launch; exit 0' INT TERM
         (
             python3 - <<'PYEOF'
 import time, subprocess

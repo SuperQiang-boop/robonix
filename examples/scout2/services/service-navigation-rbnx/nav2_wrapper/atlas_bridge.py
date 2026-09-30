@@ -164,6 +164,10 @@ _speed_subscriber_connected = False
 # is published on sim time, every goal lookup hits a ~decades extrapolation
 # error and the planner aborts. Set from cfg in init().
 _USE_SIM_TIME = False
+_map_lifecycle_sub = None
+_map_sub = None
+_map_identity = {"map_id": "", "generation": 0}
+_map_ready = False
 
 # Costmap state for goal reachability checking
 _costmap_sub = None
@@ -226,6 +230,48 @@ def _setup_costmap_subscriber(node) -> None:
         10
     )
     log.info("subscribed to /global_costmap/costmap for goal reachability checking")
+
+
+def _map_callback(msg) -> None:
+    """Accept a map only after receiving a non-empty occupancy grid."""
+    global _map_ready
+    info = msg.info
+    _map_ready = (
+        int(info.width) > 0
+        and int(info.height) > 0
+        and float(info.resolution) > 0.0
+        and len(msg.data) == int(info.width) * int(info.height)
+        and any(int(value) >= 0 for value in msg.data)
+    )
+
+
+def _map_lifecycle_callback(msg) -> None:
+    """Track the map frame identity published by the mapping provider."""
+    global _map_ready
+    incoming = {"map_id": str(msg.map_id), "generation": int(msg.generation)}
+    if incoming != _map_identity:
+        # A load/reset can move the map frame. Require the corresponding
+        # latched occupancy sample before accepting new navigation goals.
+        _map_ready = False
+    _map_identity.update(incoming)
+
+
+def _setup_map_readiness_subscribers(node) -> None:
+    """Subscribe to latched map identity and occupancy readiness signals."""
+    global _map_lifecycle_sub, _map_sub
+    from nav_msgs.msg import OccupancyGrid  # type: ignore
+    from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy  # type: ignore
+    qos = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE,
+                     durability=DurabilityPolicy.TRANSIENT_LOCAL)
+    _map_sub = node.create_subscription(OccupancyGrid, "/map", _map_callback, qos)
+    try:
+        from map.msg import MapLifecycle  # type: ignore
+        _map_lifecycle_sub = node.create_subscription(
+            MapLifecycle, "/robonix/map/lifecycle", _map_lifecycle_callback, qos
+        )
+    except ImportError:
+        log.warning("map lifecycle message unavailable; map identity will be unverified")
+    log.info("waiting for a non-empty /map before accepting navigation goals")
 
 
 def _world_to_costmap(wx: float, wy: float) -> tuple[int, int]:
@@ -1018,6 +1064,7 @@ def _start_ros2_thread() -> None:
         )
         # Setup costmap subscriber for goal reachability checking
         _setup_costmap_subscriber(node)
+        _setup_map_readiness_subscribers(node)
         node.create_timer(1.0, _refresh_speed_subscriber)
         executor = MultiThreadedExecutor()
         executor.add_node(node)
@@ -1429,6 +1476,8 @@ def _navigate_impl(goal) -> dict:
     global _last_run_id
     if _ros_node is None:
         return {"accepted": False, "run_id": "", "detail": "ROS2 not initialized"}
+    if not _map_ready:
+        return {"accepted": False, "run_id": "", "detail": "map is not ready; wait for a non-empty map"}
     run_id = str(uuid.uuid4())
     frame_id = goal.header.frame_id or "map"
     yaw = _quat_to_yaw(goal.pose.orientation.z, goal.pose.orientation.w)

@@ -104,6 +104,13 @@ class RuntimeIntegrationTest(unittest.TestCase):
         self.assertIn("provider_id=provider_id", source)
         self.assertNotIn('("odom",  "robonix/service/map/odom"', source)
 
+    def test_navigation_waits_for_a_nonempty_map(self):
+        source = (ROOT / "nav2_wrapper" / "atlas_bridge.py").read_text()
+        self.assertIn("def _setup_map_readiness_subscribers", source)
+        self.assertIn("/robonix/map/lifecycle", source)
+        self.assertIn("map is not ready; wait for a non-empty map", source)
+        self.assertIn("_setup_map_readiness_subscribers(node)", source)
+
     def test_pointcloud_projection_is_explicit(self):
         source = (ROOT / "nav2_wrapper" / "atlas_bridge.py").read_text()
         self.assertIn("scan_projection_config(cfg)", source)

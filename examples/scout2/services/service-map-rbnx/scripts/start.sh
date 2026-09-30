@@ -60,7 +60,7 @@ cleanup() {
         DISPLAY="$XHOST_DISPLAY" xhost -local:docker >/dev/null 2>&1 || true
         XHOST_AUTHORIZED=false
     fi
-    docker stop "$CT" >/dev/null 2>&1 || true
+    docker stop --time "${ROBONIX_MAPPING_STOP_TIMEOUT_S:-180}" "$CT" >/dev/null 2>&1 || true
     if [[ -n "$RUNTIME_PROTO_TMP" && -d "$RUNTIME_PROTO_TMP" ]]; then
         rm -rf -- "$RUNTIME_PROTO_TMP"
     fi
@@ -70,7 +70,7 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-docker rm -f "$CT" >/dev/null 2>&1 || true
+docker stop --time "${ROBONIX_MAPPING_STOP_TIMEOUT_S:-180}" "$CT" >/dev/null 2>&1 || true
 
 # Host codegen is retained for native deployments. Docker imports protobuf
 # modules generated and validated with the exact image that executes them.
@@ -160,6 +160,12 @@ if [[ -n "${MAPPING_MAPS_DIR:-}" ]]; then
     mkdir -p "$MAPPING_MAPS_DIR"
     EXTRA_MOUNTS+=(-v "${MAPPING_MAPS_DIR}:${MAPPING_MAPS_DIR}")
 fi
+# Keep the active RTAB-Map database outside the --rm container. An explicit
+# host path is bind-mounted at the same path inside the container.
+if [[ -n "${MAPPING_RUNTIME_DB_DIR:-}" ]]; then
+    mkdir -p "$MAPPING_RUNTIME_DB_DIR"
+    EXTRA_MOUNTS+=(-v "${MAPPING_RUNTIME_DB_DIR}:${MAPPING_RUNTIME_DB_DIR}")
+fi
 
 # X11 is an explicit opt-in. In particular, a missing DISPLAY must not cause
 # an unattended/headless deployment to discover a desktop and widen its X
@@ -210,6 +216,8 @@ docker run --rm \
     -e MAPPING_ENABLE_VIZ="$MAPPING_ENABLE_VIZ" \
     -e MAPPING_WEBUI_HOST="${MAPPING_WEBUI_HOST:-127.0.0.1}" \
     -e MAPPING_MAPS_DIR="${MAPPING_MAPS_DIR:-/mapping/maps}" \
+    -e MAPPING_RUNTIME_DB_DIR="${MAPPING_RUNTIME_DB_DIR:-${MAPPING_MAPS_DIR:-/mapping/maps}/.runtime}" \
+    -e ROBONIX_MAPPING_STOP_TIMEOUT_S="${ROBONIX_MAPPING_STOP_TIMEOUT_S:-180}" \
     "${DEPLOY_ARGS[@]}" \
     "${X11_ARGS[@]}" \
     -v "$(pwd)":/mapping \

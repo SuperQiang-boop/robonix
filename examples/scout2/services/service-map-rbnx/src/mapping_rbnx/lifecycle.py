@@ -13,7 +13,8 @@ coordinates must treat a change in EITHER (map_id, generation) as
 map_id but moves the map origin, which only generation makes visible.
 
 Bump rules (who calls what is wired in atlas_bridge.init + map_ops):
-  - init/load in mapping mode      → bump   (origin re-derived per session)
+  - init new/reset mapping         → bump   (new map origin)
+  - init resumed named mapping     → NO bump (existing graph)
   - init/load in localization mode → NO bump (stable frame — the whole point)
   - reset_map                      → bump   (origin moves to current pose)
   - switch_mode                    → NO bump (live frame unchanged at switch)

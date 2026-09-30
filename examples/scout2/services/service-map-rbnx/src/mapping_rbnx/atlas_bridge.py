@@ -24,8 +24,10 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import Optional
@@ -111,26 +113,61 @@ def _sanitize_map_id(map_id: str) -> str:
     """Map ids become a directory name, so restrict to a filesystem-safe
     charset. Mirrors scene's ObjectStore sanitiser so a given map_id keys
     the SAME spatial map (mapping) and semantic map (scene) consistently."""
-    return re.sub(r"[^A-Za-z0-9._-]", "_", map_id.strip()) or "default"
+    return map_ops._sanitize_map_id(map_id)
 
 
 def _resolve_persistence(cfg: dict) -> dict[str, str]:
-    """Resolve a private runtime DB, and only read saved maps in localization.
+    """Resolve the runtime DB for mapping or localization.
 
-    ``maps/<map_id>/rtabmap.db`` is an immutable published artifact. RTAB-Map
-    must never use it as its active writer database. A mapping session always
-    receives a fresh runtime DB; ``save_map`` snapshots that DB atomically into
-    a stable map id. Localization first copies the saved artifact to a runtime
-    DB, so even RTAB-Map bookkeeping cannot mutate the saved copy.
+    A named mapping session owns a stable writable runtime path under
+    ``MAPPING_RUNTIME_DB_DIR``. This path is bind-mounted in Docker. At boot,
+    a published checkpoint is copied into that path before mapping resumes;
+    the published artifact remains separate and is updated by save_map.
+
+    When ``map_mode`` is ``auto`` (or omitted) and no ``map_id`` is specified:
+      - Scan ``MAPS_DIR/`` for saved maps (directories containing rtabmap.db).
+      - If found → automatically load the LATEST map (by modification time)
+        in ``localization`` mode.
+      - If not found → use ``mapping`` mode to start building a new map.
+
+    When ``map_id`` is specified:
+      - Check for existing saved map under ``MAPS_DIR/{map_id}/rtabmap.db``.
+      - If found → automatically use ``localization`` mode.
+      - If not found → use ``mapping`` mode.
     """
     raw_id = cfg.get("map_id")
     map_id = _sanitize_map_id(str(raw_id)) if raw_id else ""
-    mode = str(cfg.get("map_mode", "mapping")).strip().lower()
+    mode = str(cfg.get("map_mode", "auto")).strip().lower()
+    reset = _truthy(cfg.get("reset_map", False))
+
+    # ── Auto-detect: check for existing persisted maps ──────────────────────
+    if mode == "auto":
+        if not map_id:
+            # No map_id specified — scan MAPS_DIR for saved maps
+            map_id = _find_latest_map()
+            if map_id:
+                log.info("persistence: auto mode detected saved map map_id=%s → localization", map_id)
+                mode = "localization"
+            else:
+                log.info("persistence: auto mode no saved maps found → mapping")
+                mode = "mapping"
+        else:
+            # map_id specified — check if it exists
+            map_dir = os.path.join(MAPS_DIR, map_id)
+            saved_db = os.path.join(map_dir, "rtabmap.db")
+            if os.path.isfile(saved_db):
+                log.info("persistence: auto mode detected saved map at %s → localization", saved_db)
+                mode = "localization"
+            else:
+                log.info("persistence: auto mode no saved map for map_id=%s → mapping", map_id)
+                mode = "mapping"
+
     if mode not in _VALID_MODES:
         raise RuntimeError(
             f"map_mode={mode!r} invalid — must be one of {list(_VALID_MODES)}"
         )
-    reset = _truthy(cfg.get("reset_map", False))
+
+    # ── Localization: load existing map ────────────────────────────────────
     if mode == "localization":
         if not map_id:
             raise RuntimeError("map_mode=localization requires a saved map_id")
@@ -153,20 +190,88 @@ def _resolve_persistence(cfg: dict) -> dict[str, str]:
             "reset_map": "false",
         }
 
-    # Mapping is always a new mutable session. Keep a supplied map_id out of
-    # the runtime binding: it identifies a saved artifact, not a live session.
+    # ── Mapping: build or extend map ───────────────────────────────────────
+    # A named mapping session starts from the last published checkpoint. If no
+    # checkpoint exists yet, persistent_runtime_db retains the runtime DB.
     os.makedirs(RUNTIME_DB_DIR, exist_ok=True)
+    if map_id:
+        runtime_db = map_ops.persistent_runtime_db(map_id, reset)
+        log.info("persistence: resumable mapping map_id=%s runtime_db=%s",
+                 map_id, runtime_db)
+        return {
+            "map_id": map_id,
+            "map_mode": "mapping",
+            "database_path": runtime_db,
+            "reset_map": str(reset).lower(),
+        }
+
     runtime_db = os.path.join(
         RUNTIME_DB_DIR,
         f"mapping-{os.getpid()}-{int(time.time() * 1000)}.db",
     )
-    log.info("persistence: fresh mapping session runtime_db=%s requested_map_id=%s",
-             runtime_db, map_id or "<none>")
+    log.info("persistence: ephemeral mapping runtime_db=%s", runtime_db)
     return {
         "map_mode": "mapping",
         "database_path": runtime_db,
         "reset_map": "true",
     }
+
+
+def _find_latest_map() -> str:
+    """Scan MAPS_DIR for saved maps and return the latest one (by mtime).
+
+    Returns the map_id of the most recently modified map, or "" if no
+    valid maps are found. A valid map is a directory containing rtabmap.db.
+
+    Note: The default deployment map ``scout2_main`` is always excluded
+    from auto-detection to avoid loading a stale checkpoint. If that
+    map is needed, set ``map_mode: localization`` and ``map_id: scout2_main``
+    explicitly in the config.
+    """
+    # Maps to always exclude from auto-detection (reserved / default deployment maps)
+    EXCLUDED_MAPS = {"scout2_main"}
+
+    if not os.path.isdir(MAPS_DIR):
+        log.info("persistence: MAPS_DIR=%s does not exist", MAPS_DIR)
+        return ""
+
+    latest_map_id = ""
+    latest_mtime = 0.0
+
+    for entry in os.listdir(MAPS_DIR):
+        # Skip hidden directories
+        if entry.startswith("."):
+            continue
+        # Skip excluded maps (default deployment maps)
+        if entry in EXCLUDED_MAPS:
+            log.debug("persistence: skipping excluded map %s", entry)
+            continue
+        map_dir = os.path.join(MAPS_DIR, entry)
+        if not os.path.isdir(map_dir):
+            continue
+        saved_db = os.path.join(map_dir, "rtabmap.db")
+        if not os.path.isfile(saved_db):
+            continue
+        # Get modification time of the database file
+        try:
+            mtime = os.path.getmtime(saved_db)
+            if mtime > latest_mtime:
+                latest_mtime = mtime
+                latest_map_id = entry
+        except OSError as e:
+            log.warning("persistence: cannot stat %s: %s", saved_db, e)
+            continue
+
+    if latest_map_id:
+        import datetime
+        mtime_str = datetime.datetime.fromtimestamp(latest_mtime).isoformat()
+        log.info("persistence: found latest map map_id=%s modified=%s",
+                 latest_map_id, mtime_str)
+    else:
+        log.info("persistence: no valid maps found in %s (excluded: %s)",
+                 MAPS_DIR, EXCLUDED_MAPS)
+
+    return latest_map_id
 
 
 def _write_rtabmap_overrides(cfg: dict, resolved: dict[str, str]) -> str:
@@ -518,6 +623,12 @@ def init(cfg: dict):
       4. Write /tmp/<algo>_resolved.yaml for the launch file.
       5. DeclareInterface(ROS2) for every exported map output.
     """
+    try:
+        interval = float(cfg.get("checkpoint_interval_s", 60.0))
+        if isinstance(cfg.get("checkpoint_interval_s"), bool) or not math.isfinite(interval) or interval < 0:
+            raise ValueError("must be finite and non-negative")
+    except (TypeError, ValueError) as exc:
+        return Err(f"invalid checkpoint_interval_s: {exc}")
     algo = cfg.get("algo", "rtabmap")
     if algo not in _ALGO_TOPIC_BINDINGS:
         return Err(
@@ -567,7 +678,7 @@ def init(cfg: dict):
     # launch read them. Empty when no map_id (ephemeral — legacy behaviour).
     try:
         persist = _resolve_persistence(cfg)
-    except RuntimeError as e:
+    except (RuntimeError, ValueError, OSError) as e:
         return Err(str(e))
     resolved.update(persist)
     if algo == "rtabmap":
@@ -585,12 +696,19 @@ def init(cfg: dict):
     _ACTIVE.update({
         "algo": algo,
         "map_id": persist.get("map_id", ""),
-        "map_dir": os.path.dirname(active_db) if active_db else "",
+        "map_dir": (
+            _saved_map_dir(persist["map_id"])
+            if persist.get("map_id") else ""
+        ),
         "active_db": active_db,
         "map_mode": active_mode,
         "finalized": "false",
     })
 
+    # Decide before the engine observes resolved.yaml and creates an empty DB.
+    new_mapping = active_mode == "mapping" and (
+        persist.get("reset_map") == "true" or not os.path.isfile(active_db)
+    )
     _write_resolved_yaml(algo, resolved)
 
     # Declare outputs (after resolved.yaml so launch can start in parallel).
@@ -600,10 +718,10 @@ def init(cfg: dict):
     # Bridge-owned, algo-independent — the bridge itself publishes it
     # (latched) from its rclpy node, so it is NOT part of the per-algo
     # _ALGO_TOPIC_BINDINGS engine surface. Bump rules live in lifecycle.py:
-    # a mapping-mode session re-derives the map origin, so it opens a new
-    # (map_id, generation) epoch; a localization load keeps the saved one.
+    # A new/reset map opens an epoch; resuming the same graph keeps it.
     lifecycle.set_state(persist.get("map_id", ""), active_mode,
-                        bump=(active_mode == "mapping"))
+                        bump=new_mapping)
+    map_ops._ACTIVE_DB = active_db
     try:
         mapping.declare_ros2_topic("robonix/service/map/lifecycle",
                                    lifecycle.LIFECYCLE_TOPIC,
@@ -622,6 +740,7 @@ def init(cfg: dict):
     # the lifecycle broadcast above carries — one `active_mode` source so
     # the two views of "current mode" cannot drift apart under a later edit.
     map_ops.set_current_mode(active_mode)
+    webui.set_mode_hint(active_mode)
     _webui_port = str(cfg.get("webui_port", 8091)).strip()
     _webui_host = str(cfg.get(
         "webui_host", os.environ.get("MAPPING_WEBUI_HOST", "127.0.0.1")
@@ -635,42 +754,76 @@ def init(cfg: dict):
         os.environ.pop("MAPPING_WEBUI_PORT", None)
     webui.set_active_db_hint(_active_db)
     webui.maybe_start()
+    _start_checkpoint_loop(cfg, active_mode)
     return Ok()
 
 
 # Active-session scratch — set by init, read by on_shutdown / save helpers.
 _ACTIVE: dict[str, str] = {}
+_CHECKPOINT_STOP = threading.Event()
+_CHECKPOINT_THREAD: threading.Thread | None = None
+_SHUTDOWN_LOCK = threading.Lock()
+_SHUTDOWN_RESULT = None
+
+
+def _start_checkpoint_loop(cfg: dict, active_mode: str) -> None:
+    """Persist named mapping checkpoints periodically while RTAB-Map runs."""
+    global _CHECKPOINT_THREAD
+    _CHECKPOINT_STOP.clear()
+    if _ACTIVE.get("algo") != "rtabmap":
+        return
+    try:
+        interval = float(cfg.get("checkpoint_interval_s", 60.0))
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError("checkpoint_interval_s must be a non-negative number") from exc
+    if interval <= 0.0:
+        return
+    if _CHECKPOINT_THREAD and _CHECKPOINT_THREAD.is_alive():
+        return
+
+    def run() -> None:
+        """Save the current database only while a named map is being extended."""
+        while not _CHECKPOINT_STOP.wait(interval):
+            with map_ops._SAVE_LOCK:
+                state = lifecycle.current()
+                map_id = state.get("map_id", "")
+                if not map_id or map_ops.get_mode_impl().get("mode") != "mapping":
+                    continue
+                out = map_ops.save_map_impl(map_id, active_db=_active_db())
+            if out.get("ok"):
+                log.info("checkpoint: saved map_id=%s", map_id)
+            else:
+                log.warning("checkpoint failed for map_id=%s: %s",
+                            map_id, out.get("detail", "unknown error"))
+
+    _CHECKPOINT_THREAD = threading.Thread(
+        target=run, name="mapping-checkpoint", daemon=True
+    )
+    _CHECKPOINT_THREAD.start()
+    log.info("checkpoint: enabled interval=%.1fs map_id=%s",
+             interval, _ACTIVE.get("map_id"))
 
 
 @mapping.on_shutdown
 def shutdown():
-    """Best-effort: when a named map (map_id) was being built, dump a
-    human-previewable snapshot (occupancy .pgm/.yaml/.png + cloud .pcd +
-    meta) next to the rtabmap db before the SLAM nodes are torn down, so
-    the map is usable offline without rtabmap's database viewer. The db
-    itself is already persistent (rtabmap writes it live at database_path);
-    this only adds the portable artifacts. Never fail shutdown on a save
-    error — the db is the source of truth."""
-    map_dir = _ACTIVE.get("map_dir")
-    map_id = _ACTIVE.get("map_id")
-    active_db = _active_db()
-    expected_db = os.path.join(map_dir or "", "rtabmap.db") if map_dir else ""
-    if not map_dir or not map_id or _ACTIVE.get("algo") != "rtabmap":
-        return Ok()
-    if _ACTIVE.get("map_mode") != "mapping":
-        log.info("skip map snapshot on shutdown: mode=%s", _ACTIVE.get("map_mode"))
-        return Ok()
-    if _ACTIVE.get("finalized") == "true":
-        log.info("skip map snapshot on shutdown: map %s already finalized", map_id)
-        return Ok()
-    if os.path.abspath(active_db or "") != os.path.abspath(expected_db):
-        log.info("skip map snapshot on shutdown: active_db=%s is not saved map db=%s", active_db, expected_db)
-        return Ok()
-    try:
-        _export_map_snapshot(map_dir)
-    except Exception as e:  # noqa: BLE001
-        log.warning("map snapshot export failed (db still saved): %s", e)
-    return Ok()
+    """Flush once across Driver shutdown and a following process signal."""
+    global _SHUTDOWN_RESULT
+    with _SHUTDOWN_LOCK:
+        if _SHUTDOWN_RESULT is not None:
+            return _SHUTDOWN_RESULT
+        _CHECKPOINT_STOP.set()
+        if _CHECKPOINT_THREAD and _CHECKPOINT_THREAD.is_alive():
+            _CHECKPOINT_THREAD.join()
+        with map_ops._SAVE_LOCK:
+            map_id = lifecycle.current().get("map_id")
+            if (not map_id or _ACTIVE.get("algo") != "rtabmap"
+                    or map_ops.get_mode_impl().get("mode") != "mapping"):
+                _SHUTDOWN_RESULT = Ok()
+            else:
+                out = map_ops.save_map_impl(map_id, active_db=_active_db())
+                _SHUTDOWN_RESULT = Ok() if out.get("ok") else Err(str(out.get("detail")))
+                log.info("shutdown checkpoint: %s", out.get("detail"))
+        return _SHUTDOWN_RESULT
 
 
 def _export_map_snapshot(map_dir: str) -> None:
@@ -749,7 +902,7 @@ def _list_maps_contract_response(out: dict) -> dict:
 # snapshotted under a name.
 
 def _active_db() -> str:
-    active = _ACTIVE.get("active_db") or ""
+    active = map_ops._ACTIVE_DB or _ACTIVE.get("active_db") or ""
     if active:
         return active
     md = _ACTIVE.get("map_dir") or ""
@@ -761,18 +914,10 @@ def _saved_map_dir(map_id: str) -> str:
 
 
 def _record_save_result(map_id: str, out: dict) -> None:
-    if not out.get("ok"):
-        return
-    saved_db = os.path.abspath(str(out.get("artifact_path") or ""))
-    current_db = os.path.abspath(_active_db() or "")
-    if saved_db and current_db and saved_db == current_db:
-        _ACTIVE.update({
-            "map_id": _sanitize_map_id(map_id),
-            "map_dir": os.path.dirname(saved_db),
-            "active_db": saved_db,
-            "map_mode": "mapping",
-            "finalized": "true",
-        })
+    # Saving a copy under another name must not rename the active map or change
+    # its mode. Periodic checkpoints continue to use the lifecycle identity.
+    if out.get("ok"):
+        log.info("saved checkpoint map_id=%s", map_id)
 
 
 def _record_load_result(map_id: str, out: dict) -> None:

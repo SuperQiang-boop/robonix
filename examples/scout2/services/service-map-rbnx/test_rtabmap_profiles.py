@@ -39,6 +39,12 @@ class RtabmapConfigurationTest(unittest.TestCase):
             package.mkdir()
             deploy.mkdir()
             fake_bin.mkdir()
+            runtime_proto = root / "runtime-proto"
+            runtime_proto.mkdir()
+            (runtime_proto / "atlas.proto").write_text('syntax = "proto3";')
+            staging = package / "rbnx-build/proto-staging"
+            staging.mkdir(parents=True)
+            (staging / "map.proto").write_text('syntax = "proto3";')
             docker_args = root / "docker.args"
             docker = fake_bin / "docker"
             docker.write_text(
@@ -50,7 +56,7 @@ class RtabmapConfigurationTest(unittest.TestCase):
             )
             docker.chmod(0o755)
             rbnx = fake_bin / "rbnx"
-            rbnx.write_text('#!/usr/bin/env bash\necho /tmp/robonix-api\n')
+            rbnx.write_text('#!/usr/bin/env bash\nprintf "%s\\n" "$TEST_RUNTIME_PROTO"\n')
             rbnx.chmod(0o755)
             env = os.environ.copy()
             env.update(
@@ -61,6 +67,7 @@ class RtabmapConfigurationTest(unittest.TestCase):
                     "RBNX_INVOCATION_CWD": str(deploy),
                     "ROBONIX_MAPPING_FORCE": "docker",
                     "DISPLAY": "",
+                    "TEST_RUNTIME_PROTO": str(runtime_proto),
                 }
             )
             subprocess.run(
@@ -73,6 +80,7 @@ class RtabmapConfigurationTest(unittest.TestCase):
             args = docker_args.read_text(encoding="utf-8").splitlines()
             self.assertIn(f"RBNX_INVOCATION_CWD={deploy}", args)
             self.assertIn(f"{deploy}:{deploy}:ro", args)
+            self.assertIn("MAPPING_RUNTIME_DB_DIR=/mapping/maps/.runtime", args)
 
     def test_legacy_profile_remains_compatible(self):
         profiles = load_profiles()

@@ -13,7 +13,9 @@ catalog:
     - Szhu <szh@example.com>
 
 env:
-  ROS_DOMAIN_ID: "0"
+  ROBONIX_MAPPING_FORCE: docker
+  SCENE_MAP_ID: scout2_main
+  ROS_DOMAIN_ID: "42"
   RMW_IMPLEMENTATION: rmw_fastrtps_cpp
 
 system:
@@ -30,6 +32,8 @@ system:
     log: info
   scene:
     log: info
+    # Keep Scene's object/annotation frame bound to the same saved map as mapping.
+    map_id: scout2_main
     # Scout2 camera optical frame for scene 3D fusion
     camera_frame: camera_color_optical_frame
   # execution layer
@@ -124,6 +128,15 @@ service:
   - name: mapping
     path: ./services/service-map-rbnx
     config:
+      # No map_id specified: auto-detect from /mapping/maps/
+      # - If saved maps exist → load the latest one in localization mode
+      # - If no maps exist    → start mapping mode (new map)
+      # map_mode: auto is the default behavior
+      reset_map: false
+      # Large RTAB-Map databases can take longer than the Driver shutdown
+      # deadline to copy; keep the last completed checkpoint recent instead.
+      checkpoint_interval_s: 30
+      webui_host: 0.0.0.0
       webui_port: 8091
       # Production localization uses chassis odometry. The timestamped Mid360
       # cloud is deskewed against odom before RTAB-Map consumes it.

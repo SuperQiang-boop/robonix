@@ -100,22 +100,30 @@ optional:
     default: mapping
     allowed: [mapping, localization]
     description: >-
-      Startup mode. mapping always starts a fresh mutable runtime database;
-      localization copies the immutable artifact selected by map_id into a
-      runtime database and localizes against it.
+      Startup mode. mapping resumes the persistent runtime database selected
+      by map_id when one exists, or creates it on the first boot;
+      localization copies the published artifact selected by map_id into a
+      runtime database and localizes against it read-only.
   map_id:
     type: string
     description: >-
-      Saved spatial-map identifier to load when map_mode is localization. It
-      is required in localization mode. New maps are named by the save_map
-      operation rather than by this startup field.
+      Stable spatial-map identifier. Required for localization and recommended
+      for resumable mapping; mapping stores its writable runtime database
+      under this id and save_map checkpoints update the same published map.
   reset_map:
     type: boolean
     default: false
     description: >-
-      Legacy startup reset request. New mapping sessions are already created
-      with a fresh runtime database, so new deployments should omit it.
+      Preserve the old runtime database and start a new map on every boot.
       reset_map=true is rejected in localization mode.
+  checkpoint_interval_s:
+    type: number
+    default: 60
+    description: >-
+      Periodic save_map checkpoint interval for named mapping sessions. The
+      flush writes RTAB-Map working memory to disk before publishing a snapshot.
+      A crash can lose changes since the last successful flush. Set to 0 to
+      disable periodic saves and keep only shutdown checkpoints.
   webui_port:
     type: integer_or_string
     default: 8091

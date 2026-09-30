@@ -128,26 +128,74 @@ and CMake exports for consumers such as `cv_bridge`.
 
 ## Saving & re-using a map
 
-Mapping starts with a fresh runtime database. Call `save_map(map_id)` after
-coverage is complete; the named map lives under `{MAPPING_MAPS_DIR}/{map_id}/`
-(default: the package's `maps/` dir, which survives container restarts):
+Named mapping sessions keep a writable runtime database under
+`{MAPPING_RUNTIME_DB_DIR}/{map_id}/`, which must be on a Docker bind mount.
+RTAB-Map keeps some nodes in working memory; periodic or explicit
+`save_map(map_id)` checkpoints publish a stable map under
+`{MAPPING_MAPS_DIR}/{map_id}/` (default: the package's `maps/` dir):
 
 ```
 maps/lab_3f/rtabmap.db  occupancy.pgm  occupancy.yaml  occupancy.png  cloud.pcd  meta.yaml
 ```
 
-- **Build a map:** `map_mode: mapping`. Drive the robot around, then call
-  `save_map(map_id)` to publish an immutable database and previews.
+- **Build or continue a map:** set `map_id` plus `map_mode: mapping`. The first
+  boot creates a runtime database; later boots restore the latest published
+  checkpoint into the runtime database before continuing. Drive the robot
+  around, then call `save_map(map_id)` to publish or update the checkpoint and
+  previews.
 - **Re-use a map:** set `map_id` plus `map_mode: localization`. Mapping copies
   the saved db to a private runtime path and re-localizes against it; the
-  **map frame is stable across restarts**, so Scene can load semantic state for
-  the same id.
-- **Start fresh:** `map_mode: mapping` (the default). It never writes an
-  existing saved map.
+  saved graph is retained, but robot localization must be checked before
+  using stored Scene coordinates or navigation goals.
+- **Start fresh:** set `reset_map: true` with `map_mode: mapping`. This clears
+  the named runtime database before rebuilding; without `reset_map`, mapping
+  resumes the existing runtime database.
 
-> Localization-mode persistence only re-anchors correctly because the map
-> frame is loaded from the saved db. Without `map_mode: localization` the
-> map origin resets to the robot's boot pose each run.
+Named mapping restores the last published checkpoint and resumes the graph
+with incremental mapping enabled. Restoring
+the graph does not prove that the robot has relocalized: begin in an overlapping
+known area and verify scan alignment / pose before moving into unexplored space.
+If needed, localize with an initial pose first, then use `switch_mode(mapping)`;
+this moves the loaded copy onto the persistent runtime path before extending it.
+Graph optimization can still move stored map-frame coordinates.
+
+### Scout2 Docker persistence
+
+The Scout2 deployment sets `ROBONIX_MAPPING_FORCE: docker`, `map_id:
+scout2_main`, `map_mode: mapping`, `reset_map: false`, and
+`checkpoint_interval_s: 60`. Run `rbnx build` and `rbnx boot` from the Scout2
+deployment directory as usual. The package bind mount preserves:
+
+- Host live DB: `services/service-map-rbnx/maps/.runtime/scout2_main/rtabmap.db`
+- Host checkpoint: `services/service-map-rbnx/maps/scout2_main/rtabmap.db`
+- Container equivalents: `/mapping/maps/.runtime/scout2_main/rtabmap.db` and
+  `/mapping/maps/scout2_main/rtabmap.db`.
+
+Every 60 seconds after the preceding save completes, the bridge asks RTAB-Map
+to flush working memory via `/backup`, then publishes a checked SQLite copy.
+Normal shutdown checkpoints before stopping the engine. This is periodic
+durability, **not per-frame zero-loss recording**: a crash can lose changes
+since the latest successful flush (longer when saves fail). Setting the interval
+to `0` disables periodic saves, not shutdown saves. Preview export is best-effort
+and may lag; it is never used to recover the SLAM graph.
+
+`MAPPING_MAPS_DIR` changes the host/container map root; `MAPPING_RUNTIME_DB_DIR`
+can set a separate bind-mounted runtime root. `ROBONIX_MAPPING_STOP_TIMEOUT_S`
+defaults to `180` seconds; large graphs may need longer for a final save and
+engine close. Avoid repeated forced termination. Keep the host maps directory
+when rebuilding/recreating containers, and run only one writer per runtime DB.
+An invalid runtime DB is preserved in a `previous-*` directory and restored
+from the checkpoint; without a valid checkpoint startup fails instead of silently
+creating an empty map. `rtabmap.previous.db` retains the previous published DB
+for manual rollback. Setting `reset_map: true` starts a new map **on every boot**;
+return it to `false` after an intentional reset.
+
+Offline regression tests:
+`PYTHONPATH=src /usr/bin/python3 -m unittest discover -p 'test_*.py'`.
+The isolated ROS test `scripts/test_persistence_ros.py` requires the package at
+`/mapping`, Scout2 at `/deploy` (read-only mounts), `PYTHONPATH=/mapping/src`, ROS
+Humble sourced, and a Docker `--network none` container. It uses temporary maps
+and synthetic inputs; it must not run on the robot's live ROS graph.
 
 ## Web UI (live map + runtime map ops)
 
@@ -217,7 +265,8 @@ mapping_rbnx/
 - **`map_mode=localization` errors "no saved map"** — run a `mapping` session
   with that `map_id` first, and confirm `MAPPING_MAPS_DIR` is the same path
   (mounted) across runs.
-- **Map origin drifts between runs** — you're in `mapping` mode (origin =
-  boot pose). Use `localization` to re-anchor to the saved map.
+- **Map alignment drifts between runs** — confirm a named DB was resumed and
+  that current scans match the saved map. Localize/seed the initial pose before
+  navigation; database recovery alone does not establish the robot's position.
 
 License: MulanPSL-2.0

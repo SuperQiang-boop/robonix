@@ -89,14 +89,16 @@ start: bash scripts/start.sh
 #   map_id:    stable id for this map. Bind the SAME id in the scene service
 #              so its per-map_id semantic store anchors to this spatial map.
 #              Omit → ephemeral (db wiped each boot — the legacy behaviour).
-#   map_mode:  mapping (default; build/extend) | localization (load read-only,
-#              stable map frame across restarts — needs a saved map_id first).
+#   map_mode:  mapping (default; resume/build/extend a named runtime database)
+#              | localization (load read-only, stable map frame across
+#              restarts — needs a saved map_id first).
 #   reset_map: true to start a named map fresh (mapping mode only).
 # Operator page (optional):
 #   webui_port: 0 disables it; any other port enables it.
 #   webui_host: bind host, default 127.0.0.1. This UI is unauthenticated.
-# Saved maps live under {MAPPING_MAPS_DIR}/{map_id}/ as rtabmap.db +
+# Published maps live under {MAPPING_MAPS_DIR}/{map_id}/ as rtabmap.db +
 # occupancy.pgm/.yaml/.png + cloud.pcd + meta.yaml (offline-previewable).
+# Named mapping runtime databases live under {MAPPING_RUNTIME_DB_DIR}/{map_id}/.
 
 # Only list what we actually declare on atlas at runtime. Aspirational
 # entries (status / save_map / load_map / switch_mode / set_initial_pose)

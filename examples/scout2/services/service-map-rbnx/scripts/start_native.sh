@@ -84,11 +84,16 @@ PYBIN="${MAPPING_NATIVE_PYTHON:-python3}"
 ATLAS_PID=
 ENGINE_PID=
 cleanup() {
-    [ -n "$ENGINE_PID" ] && kill -TERM "$ENGINE_PID" 2>/dev/null || true
+    trap '' INT TERM
+    trap - EXIT
     [ -n "$ATLAS_PID" ]  && kill -TERM "$ATLAS_PID"  2>/dev/null || true
+    [ -n "$ATLAS_PID" ]  && wait "$ATLAS_PID" 2>/dev/null || true
+    [ -n "$ENGINE_PID" ] && kill -TERM "$ENGINE_PID" 2>/dev/null || true
     pkill -TERM -P $$ 2>/dev/null || true
 }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 # Clear stale gate files from a prior aborted boot (rbnx 2026-05-23 patch).
 # Without this, start_native.sh bypasses the bridge-write gate, runs engine
@@ -97,23 +102,29 @@ trap cleanup EXIT INT TERM
 rm -f /tmp/mapping_algo /tmp/*_resolved.yaml
 
 # ── 1. atlas_bridge (the cap) ──────────────────────────────────────────
-"$PYBIN" -u -m mapping_rbnx.atlas_bridge 2>&1 | sed 's/^/[bridge] /' &
+"$PYBIN" -u -m mapping_rbnx.atlas_bridge &
 ATLAS_PID=$!
 
 # Gate on atlas_bridge writing /tmp/mapping_algo + /tmp/<algo>_resolved.yaml.
-for _ in $(seq 1 60); do
+for _ in $(seq 1 180); do
     [ -f /tmp/mapping_algo ] && break
-    sleep 0.5
+    sleep 1
 done
 ALGO="$(cat /tmp/mapping_algo 2>/dev/null || echo rtabmap)"
 export MAPPING_ALGO="$ALGO"
-for _ in $(seq 1 60); do
-    [ -f "/tmp/${ALGO}_resolved.yaml" ] && break
-    sleep 0.5
+for _ in $(seq 1 180); do
+    if [[ -s "/tmp/${ALGO}_resolved.yaml" ]] && grep -Eq '^(scan_topic|lidar_topic|rgb_topic|depth_topic|odom_topic|imu_topic):' "/tmp/${ALGO}_resolved.yaml"; then
+        break
+    fi
+    sleep 1
 done
+if [[ ! -s "/tmp/${ALGO}_resolved.yaml" ]] || ! grep -Eq '^(scan_topic|lidar_topic|rgb_topic|depth_topic|odom_topic|imu_topic):' "/tmp/${ALGO}_resolved.yaml"; then
+    echo "[mapping/native] atlas_bridge did not produce sensor config in /tmp/${ALGO}_resolved.yaml before startup timeout" >&2
+    exit 1
+fi
 
 # ── 2. SLAM engine ─────────────────────────────────────────────────────
-bash "$PKG/scripts/start_engine.sh" 2>&1 | sed 's/^/[engine] /' &
+bash "$PKG/scripts/start_engine.sh" &
 ENGINE_PID=$!
 
 wait "$ENGINE_PID"

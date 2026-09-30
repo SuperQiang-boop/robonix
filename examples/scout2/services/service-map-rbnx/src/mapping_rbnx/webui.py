@@ -126,6 +126,7 @@ def _ensure_subscriptions() -> None:
             import rclpy
             from rclpy.node import Node
             from rclpy.executors import SingleThreadedExecutor
+            from rclpy.signals import SignalHandlerOptions
             from nav_msgs.msg import OccupancyGrid
             from geometry_msgs.msg import PoseWithCovarianceStamped
             from rclpy.qos import QoSProfile, QoSDurabilityPolicy, QoSReliabilityPolicy
@@ -135,7 +136,7 @@ def _ensure_subscriptions() -> None:
             # the context here if needed — mirrors map_ops' own guard. Without
             # this the UI returned before ever subscribing and stayed blank.
             if not rclpy.ok():
-                rclpy.init(args=None)
+                rclpy.init(args=None, signal_handler_options=SignalHandlerOptions.NO)
 
             # Match rtabmap's /map publisher (RELIABLE + TRANSIENT_LOCAL) so the
             # last latched grid is delivered immediately on subscribe.
@@ -209,6 +210,8 @@ def _list_saved_maps() -> list[dict]:
     if not os.path.isdir(MAPS_DIR):
         return out
     for name in sorted(os.listdir(MAPS_DIR)):
+        if name.startswith("."):
+            continue
         d = os.path.join(MAPS_DIR, name)
         if not os.path.isdir(d):
             continue

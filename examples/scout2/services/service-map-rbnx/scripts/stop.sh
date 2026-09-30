@@ -27,7 +27,29 @@ fi
 
 echo "[mapping/stop] mode=${MODE}"
 if [[ "$MODE" == "docker" ]]; then
-    docker rm -f "${ROBONIX_MAPPING_CONTAINER:-robonix_mapping}" >/dev/null 2>&1 || true
+    CT="${ROBONIX_MAPPING_CONTAINER:-robonix_mapping}"
+    if docker container inspect "$CT" >/dev/null 2>&1; then
+        AUTO_REMOVE="$(docker container inspect --format '{{.HostConfig.AutoRemove}}' "$CT")"
+        # Fail visibly if the daemon cannot stop it; never force-remove a DB writer.
+        docker stop --time "${ROBONIX_MAPPING_STOP_TIMEOUT_S:-180}" "$CT" >/dev/null
+        if [[ "$AUTO_REMOVE" == true ]]; then
+            # --rm owns deletion; wait until its name can safely be reused.
+            for _ in {1..100}; do
+                docker container inspect "$CT" >/dev/null 2>&1 || break
+                sleep 0.1
+            done
+            if docker container inspect "$CT" >/dev/null 2>&1; then
+                echo "[mapping/stop] timed out waiting for Docker auto-removal: $CT" >&2
+                exit 1
+            fi
+            docker info >/dev/null
+        else
+            docker rm "$CT" >/dev/null
+        fi
+    elif ! docker info >/dev/null 2>&1; then
+        echo "[mapping/stop] cannot contact Docker; map shutdown is unconfirmed" >&2
+        exit 1
+    fi
     exit 0
 fi
 

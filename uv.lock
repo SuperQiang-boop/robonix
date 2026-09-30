@@ -28,6 +28,7 @@ resolution-markers = [
 members = [
     "robonix",
     "robonix-api",
+    "robonix-camera-rtsp",
     "robonix-memgraph",
     "robonix-system-memory",
     "robonix-system-scene",
@@ -4203,6 +4204,21 @@ requires-dist = [
     { name = "pyyaml", specifier = ">=6" },
 ]
 provides-extras = ["codegen"]
+
+[[package]]
+name = "robonix-camera-rtsp"
+version = "0.1.0"
+source = { editable = "services/camera_rtsp" }
+dependencies = [
+    { name = "grpcio-tools" },
+    { name = "robonix-api" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "grpcio-tools", specifier = ">=1.50" },
+    { name = "robonix-api", editable = "pylib/robonix-api" },
+]
 
 [[package]]
 name = "robonix-memgraph"

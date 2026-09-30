@@ -19,6 +19,7 @@ gRPC servicer and the MCP handler in atlas_bridge can share one code path.
 from __future__ import annotations
 
 import json
+from functools import wraps
 import math
 import os
 import shutil
@@ -26,6 +27,7 @@ import glob
 import sqlite3
 import threading
 import time
+from pathlib import Path
 from typing import Optional
 
 import logging
@@ -37,6 +39,75 @@ log = logging.getLogger("mapping_rbnx.map_ops")
 MAPS_DIR = os.environ.get("MAPPING_MAPS_DIR", "/mapping/maps")
 PKG_HOST_DIR = os.environ.get("ROBONIX_PKG_HOST_DIR", "/mapping")
 RUNTIME_DB_DIR = os.environ.get("MAPPING_RUNTIME_DB_DIR", "/tmp/robonix-mapping-runtime")
+_SAVE_LOCK = threading.RLock()
+_ACTIVE_DB = ""
+
+
+def serialized(fn):
+    """Serialize database changes across HTTP, RPC, and periodic saves."""
+    @wraps(fn)
+    def call(*args, **kwargs):
+        with _SAVE_LOCK:
+            return fn(*args, **kwargs)
+    return call
+
+
+def persistent_runtime_db(map_id: str, reset: bool = False) -> str:
+    """Open or restore a named runtime path from the saved map checkpoint.
+
+    Called before the engine starts. An explicit saved map is the boot
+    checkpoint: restore it into the writable runtime path before mapping
+    resumes, so a reboot shows the exact map the operator saved. When no
+    checkpoint exists, retain the runtime database for the initial build and
+    crash recovery. Quarantine SQLite sidecars together with an invalid
+    database before restoring a checked checkpoint.
+    """
+    directory = os.path.join(RUNTIME_DB_DIR, _sanitize_map_id(map_id))
+    os.makedirs(directory, exist_ok=True)
+    runtime = os.path.join(directory, "rtabmap.db")
+    saved = os.path.join(MAPS_DIR, _sanitize_map_id(map_id), "rtabmap.db")
+    exists = os.path.exists(runtime)
+    checkpoint_exists = os.path.isfile(saved)
+    valid, detail = (False, "explicit reset" if reset else "missing")
+    if exists and not reset and not checkpoint_exists:
+        # Startup owns this file. SQLite needs write access to recover a hot
+        # rollback journal before checking the last committed transaction.
+        valid, detail = _sqlite_quick_check(runtime, recover=True)
+    if exists and not valid:
+        # Preserve the entire SQLite file family, including uncommitted data.
+        quarantine = os.path.join(directory, f"previous-{time.time_ns()}")
+        os.mkdir(quarantine)
+        for suffix in ("", "-wal", "-shm", "-journal", ".back"):
+            path = runtime + suffix
+            if os.path.exists(path):
+                os.replace(path, os.path.join(quarantine, os.path.basename(path)))
+        log.warning("runtime database preserved in %s: %s", quarantine, detail)
+    if reset:
+        return runtime
+    if checkpoint_exists:
+        # The published artifact is the operator's durable checkpoint. Copy
+        # it transactionally so RTAB-Map never opens a partially written DB.
+        restore_target = runtime + ".restore"
+        ok, detail = _sqlite_backup(saved, restore_target)
+        if not ok:
+            raise RuntimeError(f"cannot restore {saved}: {detail}")
+        # Do not let sidecars from the previous runtime attach to the restored
+        # checkpoint after the main file is replaced.
+        for suffix in ("-wal", "-shm", "-journal"):
+            try:
+                os.remove(runtime + suffix)
+            except FileNotFoundError:
+                pass
+        os.replace(restore_target, runtime)
+        log.warning("restored runtime database from checkpoint %s", saved)
+        return runtime
+    if valid:
+        return runtime
+    elif exists:
+        raise RuntimeError(f"runtime database invalid and no checkpoint exists: {detail}")
+    elif any(name.startswith("previous-") for name in os.listdir(directory)):
+        raise RuntimeError("runtime database absent after recovery failure; restore a checkpoint or explicitly reset_map")
+    return runtime
 
 # rtabmap node name prefix; the launch runs the slam node as `/rtabmap/rtabmap`
 # so its services live under `/rtabmap/...`.
@@ -51,26 +122,47 @@ POSE_TOPIC = os.environ.get("MAPPING_POSE_TOPIC", "/robonix/map/pose")
 
 def _sanitize_map_id(map_id: str) -> str:
     import re
-    return re.sub(r"[^A-Za-z0-9._-]", "_", (map_id or "").strip()) or "default"
+    value = re.sub(r"[^A-Za-z0-9._-]", "_", (map_id or "").strip()) or "default"
+    if value.startswith("."):
+        raise ValueError("map_id must not begin with '.'")
+    return value
 
 
-def _sqlite_quick_check(db_path: str) -> tuple[bool, str]:
-    """Return whether db_path is a readable SQLite database.
+def _sqlite_quick_check(db_path: str, *, recover: bool = False) -> tuple[bool, str]:
+    """Validate SQLite integrity and the RTAB-Map graph schema.
 
-    RTAB-Map stores maps in SQLite. Loading a partially-copied live DB can
-    crash rtabmap, so validate before exposing or loading a saved map.
+    Only startup may request recovery, before an engine owns the runtime DB.
+    Writable opening lets SQLite roll back interrupted transactions. Busy,
+    permission and I/O failures must abort startup, not quarantine good data.
+    Published snapshots remain read-only. Empty/new SQLite files are not maps.
     """
     if not os.path.isfile(db_path):
         return False, "missing rtabmap.db"
     try:
-        con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=30.0)
+        if os.path.getsize(db_path) == 0:
+            return False, "empty rtabmap.db"
+        mode = "rw" if recover else "ro"
+        con = sqlite3.connect(Path(db_path).resolve().as_uri() + f"?mode={mode}",
+                              uri=True, timeout=30.0)
         try:
             row = con.execute("PRAGMA quick_check").fetchone()
             msg = str(row[0]) if row else "no quick_check result"
-            return msg.lower() == "ok", msg
+            if msg.lower() != "ok":
+                return False, msg
+            return True, msg
         finally:
             con.close()
-    except Exception as e:  # noqa: BLE001
+    except sqlite3.DatabaseError as e:
+        # Python 3.10 does not expose sqlite_errorcode. OperationalError is
+        # still distinct from malformed/not-a-database errors there.
+        code = getattr(e, "sqlite_errorcode", None)
+        corrupt = (code is not None and (code & 0xff) in (11, 26))
+        if recover and not corrupt and isinstance(e, sqlite3.OperationalError):
+            raise RuntimeError(f"cannot recover runtime database {db_path}: {e}") from e
+        return False, str(e)
+    except OSError as e:
+        if recover:
+            raise RuntimeError(f"cannot inspect runtime database {db_path}: {e}") from e
         return False, str(e)
 
 
@@ -129,8 +221,11 @@ def _get_node():
         try:
             import rclpy
             from rclpy.executors import SingleThreadedExecutor
+            from rclpy.signals import SignalHandlerOptions
             if not rclpy.ok():
-                rclpy.init(args=None)
+                # Keep the capability shutdown hook in charge of signals so
+                # it can checkpoint before the engine/ROS context exits.
+                rclpy.init(args=None, signal_handler_options=SignalHandlerOptions.NO)
             node = rclpy.create_node("mapping_map_ops")
             ex = SingleThreadedExecutor()
             ex.add_node(node)
@@ -151,17 +246,21 @@ def _yaw_to_quat(theta: float):
 
 
 def _call_service(node, srv_type, name: str, request, timeout_s: float = 5.0):
-    """Blocking service call from the spinning node. Returns (ok, result_or_err)."""
+    """Call from the spinning node and release DDS resources after every save."""
     cli = node.create_client(srv_type, name)
-    if not cli.wait_for_service(timeout_sec=timeout_s):
-        return False, f"service {name} unavailable"
-    fut = cli.call_async(request)
-    deadline = time.time() + timeout_s
-    while not fut.done() and time.time() < deadline:
-        time.sleep(0.02)
-    if not fut.done():
-        return False, f"service {name} timed out"
-    return True, fut.result()
+    try:
+        if not cli.wait_for_service(timeout_sec=timeout_s):
+            return False, f"service {name} unavailable"
+        fut = cli.call_async(request)
+        deadline = time.monotonic() + timeout_s
+        while not fut.done() and time.monotonic() < deadline:
+            time.sleep(0.02)
+        if not fut.done():
+            fut.cancel()
+            return False, f"service {name} timed out"
+        return True, fut.result()
+    finally:
+        node.destroy_client(cli)
 
 
 # ── pose_estimate ─────────────────────────────────────────────────────────────
@@ -219,6 +318,8 @@ def list_maps_impl() -> dict:
         if not os.path.isdir(MAPS_DIR):
             return {"ok": True, "detail": "", "maps_json": "[]"}
         for name in sorted(os.listdir(MAPS_DIR)):
+            if name.startswith("."):
+                continue
             d = os.path.join(MAPS_DIR, name)
             if not os.path.isdir(d):
                 continue
@@ -257,23 +358,27 @@ def list_maps_impl() -> dict:
 
 # ── load_map ──────────────────────────────────────────────────────────────────
 def _runtime_db_copy(saved_db: str, map_id: str) -> str:
-    """Copy an immutable saved DB to a runtime DB used by RTAB-Map.
+    """Copy a saved checkpoint to a private runtime DB used by RTAB-Map.
 
     Loading RTAB-Map directly on /mapping/maps/<map_id>/rtabmap.db makes the
-    supposedly saved artifact mutable again. Use a runtime copy instead; the
-    saved map remains a read-only artifact for Robonix semantics. The runtime
+    published checkpoint a live writer's database. Use a runtime copy instead;
+    only save_map replaces the published checkpoint. The runtime
     copy must be loaded with LoadDatabase.clear=false; clear=true deletes an
     existing target DB before opening it in RTAB-Map.
     """
     os.makedirs(RUNTIME_DB_DIR, exist_ok=True)
     safe_id = _sanitize_map_id(map_id)
     for old in glob.glob(os.path.join(RUNTIME_DB_DIR, f"{safe_id}-*.db")):
+        if _ACTIVE_DB and os.path.realpath(old) == os.path.realpath(_ACTIVE_DB):
+            continue
         try:
             os.remove(old)
         except OSError:
             pass
-    runtime_db = os.path.join(RUNTIME_DB_DIR, f"{safe_id}-{int(time.time() * 1000)}.db")
-    shutil.copy2(saved_db, runtime_db)
+    runtime_db = os.path.join(RUNTIME_DB_DIR, f"{safe_id}-{time.time_ns()}.db")
+    ok, detail = _sqlite_backup(saved_db, runtime_db)
+    if not ok:
+        raise RuntimeError(f"cannot copy saved map: {detail}")
     db_ok, db_detail = _sqlite_quick_check(runtime_db)
     if not db_ok:
         raise RuntimeError(f"runtime db copy failed integrity check: {db_detail}")
@@ -390,16 +495,18 @@ def _finish_target_map_wait(node, barrier: dict, timeout_s: float) -> tuple[bool
     )
 
 
+@serialized
 def load_map_impl(map_id: str, mode: str = "localization",
                   has_initial_pose: bool = False,
                   x: float = 0.0, y: float = 0.0, theta: float = 0.0) -> dict:
-    """Load an immutable saved map through a runtime DB copy.
+    """Load a saved map through a runtime DB copy without changing the checkpoint.
 
-    Saved spatial maps are artifacts and must not be modified after save.
-    Therefore this always loads a copied database and switches RTAB-Map to
+    Loading itself must not modify the published map. This loads a copied
+    database and switches RTAB-Map to
     localization mode, then forces a full optimized map publish so /map reflects
     the saved artifact instead of the previous live mapping session.
     """
+    global _ACTIVE_DB
     map_id = _sanitize_map_id(map_id)
     requested_mode = (mode or "localization").strip().lower()
     if requested_mode not in ("localization", "mapping"):
@@ -438,6 +545,7 @@ def load_map_impl(map_id: str, mode: str = "localization",
         if not ok:
             return {"ok": False,
                     "detail": f"load_database failed: {load_detail} after {load_timeout_s:.0f}s"}
+        _ACTIVE_DB = runtime_db
 
         # The database load is the map-identity authority. Publish that
         # identity before waiting for occupancy so consumers can bind the
@@ -468,7 +576,7 @@ def load_map_impl(map_id: str, mode: str = "localization",
         note = "" if requested_mode == "localization" else f"; requested {requested_mode} coerced to localization"
         return {"ok": True,
                 "runtime_db_path": runtime_db,
-                "detail": f"loaded immutable map {map_id} via runtime copy; {pub_detail}; "
+                "detail": f"loaded saved map {map_id} via runtime copy; {pub_detail}; "
                           f"{verify_detail}; elapsed={elapsed:.1f}s{seeded}{note}"}
     except Exception as e:  # noqa: BLE001
         log.exception("load_map failed")
@@ -554,6 +662,7 @@ def _set_mode(node, mode: str) -> tuple[bool, str]:
     return (ok, srv if ok else f"{res} after {mode_timeout_s:.0f}s")
 
 
+@serialized
 def switch_mode_impl(mode: str) -> dict:
     """Flip the running rtabmap between mapping and localization on the CURRENT
     map — no map load, no restart. Returns {ok, detail}."""
@@ -564,6 +673,8 @@ def switch_mode_impl(mode: str) -> dict:
     if node is None:
         return {"ok": False, "detail": "rclpy node unavailable (ROS not running?)"}
     try:
+        if mode == "mapping":
+            _prepare_mapping_runtime(node)
         ok, info = _set_mode(node, mode)
         if not ok:
             return {"ok": False, "detail": f"{info} — rtabmap may lack the mode service "
@@ -577,7 +688,37 @@ def switch_mode_impl(mode: str) -> dict:
         return {"ok": False, "detail": str(e)}
 
 
+def _prepare_mapping_runtime(node) -> None:
+    """Move a loaded localization copy onto the named persistent runtime.
+
+    Called under the operation lock before enabling incremental mapping. The
+    engine closes its old DB on load; never replace a DB it currently owns.
+    Keep the former named runtime for recovery before selecting the loaded map.
+    """
+    global _ACTIVE_DB
+    map_id = lifecycle.current().get("map_id")
+    if not map_id or not _ACTIVE_DB:
+        return
+    target = os.path.join(RUNTIME_DB_DIR, _sanitize_map_id(map_id), "rtabmap.db")
+    if os.path.realpath(_ACTIVE_DB) == os.path.realpath(target):
+        return
+    ok, detail, snapshot = _flush_rtabmap_database(node, _ACTIVE_DB)
+    if not ok:
+        raise RuntimeError(f"cannot persist loaded map before mapping: {detail}")
+    staged = target + ".restore"
+    ok, detail = _sqlite_backup(snapshot, staged)
+    if not ok:
+        raise RuntimeError(f"cannot prepare persistent runtime: {detail}")
+    persistent_runtime_db(map_id, reset=True)
+    os.replace(staged, target)
+    ok, detail = _load_database(node, target, timeout_s=180.0)
+    if not ok:
+        raise RuntimeError(f"cannot load persistent runtime: {detail}")
+    _ACTIVE_DB = target
+
+
 # ── reset_map ─────────────────────────────────────────────────────────────────
+@serialized
 def reset_map_impl() -> dict:
     """Wipe the running rtabmap's map (working memory + live database) and
     restart SLAM from scratch — for when mapping has diverged and you want a
@@ -586,13 +727,14 @@ def reset_map_impl() -> dict:
 
     Caveat: rtabmap restarts with the robot's CURRENT pose as the new origin,
     so the rebuilt map's frame will NOT align with the pre-reset one (origin
-    drift). Saved maps on disk are untouched. Returns {ok, detail}.
+    drift). Subsequent checkpoints update the saved map. Returns {ok, detail}.
     """
     node = _get_node()
     if node is None:
         return {"ok": False, "detail": "rclpy node unavailable (ROS not running?)"}
     try:
         from std_srvs.srv import Empty
+        _prepare_mapping_runtime(node)
         ok, res = _call_service(node, Empty, f"{RTABMAP_NS}/reset", Empty.Request(), timeout_s=10.0)
         if not ok:
             return {"ok": False, "detail": f"{res} — rtabmap /reset unavailable "
@@ -666,27 +808,43 @@ def _flush_rtabmap_database(node, live_db: str, timeout_s: float = 180.0) -> tup
 
 # ── save_map ──────────────────────────────────────────────────────────────────
 def _atomic_publish_map_dir(staging_dir: str, map_dir: str) -> None:
-    """Publish a completed staged map directory without leaving half-saves.
+    """Publish the checked DB last using a single atomic file replacement.
 
-    Directory replacement cannot be a single POSIX rename over a non-empty
-    existing directory, so keep the old map beside it until the staged directory
-    is in place. If publishing fails, restore the old map when possible.
+    The directory (including generation and annotations) remains in place.
+    Preview files may lag the DB after a crash; they are not recovery inputs.
+    Retain the preceding DB for manual rollback and sync before reporting saved.
     """
-    previous_dir = f"{map_dir}.previous-{os.getpid()}-{int(time.time() * 1000)}"
-    if os.path.exists(previous_dir):
-        shutil.rmtree(previous_dir, ignore_errors=True)
-    moved_previous = False
+    os.makedirs(map_dir, exist_ok=True)
+    current = os.path.join(map_dir, "rtabmap.db")
+    if os.path.isfile(current):
+        previous = os.path.join(map_dir, "rtabmap.previous.db")
+        # Both files live on the same persistent mount. A hard link preserves
+        # the rollback checkpoint without copying another multi-GB database,
+        # while keeping the current path intact if publication later fails.
+        try:
+            os.unlink(previous)
+        except FileNotFoundError:
+            pass
+        try:
+            os.link(current, previous)
+        except OSError as exc:
+            ok, detail = _sqlite_backup(current, previous)
+            if not ok:
+                raise RuntimeError(f"cannot preserve previous checkpoint: {detail}") from exc
+    for name in os.listdir(staging_dir):
+        if name == "rtabmap.db":
+            continue
+        os.replace(os.path.join(staging_dir, name), os.path.join(map_dir, name))
+    staged_db = os.path.join(staging_dir, "rtabmap.db")
+    with open(staged_db, "rb") as handle:
+        os.fsync(handle.fileno())
+    os.replace(staged_db, current)
+    fd = os.open(map_dir, os.O_RDONLY | os.O_DIRECTORY)
     try:
-        if os.path.exists(map_dir):
-            os.replace(map_dir, previous_dir)
-            moved_previous = True
-        os.replace(staging_dir, map_dir)
-        if moved_previous:
-            shutil.rmtree(previous_dir, ignore_errors=True)
-    except Exception:
-        if moved_previous and not os.path.exists(map_dir) and os.path.exists(previous_dir):
-            os.replace(previous_dir, map_dir)
-        raise
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+    os.rmdir(staging_dir)
 
 
 def _run_preview_snapshot(map_dir: str) -> bool:
@@ -724,11 +882,18 @@ def _run_preview_snapshot(map_dir: str) -> bool:
 
 def save_map_impl(map_id: str, note: str = "",
                   active_db: Optional[str] = None) -> dict:
+    """Serialize one map checkpoint while preventing concurrent snapshots."""
+    with _SAVE_LOCK:
+        return _save_map_impl(map_id, note, active_db)
+
+
+def _save_map_impl(map_id: str, note: str = "",
+                   active_db: Optional[str] = None) -> dict:
     """Snapshot the current SLAM map under {MAPS_DIR}/<map_id>/.
 
-    A spatial map is immutable once published. User annotations and scene
-    objects are saved by scene under the same map_id; this function owns only
-    the RTAB-Map spatial artifact.
+    Checkpoints replace the previous spatial artifact atomically. The live
+    runtime database is kept at a separate path and is never replaced while
+    RTAB-Map is using it.
     """
     map_id = _sanitize_map_id(map_id)
     map_dir = os.path.join(MAPS_DIR, map_id)
@@ -737,15 +902,9 @@ def save_map_impl(map_id: str, note: str = "",
     try:
         os.makedirs(MAPS_DIR, exist_ok=True)
 
-        if os.path.isfile(db_path):
-            db_ok, db_detail = _sqlite_quick_check(db_path)
-            return {
-                "ok": False,
-                "map_id": map_id,
-                "artifact_path": db_path,
-                "detail": f"spatial map {map_id!r} already exists and is immutable; update scene annotations/objects separately ({db_detail})",
-            }
-
+        active_db = _ACTIVE_DB or active_db
+        if active_db and not os.path.isfile(active_db):
+            return {"ok": False, "map_id": map_id, "detail": f"active database not yet available: {active_db}"}
         live_db = active_db if (active_db and os.path.isfile(active_db)) else None
         if live_db is None:
             for cand in (
@@ -762,6 +921,8 @@ def save_map_impl(map_id: str, note: str = "",
                 "artifact_path": "",
                 "detail": "no live rtabmap database found to snapshot",
             }
+        if os.path.realpath(live_db) == os.path.realpath(db_path):
+            return {"ok": False, "map_id": map_id, "detail": "refusing to replace the engine's active database"}
 
         node = _get_node()
         if node is None:
@@ -795,14 +956,24 @@ def save_map_impl(map_id: str, note: str = "",
         os.makedirs(staging_dir, exist_ok=False)
         staged_db = os.path.join(staging_dir, "rtabmap.db")
 
-        ok, detail = _sqlite_backup(snapshot_src, staged_db)
-        if not ok:
-            return {
-                "ok": False,
-                "map_id": map_id,
-                "artifact_path": "",
-                "detail": f"failed to snapshot flushed RTAB-Map database: {detail}",
-            }
+        # RTAB-Map's /backup service has already produced a consistent
+        # immutable sibling. Move it into staging when possible; this avoids
+        # another multi-GB SQLite backup during the shutdown deadline.
+        can_move_backup = os.path.realpath(snapshot_src) != os.path.realpath(live_db)
+        try:
+            if not can_move_backup:
+                raise OSError("backup source is the active database")
+            os.replace(snapshot_src, staged_db)
+            detail = "moved flushed RTAB-Map backup"
+        except OSError:
+            ok, detail = _sqlite_backup(snapshot_src, staged_db)
+            if not ok:
+                return {
+                    "ok": False,
+                    "map_id": map_id,
+                    "artifact_path": "",
+                    "detail": f"failed to snapshot flushed RTAB-Map database: {detail}",
+                }
         flush_detail = f"{flush_detail}; sqlite_backup={detail}"
 
         db_ok, db_detail = _sqlite_quick_check(staged_db)
@@ -818,15 +989,10 @@ def save_map_impl(map_id: str, note: str = "",
             node, timeout_s=float(os.environ.get("MAPPING_PUBLISH_MAP_TIMEOUT_S", "45"))
         )
         if not pub_ok:
-            return {
-                "ok": False,
-                "map_id": map_id,
-                "artifact_path": "",
-                "detail": f"saved DB snapshot but RTAB-Map did not publish a complete map preview: {pub_detail}",
-            }
+            log.warning("checkpoint preview unavailable: %s", pub_detail)
         flush_detail = f"{flush_detail}; {pub_detail}"
 
-        preview_ok = _run_preview_snapshot(staging_dir)
+        preview_ok = pub_ok and _run_preview_snapshot(staging_dir)
         meta_path = os.path.join(staging_dir, "meta.yaml")
         if os.path.isfile(meta_path):
             try:
@@ -845,12 +1011,8 @@ def save_map_impl(map_id: str, note: str = "",
             except Exception as e:  # noqa: BLE001
                 log.warning("failed to normalize metadata map_id for %s: %s", staging_dir, e)
         if not preview_ok or not os.path.isfile(os.path.join(staging_dir, "occupancy.png")):
-            return {
-                "ok": False,
-                "map_id": map_id,
-                "artifact_path": "",
-                "detail": "map preview/occupancy snapshot was not produced; refusing to publish incomplete spatial artifact",
-            }
+            log.warning("saving database checkpoint without fresh preview for %s", map_id)
+            flush_detail += "; preview unavailable (database saved; existing preview may be stale)"
 
         # Re-check after preview generation so the published directory is known
         # loadable at the exact point it becomes visible to list/load calls.
@@ -880,11 +1042,14 @@ def save_map_impl(map_id: str, note: str = "",
 
 
 # ── delete_map ────────────────────────────────────────────────────────────────
+@serialized
 def delete_map_impl(map_id: str) -> dict:
     """Remove a saved map's directory ({MAPS_DIR}/<map_id>/) and all its
     artifacts (db + preview). Refuses an empty id or a missing map. Does not
     touch the live SLAM session — only on-disk storage. Returns {ok, detail}."""
     map_id = _sanitize_map_id(map_id)
+    if lifecycle.current().get("map_id") == map_id:
+        return {"ok": False, "map_id": map_id, "detail": "cannot delete the active map; load another map first"}
     map_dir = os.path.join(MAPS_DIR, map_id)
     try:
         if not os.path.isdir(map_dir):

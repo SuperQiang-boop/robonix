@@ -208,7 +208,10 @@ def _make_nodes(context, *args, **kwargs):
         # against the loaded map and re-publishes the SAME map frame each
         # boot — the stable-origin property scene's per-map_id store needs.
         "Mem/IncrementalMemory": "false" if localization else "true",
-        "Mem/InitWMWithAllNodes": "true" if localization else "false",
+        # A named mapping database is resumed after a Robonix restart. Load
+        # its working memory too; otherwise RTAB-Map may publish only the new
+        # session's map while the historical nodes remain hidden in SQLite.
+        "Mem/InitWMWithAllNodes": "true" if database_path else "false",
     }
 
     if overrides_file:
