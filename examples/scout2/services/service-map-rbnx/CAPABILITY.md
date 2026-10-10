@@ -136,6 +136,9 @@ maps/lab_3f/
 - **`map_mode: localization`** requires `map_id`; mapping copies the saved db
   to a private runtime DB, then re-localizes against that copy. The saved
   artifact and its map-frame origin remain unchanged across restarts.
+- **`map_mode: auto`** prefers the configured `map_id`, then falls back to the
+  newest saved map. It localizes against a saved map, or starts a new mapping
+  session when no saved map exists.
 - `checkpoint_interval_s: 60` flushes memory and updates the checkpoint
   periodically; normal mapping shutdown also saves. This does not guarantee
   zero data loss on power failure. Preview export can lag the saved database.

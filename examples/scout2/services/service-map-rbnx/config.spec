@@ -97,13 +97,13 @@ optional:
 
   map_mode:
     type: string
-    default: mapping
-    allowed: [mapping, localization]
+    default: auto
+    allowed: [auto, mapping, localization]
     description: >-
-      Startup mode. mapping resumes the persistent runtime database selected
-      by map_id when one exists, or creates it on the first boot;
-      localization copies the published artifact selected by map_id into a
-      runtime database and localizes against it read-only.
+      Startup mode. auto localizes against the configured saved map, or the
+      newest saved map when that id is absent; with no saved map it creates a
+      new mapping session. mapping resumes or creates a writable map;
+      localization loads the configured saved map read-only.
   map_id:
     type: string
     description: >-

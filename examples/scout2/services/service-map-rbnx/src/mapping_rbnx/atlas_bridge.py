@@ -124,16 +124,9 @@ def _resolve_persistence(cfg: dict) -> dict[str, str]:
     a published checkpoint is copied into that path before mapping resumes;
     the published artifact remains separate and is updated by save_map.
 
-    When ``map_mode`` is ``auto`` (or omitted) and no ``map_id`` is specified:
-      - Scan ``MAPS_DIR/`` for saved maps (directories containing rtabmap.db).
-      - If found → automatically load the LATEST map (by modification time)
-        in ``localization`` mode.
-      - If not found → use ``mapping`` mode to start building a new map.
-
-    When ``map_id`` is specified:
-      - Check for existing saved map under ``MAPS_DIR/{map_id}/rtabmap.db``.
-      - If found → automatically use ``localization`` mode.
-      - If not found → use ``mapping`` mode.
+    In ``auto`` mode, prefer the configured map_id when its database exists.
+    Otherwise select the newest valid map directory. A selected saved map is
+    loaded for localization. Start a new named map only when none is available.
     """
     raw_id = cfg.get("map_id")
     map_id = _sanitize_map_id(str(raw_id)) if raw_id else ""
@@ -152,15 +145,29 @@ def _resolve_persistence(cfg: dict) -> dict[str, str]:
                 log.info("persistence: auto mode no saved maps found → mapping")
                 mode = "mapping"
         else:
-            # map_id specified — check if it exists
             map_dir = os.path.join(MAPS_DIR, map_id)
             saved_db = os.path.join(map_dir, "rtabmap.db")
             if os.path.isfile(saved_db):
                 log.info("persistence: auto mode detected saved map at %s → localization", saved_db)
                 mode = "localization"
             else:
-                log.info("persistence: auto mode no saved map for map_id=%s → mapping", map_id)
-                mode = "mapping"
+                requested_id = map_id
+                map_id = _find_latest_map()
+                if map_id:
+                    log.info(
+                        "persistence: auto mode map_id=%s is missing; "
+                        "loading latest map_id=%s for localization",
+                        requested_id, map_id,
+                    )
+                    mode = "localization"
+                else:
+                    map_id = requested_id
+                    log.info(
+                        "persistence: auto mode no saved map for map_id=%s "
+                        "or in %s → mapping",
+                        requested_id, MAPS_DIR,
+                    )
+                    mode = "mapping"
 
     if mode not in _VALID_MODES:
         raise RuntimeError(
@@ -218,19 +225,11 @@ def _resolve_persistence(cfg: dict) -> dict[str, str]:
 
 
 def _find_latest_map() -> str:
-    """Scan MAPS_DIR for saved maps and return the latest one (by mtime).
+    """Return the newest valid saved map by its directory modification time.
 
-    Returns the map_id of the most recently modified map, or "" if no
-    valid maps are found. A valid map is a directory containing rtabmap.db.
-
-    Note: The default deployment map ``scout2_main`` is always excluded
-    from auto-detection to avoid loading a stale checkpoint. If that
-    map is needed, set ``map_mode: localization`` and ``map_id: scout2_main``
-    explicitly in the config.
+    A valid map directory contains ``rtabmap.db``. Hidden directories and
+    runtime data are ignored.
     """
-    # Maps to always exclude from auto-detection (reserved / default deployment maps)
-    EXCLUDED_MAPS = {"scout2_main"}
-
     if not os.path.isdir(MAPS_DIR):
         log.info("persistence: MAPS_DIR=%s does not exist", MAPS_DIR)
         return ""
@@ -242,19 +241,15 @@ def _find_latest_map() -> str:
         # Skip hidden directories
         if entry.startswith("."):
             continue
-        # Skip excluded maps (default deployment maps)
-        if entry in EXCLUDED_MAPS:
-            log.debug("persistence: skipping excluded map %s", entry)
-            continue
         map_dir = os.path.join(MAPS_DIR, entry)
         if not os.path.isdir(map_dir):
             continue
         saved_db = os.path.join(map_dir, "rtabmap.db")
         if not os.path.isfile(saved_db):
             continue
-        # Get modification time of the database file
+        # Directory mtime reflects map-level changes such as checkpoint files.
         try:
-            mtime = os.path.getmtime(saved_db)
+            mtime = os.path.getmtime(map_dir)
             if mtime > latest_mtime:
                 latest_mtime = mtime
                 latest_map_id = entry
@@ -268,8 +263,7 @@ def _find_latest_map() -> str:
         log.info("persistence: found latest map map_id=%s modified=%s",
                  latest_map_id, mtime_str)
     else:
-        log.info("persistence: no valid maps found in %s (excluded: %s)",
-                 MAPS_DIR, EXCLUDED_MAPS)
+        log.info("persistence: no valid maps found in %s", MAPS_DIR)
 
     return latest_map_id
 
