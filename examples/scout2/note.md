@@ -39,3 +39,4 @@ GET /api/maps/scout2_main/objects
 ## 验证记录
 
 本次相关代码已执行 Python 语法检查、启动脚本 `bash -n` 检查及 `git diff --check`。当时运行环境缺少 Python `starlette` 依赖，无法完成 web 测试；Docker socket 不可用，也未完成容器端到端重启验证。
+1
