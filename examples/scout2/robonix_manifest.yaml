@@ -15,6 +15,7 @@ catalog:
 env:
   ROBONIX_MAPPING_FORCE: docker
   SCENE_MAP_ID: scout2_main
+  SCENE_RESTORE_ON_START: "true"
   ROS_DOMAIN_ID: "42"
   RMW_IMPLEMENTATION: rmw_fastrtps_cpp
 

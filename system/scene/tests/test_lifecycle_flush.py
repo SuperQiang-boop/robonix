@@ -95,11 +95,20 @@ def test_confirm_bump_and_cross_map_drift():
         anno = AnnotationStore(os.path.join(tmp, "anno"), map_id="m1")
         anno.create(kind="room", name="kitchen", points=ROOM_PTS)
         hub = FakeHub()
+        class ObjectStore:
+            def __init__(self):
+                self.deleted = []
+
+            def delete_map(self, map_id):
+                self.deleted.append(map_id)
+
+        object_store = ObjectStore()
         binding = MapBinding(map_id="m1", source="env")
         live = {"map_id": "m1", "mode": "", "generation": None, "source": "env"}
         task = asyncio.create_task(service_mod._lifecycle_watch(
             hub, binding, anno,
-            registry=registry, live_binding=live, interval_s=0.01,
+            registry=registry, object_store=object_store,
+            live_binding=live, interval_s=0.01,
         ))
         try:
             # 1) Confirm: matching broadcast → epoch learned, nothing flushed.
@@ -115,6 +124,7 @@ def test_confirm_bump_and_cross_map_drift():
             await _settle()
             assert live["generation"] == 2, live
             assert registry._objects == {}, registry._objects
+            assert object_store.deleted == ["m1"]
             room = anno.list()[0]
             assert room.stale and "1" in room.stale_reason and "2" in room.stale_reason
 
