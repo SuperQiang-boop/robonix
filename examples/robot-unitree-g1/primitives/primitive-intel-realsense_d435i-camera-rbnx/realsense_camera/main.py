@@ -67,6 +67,7 @@ def _pump_output(stream, tag: str) -> None:
 
 _pkg_root: Path = Path(__file__).resolve().parent.parent
 _rs_proc: subprocess.Popen | None = None
+_camera_mount_tf_proc: subprocess.Popen | None = None
 
 # ── snapshot state ───────────────────────────────────────────────────────────
 _state_lock = threading.Lock()
@@ -128,6 +129,43 @@ def _kill_realsense() -> None:
     except subprocess.TimeoutExpired:
         try:
             os.killpg(os.getpgid(p.pid), signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+
+
+def _spawn_camera_mount_tf(cfg: dict) -> None:
+    """Publish the fixed link between the robot mount and camera driver TF."""
+    global _camera_mount_tf_proc
+    if not cfg.get("publish_camera_mount_tf", True):
+        return
+    args = [
+        "ros2", "run", "tf2_ros", "static_transform_publisher",
+        "--x", str(cfg.get("camera_mount_x", 0.0)),
+        "--y", str(cfg.get("camera_mount_y", 0.0)),
+        "--z", str(cfg.get("camera_mount_z", 0.0)),
+        "--roll", str(cfg.get("camera_mount_roll", 0.0)),
+        "--pitch", str(cfg.get("camera_mount_pitch", 0.0)),
+        "--yaw", str(cfg.get("camera_mount_yaw", 0.0)),
+        "--frame-id", str(cfg.get("camera_mount_parent_frame", "d435_link")),
+        "--child-frame-id", str(cfg.get("camera_mount_child_frame", "camera_link")),
+    ]
+    log.info("spawning camera mount TF: %s", " ".join(args))
+    _camera_mount_tf_proc = subprocess.Popen(args, start_new_session=True)
+
+
+def _kill_camera_mount_tf() -> None:
+    proc = _camera_mount_tf_proc
+    if proc is None or proc.poll() is not None:
+        return
+    try:
+        os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+    except ProcessLookupError:
+        return
+    try:
+        proc.wait(timeout=5.0)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
         except ProcessLookupError:
             pass
 
@@ -380,6 +418,11 @@ def init(cfg: dict):
             _spawn_realsense(cfg)
         except Exception as e:  # noqa: BLE001
             return Err(f"spawn realsense failed: {e}")
+    else:
+        try:
+            _spawn_camera_mount_tf(cfg)
+        except Exception as e:  # noqa: BLE001
+            return Err(f"spawn camera mount TF failed: {e}")
 
     # Subscribe RGB + depth via robonix_api (declare=False — we declare
     # the ros2 topic_out interfaces explicitly below, after sentinel passes).
@@ -397,10 +440,12 @@ def init(cfg: dict):
     # Gate INIT on first RGB arriving — webots/jetson cold-boot can lag.
     if not cap.wait_for_topic(rgb_topic, "Image", sentinel_timeout):
         _kill_realsense()
+        _kill_camera_mount_tf()
         return Err(f"no Image on {rgb_topic} within {sentinel_timeout:.1f}s")
     if not launch_realsense:
         for topic, msg_type in ((depth_topic, "Image"), (intrinsics_topic, "CameraInfo")):
             if not cap.wait_for_topic(topic, msg_type, sentinel_timeout):
+                _kill_camera_mount_tf()
                 return Err(f"no {msg_type} on {topic} within {sentinel_timeout:.1f}s")
 
     cap.declare_ros2_topic(
@@ -481,6 +526,7 @@ def shutdown():
     _extrinsics_thread = None
     _extrinsics_stop = None
     _kill_realsense()
+    _kill_camera_mount_tf()
     _extrinsics_pub = None
     _extrinsics_tf_broadcaster = None
     return Ok()

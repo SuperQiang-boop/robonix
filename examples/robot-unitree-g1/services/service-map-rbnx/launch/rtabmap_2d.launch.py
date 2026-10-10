@@ -374,10 +374,10 @@ def _make_nodes(context, *args, **kwargs):
             "wait_for_transform": 1.5,
             "deskewing": deskew_lidar,
             "deskewing_slerp": True,
-            "Reg/Force3DoF": "true",
+            "Reg/Force3DoF": "false",
             "Icp/VoxelSize": "0.1",
             "Icp/PointToPlane": "true",
-            "Icp/MaxCorrespondenceDistance": "1.0",
+            "Icp/MaxCorrespondenceDistance": "0.3",
             "Odom/ScanKeyFrameThr": "0.4",
         }
         for key in ("Icp/MaxTranslation", "Icp/MaxRotation"):

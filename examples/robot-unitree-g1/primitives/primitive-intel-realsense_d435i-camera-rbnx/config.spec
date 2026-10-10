@@ -73,6 +73,26 @@ config:
   # published by the robot's camera driver when it uses another frame name.
   extrinsics_camera_frame: camera_color_optical_frame
 
+  # boolean, default: true when launch_realsense is false.
+  # Start a local static transform publisher between the robot-mounted D435
+  # link and the externally published camera_link frame.
+  publish_camera_mount_tf: true
+
+  # string, default: d435_link.
+  camera_mount_parent_frame: d435_link
+
+  # string, default: camera_link.
+  camera_mount_child_frame: camera_link
+
+  # float, default: 0.0. Translation in meters and fixed-axis roll/pitch/yaw
+  # in radians for camera_mount_parent_frame -> camera_mount_child_frame.
+  camera_mount_x: 0.0
+  camera_mount_y: 0.0
+  camera_mount_z: 0.0
+  camera_mount_roll: 0.0
+  camera_mount_pitch: 0.0
+  camera_mount_yaw: 0.0
+
   # float (seconds), default: 30.0.
   # Maximum startup wait for the first RGB Image message.
   sentinel_timeout_s: 30.0
