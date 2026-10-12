@@ -27,6 +27,8 @@ import math
 import os
 import threading
 import time
+import urllib.error
+import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
@@ -37,6 +39,7 @@ log = logging.getLogger("mapping_rbnx.webui")
 MAPS_DIR = os.environ.get("MAPPING_MAPS_DIR", "/mapping/maps")
 MAP_TOPIC = os.environ.get("MAPPING_MAP_TOPIC", "/map")
 POSE_TOPIC = os.environ.get("MAPPING_POSE_TOPIC", "/robonix/map/pose")
+SCENE_WEB_URL = os.environ.get("SCENE_WEB_URL", "http://127.0.0.1:50107").rstrip("/")
 
 # Latest map / pose, filled by ROS subscriptions on the webui's own node.
 _latest = {"grid": None, "pose": None}
@@ -74,6 +77,31 @@ def _log_add(kind: str, msg: str) -> None:
     with _log_lock:
         _LOG.append({"t": time.time(), "kind": kind, "msg": msg})
     log.info("[webui:%s] %s", kind, msg)
+
+
+def _delete_scene_map(map_id: str) -> dict:
+    """Delete the Scene snapshot for a map and return its JSON result.
+
+    Mapping owns the spatial map, while Scene owns persisted objects and
+    annotations. This best-effort call keeps the 8091 delete response useful
+    when Scene is stopped, and reports the failed cleanup to the operator.
+    """
+    url = f"{SCENE_WEB_URL}/api/maps/delete"
+    payload = json.dumps({"map_id": map_id}).encode("utf-8")
+    request = urllib.request.Request(
+        url,
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=5.0) as response:
+            result = json.loads(response.read().decode("utf-8") or "{}")
+        return result if isinstance(result, dict) else {
+            "ok": False, "detail": "Scene returned a non-object response"
+        }
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+        return {"ok": False, "detail": f"Scene delete request failed: {exc}"}
 
 
 def _live_pose_xytheta():
@@ -477,6 +505,15 @@ class _Handler(BaseHTTPRequestHandler):
             if p == "/api/delete":
                 mid = body.get("map_id", "")
                 out = map_ops.delete_map_impl(mid)
+                if out.get("ok"):
+                    scene_out = _delete_scene_map(str(mid))
+                    out["scene_cleanup"] = scene_out.get(
+                        "scene_cleanup", {}
+                    )
+                    if not scene_out.get("ok"):
+                        out["scene_cleanup_error"] = scene_out.get(
+                            "detail", "Scene map cleanup failed"
+                        )
                 _log_add("delete", out.get("detail") or (f"deleted {mid}" if out.get("ok") else "delete failed"))
                 return self._json(out)
             if p == "/api/reset":
