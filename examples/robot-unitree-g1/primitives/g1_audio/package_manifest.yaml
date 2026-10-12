@@ -3,9 +3,9 @@ manifestVersion: 1
 package:
   name: robonix.primitive.unitree.g1.audio
   version: 0.1.0
-  description: Unitree G1 speaker primitive backed by Unitree SDK2.
+  description: Unitree G1 microphone and speaker primitive backed by Unitree SDK2.
   license: Apache-2.0
-  tags: [primitive, audio, speaker, unitree, g1, sdk2]
+  tags: [primitive, audio, microphone, speaker, unitree, g1, sdk2]
   maintainers: [robonix]
 
 build: bash scripts/build.sh
@@ -13,4 +13,5 @@ start: bash scripts/start.sh
 
 capabilities:
   - name: robonix/primitive/audio/driver
+  - name: robonix/primitive/audio/mic
   - name: robonix/primitive/audio/speaker

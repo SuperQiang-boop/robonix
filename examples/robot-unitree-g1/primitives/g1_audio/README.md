@@ -1,8 +1,19 @@
 # G1 Audio
 
-This package provides the G1 built-in speaker as a Robonix audio primitive.
-The `speech` service continues to synthesize speech; only its speaker provider
-changes from the browser relay to `g1_audio`.
+This package provides the G1 built-in microphone and speaker as a Robonix audio primitive.
+The `speech` service continues to synthesize speech; its speaker provider can
+use `g1_audio`, while Liaison can consume the onboard microphone through the
+standard `robonix/primitive/audio/mic` stream.
+
+The microphone is captured on demand. When a client opens the mic stream, the
+primitive enables the G1 voice service (API 1008, mode 1), joins the configured
+multicast channel, and yields 16 kHz mono signed 16-bit little-endian PCM
+`AudioChunk` messages. When the client disconnects, it leaves the multicast
+group and disables the voice service (mode 2).
+
+Both speaker playback and microphone voice control use the C++ SDK in
+`third_party/unitree_sdk2`; the microphone does not require the Unitree Python
+SDK.
 
 ## Build and start
 

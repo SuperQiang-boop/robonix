@@ -1,0 +1,9 @@
+[contract]
+id          = "robonix/primitive/audio/mic"
+version     = "1"
+kind        = "primitive"
+idl         = "audio/msg/AudioChunk.msg"
+description = "16 kHz mono s16le PCM from the Unitree G1 onboard microphone."
+
+[mode]
+type = "topic_out"

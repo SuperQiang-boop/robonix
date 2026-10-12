@@ -20,9 +20,19 @@ mkdir -p "$BUILD_DIR"
 cmake -S "$PKG" -B "$BUILD_DIR/native" \
   -DUNITREE_SDK_ROOT="$SDK_ROOT" \
   -DCMAKE_BUILD_TYPE=Release
-cmake --build "$BUILD_DIR/native" --target g1_audio_sdk_helper --parallel
+cmake --build "$BUILD_DIR/native" --target g1_audio_sdk_helper g1_audio_voice_helper --parallel
 mkdir -p "$BUILD_DIR/bin"
-cp "$BUILD_DIR/native/g1_audio_sdk_helper" "$BUILD_DIR/bin/g1_audio_sdk_helper"
+install_helper() {
+  local source="$1"
+  local target="$2"
+  local temporary
+  temporary="$(mktemp "$BUILD_DIR/bin/.${target}.XXXXXX")"
+  cp "$source" "$temporary"
+  chmod 755 "$temporary"
+  mv -f "$temporary" "$BUILD_DIR/bin/$target"
+}
+install_helper "$BUILD_DIR/native/g1_audio_sdk_helper" "g1_audio_sdk_helper"
+install_helper "$BUILD_DIR/native/g1_audio_voice_helper" "g1_audio_voice_helper"
 SDK_LIB_DIR="$SDK_ROOT/thirdparty/lib/$(uname -m)"
 mkdir -p "$BUILD_DIR/lib"
 for library in libddsc.so libddsc.so.0 libddscxx.so libddscxx.so.0; do

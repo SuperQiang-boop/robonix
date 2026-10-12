@@ -10,4 +10,5 @@ fi
 
 export PYTHONPATH="$ROBONIX_API:$PKG:$PKG/rbnx-build/codegen/proto_gen:${PYTHONPATH:-}"
 export G1_AUDIO_SDK_HELPER="${G1_AUDIO_SDK_HELPER:-$PKG/rbnx-build/bin/g1_audio_sdk_helper}"
+export G1_AUDIO_VOICE_HELPER="${G1_AUDIO_VOICE_HELPER:-$PKG/rbnx-build/bin/g1_audio_voice_helper}"
 exec python3 -m g1_audio.main

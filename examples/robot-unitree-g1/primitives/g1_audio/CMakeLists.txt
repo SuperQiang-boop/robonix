@@ -16,3 +16,12 @@ set_target_properties(g1_audio_sdk_helper PROPERTIES
   INSTALL_RPATH "\$ORIGIN/../lib"
 )
 target_link_options(g1_audio_sdk_helper PRIVATE -Wl,--disable-new-dtags)
+
+add_executable(g1_audio_voice_helper g1_audio/voice_helper.cpp)
+target_link_libraries(g1_audio_voice_helper PRIVATE unitree_sdk2)
+target_compile_features(g1_audio_voice_helper PRIVATE cxx_std_17)
+set_target_properties(g1_audio_voice_helper PROPERTIES
+  BUILD_RPATH "\$ORIGIN/../lib"
+  INSTALL_RPATH "\$ORIGIN/../lib"
+)
+target_link_options(g1_audio_voice_helper PRIVATE -Wl,--disable-new-dtags)
