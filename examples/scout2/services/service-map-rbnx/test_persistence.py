@@ -149,7 +149,7 @@ class PersistenceTest(unittest.TestCase):
         """Run the bridge's exact resolver without starting Atlas/MCP servers."""
         source = Path(__file__).parent / "src/mapping_rbnx/atlas_bridge.py"
         tree = ast.parse(source.read_text())
-        names = {"_resolve_persistence", "_sanitize_map_id", "_truthy"}
+        names = {"_resolve_persistence", "_sanitize_map_id", "_truthy", "_find_latest_map"}
         funcs = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in names]
         ns = dict(os=os, time=time, map_ops=map_ops, MAPS_DIR=str(self.maps),
                   RUNTIME_DB_DIR=str(self.runtime), _VALID_MODES=("mapping", "localization"),
@@ -161,6 +161,69 @@ class PersistenceTest(unittest.TestCase):
         self.assertEqual(first, second)
         self.assertEqual(second["reset_map"], "false")
         self.assertEqual(read_db(second["database_path"]), 10)
+
+    def test_auto_mode_localizes_preferred_or_latest_saved_map(self):
+        """Auto mode localizes the configured map, falling back to the newest."""
+        source = Path(__file__).parent / "src/mapping_rbnx/atlas_bridge.py"
+        tree = ast.parse(source.read_text())
+        names = {"_resolve_persistence", "_sanitize_map_id", "_truthy", "_find_latest_map"}
+        funcs = [node for node in tree.body if isinstance(node, ast.FunctionDef)
+                 and node.name in names]
+        ns = dict(os=os, time=time, map_ops=map_ops, MAPS_DIR=str(self.maps),
+                  RUNTIME_DB_DIR=str(self.runtime), _VALID_MODES=("mapping", "localization"),
+                  log=logging.getLogger(__name__))
+        exec(compile(ast.Module(body=funcs, type_ignores=[]), str(source), "exec"), ns)
+
+        first = ns["_resolve_persistence"]({"map_id": "scout2_main", "map_mode": "auto"})
+        self.assertEqual(first["map_mode"], "mapping")
+        self.assertEqual(first["reset_map"], "false")
+
+        older_dir = self.maps / "floor_a"
+        newer_dir = self.maps / "floor_b"
+        create_db(older_dir / "rtabmap.db", 24)
+        create_db(newer_dir / "rtabmap.db", 42)
+        os.utime(older_dir, (100, 100))
+        os.utime(newer_dir, (200, 200))
+        resumed = ns["_resolve_persistence"](
+            {"map_id": "scout2_main", "map_mode": "auto"}
+        )
+        self.assertEqual(resumed["map_mode"], "localization")
+        self.assertEqual(resumed["map_id"], "floor_b")
+        self.assertEqual(resumed["reset_map"], "false")
+        self.assertEqual(read_db(resumed["database_path"]), 42)
+        self.assertNotEqual(Path(resumed["database_path"]), newer_dir / "rtabmap.db")
+        self.assertEqual(read_db(newer_dir / "rtabmap.db"), 42)
+
+        preferred = self.maps / "scout2_main" / "rtabmap.db"
+        create_db(preferred, 84)
+        selected = ns["_resolve_persistence"](
+            {"map_id": "scout2_main", "map_mode": "auto"}
+        )
+        self.assertEqual(selected["map_id"], "scout2_main")
+        self.assertEqual(selected["map_mode"], "localization")
+        self.assertEqual(read_db(selected["database_path"]), 84)
+
+        localization = ns["_resolve_persistence"](
+            {"map_id": "scout2_main", "map_mode": "localization"}
+        )
+        self.assertEqual(localization["map_mode"], "localization")
+        self.assertNotEqual(localization["database_path"], selected["database_path"])
+
+    def test_scout2_uses_named_periodic_checkpoint_and_auto_mode(self):
+        """Scout2 resumes the named checkpoint and extends it after restart."""
+        manifest_path = Path(__file__).parents[2] / "robonix_manifest.yaml"
+        manifest = manifest_path.read_text(encoding="utf-8")
+        self.assertRegex(
+            manifest,
+            r"(?m)^  - name: mapping\n"
+            r"    path: \.\/services/service-map-rbnx\n"
+            r"    config:\n"
+            r"      map_id: scout2_main\n"
+            r"      map_mode: auto\n"
+            r"      reset_map: false\n"
+            r"      checkpoint_interval_s: 30\n",
+        )
+        self.assertIn("map_mode: auto", manifest)
 
     def test_loaded_localization_copy_becomes_persistent_before_mapping(self):
         """Mode switching must not strand new nodes in an ephemeral DB."""

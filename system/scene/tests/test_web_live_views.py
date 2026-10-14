@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import sys
 import threading
+from types import SimpleNamespace
 
 import pytest
 
@@ -149,6 +150,58 @@ def test_camera_requests_are_offloaded_single_flight_and_rate_limited(monkeypatc
         response.json()["rgb"]["png_b64"] == "frame" for response in responses
     )
     assert calls == [hub, hub]
+
+
+def test_map_objects_api_reads_active_and_saved_map_partitions():
+    """Return coordinates for the requested map, using its saved snapshot token."""
+    web = _web_module()
+    calls = []
+
+    class ObjectStore:
+        def load_all(self, *, partition, strict):
+            calls.append((partition, strict))
+            return [SimpleNamespace(
+                object_id="chair_1", cls="chair",
+                pose=SimpleNamespace(x=1.0, y=2.0, z=0.4, yaw=0.2, frame_id="map"),
+                bbox=SimpleNamespace(size_x=0.5, size_y=0.5, size_z=0.8, yaw=0.2),
+                confidence=0.9, observation_count=4, last_seen=10.0,
+                attributes={"movable": True},
+            )]
+
+    class MapMeta:
+        def read(self, map_id):
+            if map_id == "old_map":
+                return SimpleNamespace(
+                    object_partition="old_map__s2", mapping_generation=3
+                )
+            return None
+
+    app = web.make_app(
+        registry=object(), object_store=ObjectStore(), map_meta=MapMeta(),
+        map_binding={"map_id": "active_map", "generation": 7},
+    )
+
+    async def scenario():
+        """Query the live map and a saved map through the same REST route."""
+        import httpx
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://scene.test"
+        ) as client:
+            return (
+                await client.get("/api/maps/active_map/objects"),
+                await client.get("/api/maps/old_map/objects"),
+            )
+
+    active, saved = asyncio.run(scenario())
+    assert active.status_code == saved.status_code == 200
+    assert calls == [("active_map", True), ("old_map__s2", True)]
+    assert active.json()["generation"] == 7
+    assert active.json()["objects"][0]["pose"] == {
+        "x": 1.0, "y": 2.0, "z": 0.4, "yaw": 0.2,
+    }
+    assert saved.json()["generation"] == 3
 
 
 def test_live_map_pages_expose_first_paint_readiness_and_errors():

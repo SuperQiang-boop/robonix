@@ -147,6 +147,9 @@ maps/lab_3f/rtabmap.db  occupancy.pgm  occupancy.yaml  occupancy.png  cloud.pcd 
   the saved db to a private runtime path and re-localizes against it; the
   saved graph is retained, but robot localization must be checked before
   using stored Scene coordinates or navigation goals.
+- **Choose a map at startup:** set `map_mode: auto`. The configured `map_id` is
+  preferred; if it has no saved map, the newest saved map is selected. With no
+  saved maps, a new mapping session starts.
 - **Start fresh:** set `reset_map: true` with `map_mode: mapping`. This clears
   the named runtime database before rebuilding; without `reset_map`, mapping
   resumes the existing runtime database.
@@ -162,8 +165,10 @@ Graph optimization can still move stored map-frame coordinates.
 ### Scout2 Docker persistence
 
 The Scout2 deployment sets `ROBONIX_MAPPING_FORCE: docker`, `map_id:
-scout2_main`, `map_mode: mapping`, `reset_map: false`, and
-`checkpoint_interval_s: 60`. Run `rbnx build` and `rbnx boot` from the Scout2
+scout2_main`, `map_mode: auto`, `reset_map: false`, and
+`checkpoint_interval_s: 30`. Auto mode localizes against `scout2_main` when it
+exists, falls back to the newest saved map, and starts mapping when no saved
+map is available. Run `rbnx build` and `rbnx boot` from the Scout2
 deployment directory as usual. The package bind mount preserves:
 
 - Host live DB: `services/service-map-rbnx/maps/.runtime/scout2_main/rtabmap.db`

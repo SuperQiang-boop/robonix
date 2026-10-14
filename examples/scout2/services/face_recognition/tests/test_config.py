@@ -6,8 +6,9 @@ from unittest.mock import patch
 import tempfile
 import os
 
+repo_root = Path(__file__).resolve().parents[4]
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-sys.path.insert(0, "/home/szh/robonix/pylib/robonix-api")
+sys.path.insert(0, str(repo_root / "pylib" / "robonix-api"))
 from face_recognition.main import Settings  # noqa: E402
 
 
