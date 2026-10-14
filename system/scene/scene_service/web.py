@@ -689,6 +689,7 @@ def make_app(*, registry: ObjectRegistry,
       GET /user            — end-user map page (rooms: draw / rename /
                              confirm-stale / delete; light object overlay)
       GET /api/state       — JSON for the 2D map
+      GET /api/maps/{map_id}/objects — persisted objects for one map
       GET /api/objects3d   — JSON for the 3D viz (per-object pcd + bbox)
       GET /api/camera      — JSON: latest RGB + depth frames
       /api/annotations[..] — user annotation CRUD (see below)
@@ -1439,6 +1440,88 @@ def make_app(*, registry: ObjectRegistry,
             return JSONResponse({"objects": [], "stamp_unix": 0.0})
         return JSONResponse(detector.export_3d_snapshot())
 
+    async def map_objects(request) -> JSONResponse:
+        """Return persisted object coordinates for the requested map id."""
+        if object_store is None:
+            return JSONResponse(
+                {"ok": False, "detail": "object store unavailable"},
+                status_code=503,
+            )
+        map_id = _sanitize_map_id(request.path_params["map_id"])
+        active_id = _sanitize_map_id(str(map_binding.get("map_id") or ""))
+        meta = map_meta.read(map_id) if map_meta is not None else None
+        partition = map_id if map_id == active_id else (
+            meta.object_partition if meta is not None else ""
+        )
+        if not partition:
+            return JSONResponse(
+                {"ok": False, "detail": f"no saved object snapshot for map {map_id}"},
+                status_code=404,
+            )
+        try:
+            objects = await asyncio.to_thread(
+                object_store.load_all, partition=partition, strict=True
+            )
+            meta_matches_active_frame = (
+                map_binding.get("generation") is None
+                or meta is None
+                or meta.mapping_generation is None
+                or meta.mapping_generation == map_binding.get("generation")
+            )
+            if (
+                not objects and map_id == active_id and meta is not None
+                and meta_matches_active_frame
+            ):
+                partition = meta.object_partition
+                objects = await asyncio.to_thread(
+                    object_store.load_all, partition=partition, strict=True
+                )
+        except Exception as e:  # noqa: BLE001
+            log.exception("map object query failed for %s", map_id)
+            return JSONResponse({"ok": False, "detail": str(e)}, status_code=503)
+        generation = (
+            map_binding.get("generation") if map_id == active_id
+            else (meta.mapping_generation if meta is not None else None)
+        )
+        snapshot = sg_store.get_snapshot() if map_id == active_id and sg_store is not None else None
+        return JSONResponse({
+            "ok": True,
+            "map_id": map_id,
+            "generation": generation,
+            "relations": [
+                {
+                    "source_id": edge.source_id,
+                    "target_id": edge.target_id,
+                    "relation": edge.relation,
+                    "confidence": edge.confidence,
+                }
+                for edge in (snapshot.edges if snapshot is not None else [])
+            ],
+            "objects": [
+                {
+                    "id": obj.object_id,
+                    "class": obj.cls,
+                    "pose": {
+                        "x": obj.pose.x, "y": obj.pose.y,
+                        "z": obj.pose.z, "yaw": obj.pose.yaw,
+                    },
+                    "frame_id": obj.pose.frame_id,
+                    "bbox": {
+                        "size_x": obj.bbox.size_x,
+                        "size_y": obj.bbox.size_y,
+                        "size_z": obj.bbox.size_z,
+                        "yaw": obj.bbox.yaw,
+                    },
+                    "confidence": obj.confidence,
+                    "observation_count": obj.observation_count,
+                    "last_seen": obj.last_seen,
+                    "attributes": obj.attributes,
+                }
+                for obj in objects
+            ],
+            "stamp_unix": time.time(),
+        })
+
     async def cam(_request) -> HTMLResponse:
         return HTMLResponse(_INDEX_CAM_HTML)
 
@@ -1483,6 +1566,7 @@ def make_app(*, registry: ObjectRegistry,
         Route("/user", user_page, methods=["GET"]),
         Route("/api/state", state, methods=["GET"]),
         Route("/api/objects3d", objects3d, methods=["GET"]),
+        Route("/api/maps/{map_id}/objects", map_objects, methods=["GET"]),
         Route("/api/camera", camera_state, methods=["GET"]),
         Route("/api/annotations", annotations_list, methods=["GET"]),
         Route("/api/annotations", annotations_create, methods=["POST"]),

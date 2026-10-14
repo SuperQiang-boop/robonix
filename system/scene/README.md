@@ -2,6 +2,11 @@
 
 Robonix system service that maintains the **current best estimate** of what's in the robot's environment: per-`Object` records (stable id, fused pose, class, confidence, last_seen, point cloud), pairwise `Relation`s (`on` / `inside` / `near` / `reachable_by`), and a projected 2D occupancy grid from the mapping service. Exposes read-only MCP tools that Pilot calls during RTDL planning/execution, and a self-contained 2D + 3D web viewer.
 
+Scene currently uses the MCP 1.x `mcp.server.fastmcp` API, so its Python and
+Docker dependencies require `mcp<2`. Rebuild the Scene image with
+`bash scripts/build.sh` after dependency changes; restarting an older image
+does not update its installed Python packages.
+
 This service is **NOT** a memory store (long-term recall belongs to memory services) and **NOT** a hardware controller. Current-state only. Reads observations; never writes back to the robot.
 
 ## What's inside
@@ -295,11 +300,12 @@ Hugging Face mirror endpoint (default `https://hf-mirror.com`); the canonical
 | `SCENE_WEB_HOST` | `0.0.0.0` | Web UI bind host; set `127.0.0.1` on a robot/control workstation to keep the operator surface local-only. An explicit Scene config file's `web_host` takes precedence when that launch path provides one. |
 | `SCENE_OBJECT_MEMORY_ENABLED` | `true` | enable the object snapshot DB backing the map UI's Save/Load (boot warm-restore only under `SCENE_RESTORE_ON_START`) |
 | `SCENE_OBJECT_MEMORY_DB` | `/data/robonix/scene_memory/objects.db` | milvus-lite DB path (inside container; host-mounted via `rbnx-build/data/robonix`) |
+| `SCENE_OBJECT_PERSIST_INTERVAL_S` | `3` | seconds between live object-coordinate checkpoints when `SCENE_RESTORE_ON_START=true` |
 | `SCENE_MAP_ID` | `default` | FALLBACK map binding: mapping's latched `robonix/service/map/lifecycle` broadcast wins when present at startup; this env (below manifest `map_id`) applies when mapping isn't up yet (normal full-boot order) or doesn't broadcast |
 | `SCENE_MAP_BINDING_WAIT_S` | `3.0` | how long the startup probe waits for the lifecycle contract to appear on atlas before falling back to static binding; `0` disables the probe |
 | `SCENE_ANNOTATIONS_DIR` | `/data/robonix/scene_annotations` | per-map JSON files holding user annotations (rooms / POIs); host-mounted like the object DB |
 | `SCENE_MAP_META_DIR` | sibling `scene_maps/` of the annotations dir | epoch sidecar files pairing each saved map with the object-snapshot partition written at its Save (see "Map library") |
-| `SCENE_RESTORE_ON_START` | `false` | LEGACY mode: bind the startup map id, restore its objects at boot, and let the scene-graph builder persist continuously. Default off — a boot starts a fresh live session and objects are only persisted by an explicit Save |
+| `SCENE_RESTORE_ON_START` | `false` | restore the configured map's saved object snapshot at boot and continuously checkpoint current object coordinates under that map id; default off |
 | `VLM_REASONING_EFFORT` | `` (unset) | opt-in, forwarded to all scene VLM/LLM calls (relation inference + VLM perception): `minimal`\|`low`\|`medium`\|`high`. **Unset → the field is omitted**, so non-reasoning models and strict endpoints are unaffected. Set `minimal` (= no thinking) to keep a reasoning `VLM_MODEL` (e.g. `doubao-seed-2-1-pro`) answering in ~2 s instead of timing out |
 
 Configure the RGB-D removal threshold in the deployment manifest:
@@ -334,13 +340,13 @@ file/process from `system/memory`'s memsearch DB — and lives under the
 host-mounted `/data/robonix`, which also makes the scene-graph JSON caches
 survive boots.
 
-`SCENE_RESTORE_ON_START=true` selects the LEGACY mode instead: the registry
-warm-restores the startup binding's partition at boot and the scene-graph
-builder persists continuously under it. This mode assumes the map frame never
-changes across those boots — the operator owns that guarantee. Don't mix it
-with map-UI Saves: a Save purges the bare partition the legacy restore reads
-(its rows move into the Save's snapshot), so the next legacy boot restores
-nothing until the builder repopulates.
+`SCENE_RESTORE_ON_START=true` enables continuous persistence for deployments
+that keep a stable `map_id`. Scene checkpoints current object coordinates on
+the configured interval, independently of VLM graph rebuilds. On boot it
+restores the latest map snapshot when one exists, otherwise it restores the
+live map partition. A map-frame generation change clears the live partition;
+map-UI Save continues to use its own snapshot partition. The Scout2 deployment
+enables this setting.
 
 An object's pose is only meaningful in the exact `map` frame it was observed
 in, so persistence is partitioned by **snapshot**, not merely by map name:
@@ -478,6 +484,7 @@ curl -s http://127.0.0.1:50106/mcp/ -H "Content-Type: application/json" \
 * `/3d` — only the 3D point clouds + bboxes
 * `/cam` — only the camera stack: live RGB on top, live depth below
 * `/api/state` — JSON: registry + relations + occupancy PNG + robot pose + user annotations + map binding
+* `/api/maps/{map_id}/objects` — JSON: persisted object coordinates, bounds, attributes, and active-map relations for the requested map
 * `/api/objects3d` — JSON: per-object pcd + 8 bbox corners + CLIP class
 * `/api/camera` — JSON: latest RGB + depth as base64 PNGs (5 Hz polling)
 * `/api/annotations` — user annotation CRUD (see "User annotations" above)

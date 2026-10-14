@@ -32,7 +32,7 @@ dependencies = [
     # the venv resolves cleanly on hosts running 3.13. plane_extract
     # already no-ops without it, so missing it is graceful.
     "open3d>=0.18; platform_machine == 'x86_64' and python_version < '3.13'",
-    "mcp",
+    "mcp<2",
     "fastmcp",
     "grpcio",
     "grpcio-tools",

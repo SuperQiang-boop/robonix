@@ -1,6 +1,6 @@
 # ── Generic scene ────────────────────────────────────────────────
 scipy>=1.11
-mcp
+mcp<2
 fastmcp
 grpcio
 grpcio-tools

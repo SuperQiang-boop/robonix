@@ -15,8 +15,12 @@ catalog:
 env:
   ROBONIX_MAPPING_FORCE: docker
   SCENE_MAP_ID: scout2_main
+  SCENE_RESTORE_ON_START: "true"
   ROS_DOMAIN_ID: "42"
   RMW_IMPLEMENTATION: rmw_fastrtps_cpp
+  # Sensor drivers may run under a different Linux user. Fast DDS shared
+  # memory is user-scoped; UDPv4 keeps ROS 2 data available across users.
+  FASTDDS_BUILTIN_TRANSPORTS: UDPv4
 
 system:
   # basic layer
@@ -32,6 +36,7 @@ system:
     log: info
   scene:
     log: info
+    web_host: 0.0.0.0
     # Keep Scene's object/annotation frame bound to the same saved map as mapping.
     map_id: scout2_main
     # Scout2 camera optical frame for scene 3D fusion
@@ -128,14 +133,12 @@ service:
   - name: mapping
     path: ./services/service-map-rbnx
     config:
-      # No map_id specified: auto-detect from /mapping/maps/
-      # - If saved maps exist → load the latest one in localization mode
-      # - If no maps exist    → start mapping mode (new map)
-      # map_mode: auto is the default behavior
+      map_id: scout2_main
+      map_mode: auto
       reset_map: false
-      # Large RTAB-Map databases can take longer than the Driver shutdown
-      # deadline to copy; keep the last completed checkpoint recent instead.
       checkpoint_interval_s: 30
+      # auto loads scout2_main, or the newest saved map if it is missing,
+      # in localization mode; no saved map starts fresh in mapping mode.
       webui_host: 0.0.0.0
       webui_port: 8091
       # Production localization uses chassis odometry. The timestamped Mid360

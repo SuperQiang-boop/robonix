@@ -1127,6 +1127,7 @@ async def _lifecycle_watch(
     anno_store: Optional[AnnotationStore] = None,
     *,
     registry: Optional[ObjectRegistry] = None,
+    object_store: Any = None,
     live_binding: Optional[dict] = None,
     ops_lock: Optional[asyncio.Lock] = None,
     semantic_hold: Optional[dict] = None,
@@ -1261,6 +1262,16 @@ async def _lifecycle_watch(
                     # retry. Leaving state untouched re-triggers this whole
                     # reaction (flush included) on the next tick.
                     return
+                if object_store is not None:
+                    try:
+                        await asyncio.to_thread(object_store.delete_map, live_id)
+                    except Exception as e:  # noqa: BLE001
+                        log.error(
+                            "[scene-persist] could not clear objects from the "
+                            "previous frame for %s; epoch advance withheld: %s",
+                            live_id, e,
+                        )
+                        return
                 if anno_store is not None:
                     try:
                         n = anno_store.mark_all_stale(
@@ -1330,6 +1341,44 @@ async def _lifecycle_watch(
             log.error(
                 "[scene] lifecycle watch tick failed (watch continues): %s", e,
             )
+
+
+async def _persist_live_objects(
+    registry: ObjectRegistry,
+    object_store: Any,
+    live_binding: dict,
+    semantic_hold: dict,
+) -> None:
+    """Persist the active map's current object poses independently of graph inference.
+
+    Writes the live map partition every few seconds so a slow VLM rebuild does
+    not delay persistence. The lifecycle watcher clears that partition when
+    mapping changes the map frame; snapshots remain in their separate tokens.
+    """
+    interval = max(1.0, float(os.environ.get("SCENE_OBJECT_PERSIST_INTERVAL_S", "3")))
+    while True:
+        await asyncio.sleep(interval)
+        map_id = str(live_binding.get("map_id") or "")
+        if not map_id or semantic_hold.get("reason"):
+            continue
+        objects, _surfaces = await registry.snapshot()
+        pairs = [
+            (obj, None) for obj in objects.values()
+            if not obj.attributes.get("is_robot", False)
+        ]
+        if not pairs:
+            continue
+        try:
+            written = await asyncio.to_thread(
+                object_store.persist, pairs, partition=map_id
+            )
+            if written != len(pairs):
+                log.error(
+                    "[scene-persist] live checkpoint incomplete for %s: %d/%d objects",
+                    map_id, written, len(pairs),
+                )
+        except Exception as e:  # noqa: BLE001
+            log.error("[scene-persist] live checkpoint failed for %s: %s", map_id, e)
 
 
 # ── main ───────────────────────────────────────────────────────────────────
@@ -1428,20 +1477,37 @@ async def _run() -> None:
         )
         try:
             obj_store = ObjectStore(db_path, map_id=scene_state_map_id)
+            restore_partition = map_id
+            restore_meta = None
+            if restore_on_start:
+                anno_dir_for_meta = os.environ.get(
+                    "SCENE_ANNOTATIONS_DIR", "/data/robonix/scene_annotations"
+                )
+                meta_dir = os.environ.get("SCENE_MAP_META_DIR") or os.path.join(
+                    os.path.dirname(anno_dir_for_meta.rstrip("/")) or ".",
+                    "scene_maps",
+                )
+                restore_meta = MapMetaStore(meta_dir).read(map_id)
+                if restore_meta is not None:
+                    if live_binding.get("generation") is None:
+                        live_binding["generation"] = restore_meta.mapping_generation
             purged = obj_store.purge_live_partitions()
             if purged:
                 log.info(
                     "[scene-persist] purged %d leftover live-session row(s) "
                     "from earlier boots", purged,
                 )
-            restored = obj_store.load_all() if restore_on_start else []
+            restored = obj_store.load_all(partition=restore_partition) if restore_on_start else []
+            if restore_on_start and not restored and restore_meta is not None:
+                restore_partition = restore_meta.object_partition
+                restored = obj_store.load_all(partition=restore_partition)
             if restored:
                 async with registry.lock():
                     for o in restored:
                         registry.restore_object(o)
             log.info(
                 "[scene-persist] object store ready: restored %d object(s) (partition=%s, restore_on_start=%s) from %s",
-                len(restored), obj_store.map_id, restore_on_start, db_path,
+                len(restored), restore_partition, restore_on_start, db_path,
             )
         except Exception as e:  # noqa: BLE001
             # Object memory is opted in (default on), so a failure here is not
@@ -1612,10 +1678,15 @@ async def _run() -> None:
         asyncio.create_task(
             _lifecycle_watch(hub, binding, anno_store,
                              registry=registry, live_binding=live_binding,
+                             object_store=obj_store,
                              ops_lock=map_ops_lock,
                              semantic_hold=semantic_hold),
             name="scene-lifecycle-watch",
         ),
+        *([asyncio.create_task(
+            _persist_live_objects(registry, obj_store, live_binding, semantic_hold),
+            name="scene-object-persistence",
+        )] if restore_on_start and obj_store is not None else []),
         # Background reconciler: keeps scene's hub adding subscriptions
         # for new ROS2 topic_outs that appear on atlas after start
         # (mapping comes up after scene; same pattern for any future
@@ -1679,10 +1750,9 @@ async def _run() -> None:
             relation_inferer=sg_inferer,
             store=sg_store,
             config=sg_cfg,
-            # Live sessions are not persisted (objects reach the DB only via
-            # an explicit Save snapshot); the builder's continuous writes are
-            # the LEGACY warm-restore mode's mechanism and follow its switch.
-            object_store=obj_store if restore_on_start else None,
+            # Object coordinates use the independent persistence task below;
+            # VLM rebuild latency must not control checkpoint timing.
+            object_store=None,
             perception=perception,
         )
         sg_stop = asyncio.Event()
