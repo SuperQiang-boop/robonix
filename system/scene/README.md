@@ -2,6 +2,11 @@
 
 Robonix system service that maintains the **current best estimate** of what's in the robot's environment: per-`Object` records (stable id, fused pose, class, confidence, last_seen, point cloud), pairwise `Relation`s (`on` / `inside` / `near` / `reachable_by`), and a projected 2D occupancy grid from the mapping service. Exposes read-only MCP tools that Pilot calls during RTDL planning/execution, and a self-contained 2D + 3D web viewer.
 
+Scene currently uses the MCP 1.x `mcp.server.fastmcp` API, so its Python and
+Docker dependencies require `mcp<2`. Rebuild the Scene image with
+`bash scripts/build.sh` after dependency changes; restarting an older image
+does not update its installed Python packages.
+
 This service is **NOT** a memory store (long-term recall belongs to memory services) and **NOT** a hardware controller. Current-state only. Reads observations; never writes back to the robot.
 
 ## What's inside

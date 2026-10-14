@@ -18,6 +18,9 @@ env:
   SCENE_RESTORE_ON_START: "true"
   ROS_DOMAIN_ID: "42"
   RMW_IMPLEMENTATION: rmw_fastrtps_cpp
+  # Sensor drivers may run under a different Linux user. Fast DDS shared
+  # memory is user-scoped; UDPv4 keeps ROS 2 data available across users.
+  FASTDDS_BUILTIN_TRANSPORTS: UDPv4
 
 system:
   # basic layer
