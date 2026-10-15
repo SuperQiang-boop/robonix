@@ -4,6 +4,18 @@
          base_class_type="nav2_core::GoalChecker">
     <description>XY/yaw latch that survives same-goal replanning.</description>
   </class>
+  <class name="robonix_nav2_terminal::SettledGoalChecker"
+         type="robonix_nav2_terminal::SettledGoalChecker"
+         base_class_type="nav2_core::GoalChecker">
+    <description>Strict simultaneous XY/yaw and stopped-speed dwell.</description>
+  </class>
+</library>
+<library path="robonix_nav2_rotation_shim">
+  <class name="robonix_nav2_terminal::PersistentRotationShim"
+         type="robonix_nav2_terminal::PersistentRotationShim"
+         base_class_type="nav2_core::Controller">
+    <description>Stop-before-turn terminal rotation that survives same-goal replans.</description>
+  </class>
 </library>
 <library path="robonix_nav2_goal_aware_planner">
   <class name="robonix_nav2_terminal::GoalAwareNavfnPlanner"

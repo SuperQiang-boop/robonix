@@ -4,6 +4,7 @@
 use crate::discovery::{self, llm_name};
 use crate::history;
 use crate::memory;
+use crate::navigation_goal::SceneNavigationGoals;
 use crate::pb::contracts::robonix_system_executor_control_plan_client::RobonixSystemExecutorControlPlanClient;
 use crate::pb::contracts::robonix_system_executor_execute_client::RobonixSystemExecutorExecuteClient;
 use crate::pb::contracts::robonix_system_executor_list_active_plans_client::RobonixSystemExecutorListActivePlansClient;
@@ -1151,6 +1152,7 @@ pub async fn run_turn(
     let forest_revision = Arc::new(AtomicU64::new(0));
     let mut should_plan = true;
     let mut capability_prompt_cache = CapabilityPromptCache::default();
+    let mut scene_navigation_goals = SceneNavigationGoals::default();
     // Last user-facing narration; surfaced as FinalText when the turn ends.
     let mut last_content = String::new();
 
@@ -1189,6 +1191,7 @@ pub async fn run_turn(
                         match steer {
                             Some(task) => {
                                 if append_steer(task, history, standing_task) {
+                                    scene_navigation_goals.clear();
                                     history::trim(history, MAX_HISTORY);
                                     should_plan = true;
                                 }
@@ -1210,6 +1213,7 @@ pub async fn run_turn(
                     if let Some(task) = steer
                         && append_steer(task, history, standing_task)
                     {
+                        scene_navigation_goals.clear();
                         history::trim(history, MAX_HISTORY);
                         // Re-plan now so the model can react (and decide
                         // whether to cancel any in-flight tree).
@@ -1235,6 +1239,7 @@ pub async fn run_turn(
                             if TERMINAL.contains(&ns.state)
                                 && let Some(r) = ns.leaf_result.as_ref()
                             {
+                                scene_navigation_goals.observe(r, std::time::Instant::now());
                                 let description = forest
                                     .get(&plan_id)
                                     .map(|meta| meta.description.as_str())
@@ -1357,7 +1362,9 @@ pub async fn run_turn(
 
         // Pull any steers that landed while we were busy (e.g. during the
         // previous VLM stream) so this round plans with the latest user input.
-        drain_steers(&mut steer_rx, history, standing_task);
+        if drain_steers(&mut steer_rx, history, standing_task) {
+            scene_navigation_goals.clear();
+        }
 
         // Roll up old history into a summary once it gets large, so the rest of
         // the turn plans against a compact window instead of the full transcript.
@@ -1498,6 +1505,7 @@ pub async fn run_turn(
                         }
                         steer = steer_rx.recv() => {
                             if let Some(task) = steer {
+                                scene_navigation_goals.clear();
                                 append_steer(task, history, standing_task);
                                 drain_steers(&mut steer_rx, history, standing_task);
                                 history::trim(history, MAX_HISTORY);
@@ -1666,6 +1674,15 @@ pub async fn run_turn(
                 round,
                 &rtdl_description,
             )
+            .and_then(|mut graph| {
+                let corrected = scene_navigation_goals.canonicalize(
+                    &mut graph, std::time::Instant::now(),
+                )?;
+                if corrected > 0 {
+                    info!("[pilot/navigation] generated {corrected} Scene-derived goal quaternion(s) from authoritative yaw");
+                }
+                Ok(graph)
+            })
             .context("expand RTDL to Plan")
             {
                 // Carry `task_update` out so it is applied ONLY after a tree
@@ -1962,6 +1979,7 @@ pub async fn run_turn(
             .await;
         cancel_requested.extend(cancel_targets);
         record_dispatched_plan(history, &graph, &rtdl_description);
+        scene_navigation_goals.track_plan(&graph);
         forest.insert(
             plan_id.clone(),
             TreeMeta {
@@ -2984,6 +3002,8 @@ by planning capability calls available to you.
     Memory coordinates, or guessed coordinates for a room destination;
   - physical objects MUST use Scene `goal_near` to obtain an approach pose;
   - call navigation only when Scene returns `reachable=true`;
+  - preserve Scene's returned target heading, not the object's own yaw; the harness
+    computes the quaternion for a matching map-frame Scene target before dispatch;
   - `goal_near`/`goal_room` and `navigate` MUST be in separate planning
     rounds because the Executor passes args verbatim with no variable
     substitution — the LLM must see the Scene result before generating

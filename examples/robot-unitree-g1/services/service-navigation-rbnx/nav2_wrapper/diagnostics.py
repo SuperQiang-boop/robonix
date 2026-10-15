@@ -19,6 +19,9 @@ _SIGNALS = (
     "transform timeout",
     "timed out waiting for transform",
     "spin failed",
+    "terminal failed",
+    "terminal correction",
+    "optimizer fail to compute path",
 )
 
 

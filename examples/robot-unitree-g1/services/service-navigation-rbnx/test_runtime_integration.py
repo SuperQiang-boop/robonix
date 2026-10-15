@@ -243,6 +243,21 @@ class RuntimeIntegrationTest(unittest.TestCase):
         for runtime_script in (native_start, docker_entrypoint):
             self.assertNotIn("codegen/ros2_idl", runtime_script)
 
+    def test_terminal_plugins_are_built_and_loaded_in_both_runtimes(self):
+        """Keep G1's custom controllers available in rebuilt images and native overlays."""
+        dockerfile = (ROOT / "docker" / "Dockerfile").read_text()
+        build = (ROOT / "scripts" / "build.sh").read_text()
+        entrypoint = (ROOT / "docker" / "entrypoint.sh").read_text()
+        native = (ROOT / "scripts" / "start_native.sh").read_text()
+        plugins = (ROOT / "terminal_controller" / "nav2_core_plugins.xml").read_text()
+        self.assertIn("COPY terminal_controller /tmp/terminal_controller", dockerfile)
+        self.assertIn("--install-base /opt/robonix_nav2_terminal", dockerfile)
+        self.assertIn('-f docker/Dockerfile -t "$IMG" .', build)
+        self.assertIn("source /opt/robonix_nav2_terminal/local_setup.bash", entrypoint)
+        self.assertIn("terminal_controller/install/setup.bash", native)
+        self.assertIn("PersistentRotationShim", plugins)
+        self.assertIn("SettledGoalChecker", plugins)
+
     def test_config_directory_contains_only_the_neutral_template(self):
         names = sorted(path.name for path in (ROOT / "config").glob("*"))
         self.assertEqual(names, ["nav2_params.example.yml"])

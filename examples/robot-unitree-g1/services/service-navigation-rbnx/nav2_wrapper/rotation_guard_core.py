@@ -32,11 +32,13 @@ class GuardLimits:
 
 
 class RotationGuard:
-    """Latch a navigation UUID after unsafe stationary rotation.
+    """Latch a navigation UUID after unsafe rotation or terminal wandering.
 
     Rotation is integrated from odometry, not commanded velocity. Terminal
     limits use the current global-plan endpoint, while the global limits catch
-    recovery/controller loops that never enter the terminal window.
+    recovery/controller loops that never enter the terminal window. Once the
+    terminal window is entered, elapsed time and XY drift remain bounded even
+    when the controller continues translating or receives a new plan.
     """
 
     def __init__(self, limits: GuardLimits | None = None):
@@ -46,12 +48,14 @@ class RotationGuard:
         self.spin_started_at: float | None = None
         self.spin_rotation = 0.0
         self.terminal_started_at: float | None = None
+        self.approach_started_at: float | None = None
         self.terminal_rotation = 0.0
         self.terminal_allowed_rotation = 0.0
         self.best_yaw_error = math.inf
         self.last_progress_at: float | None = None
         self.last_odom_yaw: float | None = None
         self.rotating = False
+        self.correction_active = False
 
     def begin_goal(self, goal_uuid: str) -> None:
         if goal_uuid == self.goal_uuid:
@@ -61,23 +65,36 @@ class RotationGuard:
         self.spin_started_at = None
         self.spin_rotation = 0.0
         self.terminal_started_at = None
+        self.approach_started_at = None
         self.terminal_rotation = 0.0
         self.terminal_allowed_rotation = 0.0
         self.best_yaw_error = math.inf
         self.last_progress_at = None
         self.last_odom_yaw = None
         self.rotating = False
+        self.correction_active = False
 
     def clear_if_idle(self) -> None:
         self.goal_uuid = ""
         self.latched_reason = ""
         self.rotating = False
+        self.approach_started_at = None
+        self.correction_active = False
+
+    def set_correction_active(self, active: bool) -> None:
+        """Pause goal-yaw checks during bounded correction, never outer time/XY safety limits."""
+        if self.correction_active and not active:
+            self.terminal_started_at = None
+            self.terminal_rotation = 0.0
+            self.best_yaw_error = math.inf
+            self.last_progress_at = None
+        self.correction_active = active
 
     def observe_odom(self, yaw: float) -> None:
         if self.last_odom_yaw is not None and self.rotating:
             delta = abs(shortest_angle(self.last_odom_yaw, yaw))
             self.spin_rotation += delta
-            if self.terminal_started_at is not None:
+            if self.terminal_started_at is not None and not self.correction_active:
                 self.terminal_rotation += delta
         self.last_odom_yaw = yaw
 
@@ -89,11 +106,22 @@ class RotationGuard:
         robot_pose: tuple[float, float, float] | None,
         goal_pose: tuple[float, float, float] | None,
     ) -> str:
+        """Bound terminal wandering before applying the stationary-rotation checks."""
         if self.latched_reason:
             return self.latched_reason
         if not self.goal_uuid:
             self.rotating = False
             return ""
+
+        if robot_pose is not None and goal_pose is not None:
+            distance = math.hypot(robot_pose[0] - goal_pose[0], robot_pose[1] - goal_pose[1])
+            if self.approach_started_at is None and distance <= self.limits.terminal_xy_m:
+                self.approach_started_at = now
+            if self.approach_started_at is not None:
+                if distance > 2.0 * self.limits.terminal_xy_m:
+                    return self._trip("terminal XY drift exceeded exit tolerance")
+                if now - self.approach_started_at > self.limits.terminal_timeout_s:
+                    return self._trip("goal vicinity timeout")
 
         self.rotating = (
             abs(linear_speed) <= self.limits.rotating_linear_mps
@@ -111,6 +139,9 @@ class RotationGuard:
             return self._trip("continuous stationary rotation timeout")
         if self.spin_rotation > self.limits.global_spin_limit_rad:
             return self._trip("continuous stationary rotation limit")
+
+        if self.correction_active:
+            return ""
 
         if robot_pose is None or goal_pose is None:
             return ""

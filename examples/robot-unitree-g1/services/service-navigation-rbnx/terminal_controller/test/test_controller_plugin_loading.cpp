@@ -9,11 +9,15 @@ TEST(PluginLoadOrder, GoalCheckerDoesNotHideDwbControllerFactory) {
       "nav2_core", "nav2_core::GoalChecker");
   EXPECT_NO_THROW(goal_loader.createSharedInstance(
       "robonix_nav2_terminal::PersistentGoalChecker"));
+  EXPECT_NO_THROW(goal_loader.createSharedInstance(
+      "robonix_nav2_terminal::SettledGoalChecker"));
 
   pluginlib::ClassLoader<nav2_core::Controller> controller_loader(
       "nav2_core", "nav2_core::Controller");
   EXPECT_NO_THROW(
       controller_loader.createSharedInstance("dwb_core::DWBLocalPlanner"));
+  EXPECT_NO_THROW(controller_loader.createSharedInstance(
+      "robonix_nav2_terminal::PersistentRotationShim"));
 
   pluginlib::ClassLoader<nav2_core::GlobalPlanner> planner_loader(
       "nav2_core", "nav2_core::GlobalPlanner");

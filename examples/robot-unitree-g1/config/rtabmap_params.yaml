@@ -12,9 +12,9 @@ Grid/RangeMax: 6.0
 Grid/CellSize: 0.05
 # Mid-360 packets are sparse and non-repetitive; ray tracing draws long
 # free-space spokes. Ground returns already cover those cells, so disable.
-Grid/RayTracing: false
+Grid/RayTracing: true
 Grid/3D: false
-Grid/NormalsSegmentation: false
+Grid/NormalsSegmentation: true
 # Project in the gravity-aligned map frame before applying height thresholds.
 Grid/MapFrameProjection: true
 # Mapping uses base_footprint, a planar frame at the nominal sole level.

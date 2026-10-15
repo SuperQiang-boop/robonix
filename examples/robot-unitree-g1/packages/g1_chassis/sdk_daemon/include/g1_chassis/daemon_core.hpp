@@ -40,8 +40,7 @@ class DaemonCore {
   // Called when the adapter disconnects. Issues a stop.
   void OnDisconnect();
 
-  // Request a stop that hasn't been confirmed by the SDK yet.
-  // Returns true if stop is still unconfirmed.
+  // Query stop acknowledgement without issuing additional SDK calls.
   bool stop_unconfirmed();
 
   // Status queries for the reply packet.
@@ -49,9 +48,9 @@ class DaemonCore {
   bool faulted() const { return faulted_; }
 
  private:
-  int32_t IssueStop();
-  int32_t IssueVelocity(float vx, float vy, float omega);
-  void LogLocoState();
+  int32_t IssueStop(const char *reason);
+  int32_t IssueVelocity(float vx, float vy, float omega,
+                        uint8_t command_sequence, uint64_t now_ns);
 
   DaemonConfig config_;
   ILocoClient &client_;
@@ -65,6 +64,9 @@ class DaemonCore {
   // Last time a valid command was successfully processed.
   uint64_t last_arm_time_ns_{0};
   uint64_t last_motion_time_ns_{0};
+  uint64_t velocity_calls_{0};
+  uint64_t last_velocity_time_ns_{0};
+  uint64_t last_velocity_log_ns_{0};
 
   // Sequence counter for the daemon's own reply stream.
   uint8_t sequence_{0};

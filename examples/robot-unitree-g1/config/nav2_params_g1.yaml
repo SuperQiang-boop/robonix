@@ -1,25 +1,32 @@
 # G1 Nav2 configuration.
 # Unitree G1 humanoid: ~1.2 m tall, narrow foot-based footprint (~0.25 x 0.20 m).
-# Bipedal locomotion via SDK2 LocoClient — holonomic-capable (can side-step)
-# but side-step speed is limited. max_linear_x: 1.0 m/s, max_angular: 2.0 rad/s.
+# BotBrain-style SmacPlanner2D + MPPI DiffDrive: navigation does not side-step.
+# This profile starts with a conservative
+# max_linear_x of 0.35 m/s and max_angular of 0.60 rad/s.
 
 planner_server:
   ros__parameters:
     use_sim_time: false
-    expected_planner_frequency: 10.0
+    expected_planner_frequency: 5.0
     planner_plugins: ["GridBased"]
     GridBased:
-      plugin: "nav2_navfn_planner/NavfnPlanner"
-      tolerance: 0.5
+      plugin: "nav2_smac_planner/SmacPlanner2D"
+      tolerance: 0.20
       allow_unknown: false
+      downsample_costmap: false
+      max_iterations: 500000
+      cost_travel_multiplier: 2.0
 
 controller_server:
   ros__parameters:
     use_sim_time: false
     odom_topic: "__ROBONIX_ODOM_TOPIC__"
     speed_limit_topic: "/speed_limit"
-    controller_frequency: 10.0
-    failure_tolerance: 5.0
+    controller_frequency: 20.0
+    min_x_velocity_threshold: 0.001
+    min_y_velocity_threshold: 0.001
+    min_theta_velocity_threshold: 0.001
+    failure_tolerance: 1.0
     progress_checker_plugin: "progress_checker"
     goal_checker_plugins: ["general_goal_checker"]
     controller_plugins: ["FollowPath"]
@@ -30,62 +37,114 @@ controller_server:
       movement_time_allowance: 30.0
 
     general_goal_checker:
-      plugin: "nav2_controller::SimpleGoalChecker"
+      plugin: "robonix_nav2_terminal::SettledGoalChecker"
       # G1 step length ~0.3 m; generous terminal tolerance for bipedal arrival.
-      xy_goal_tolerance: 0.15
+      xy_goal_tolerance: 0.20
       yaw_goal_tolerance: 0.25
-      stateful: true
+      trans_stopped_velocity: 0.04
+      rot_stopped_velocity: 0.06
+      settle_time: 0.40
 
     FollowPath:
-      plugin: "nav2_rotation_shim_controller::RotationShimController"
-
-      # RotationShim parameters
+      plugin: "robonix_nav2_terminal::PersistentRotationShim"
+      primary_controller: "nav2_mppi_controller::MPPIController"
       rotate_to_goal_heading: true
-      rotate_to_heading_angular_vel: 1.0
-      max_angular_accel: 2.0
-      angular_dist_threshold: 0.52
-      angular_disengage_threshold: 0.17
+      angular_dist_threshold: 0.60
+      angular_disengage_threshold: 0.25
+      forward_sampling_distance: 0.40
+      rotate_to_heading_angular_vel: 0.30
+      max_angular_accel: 0.60
       simulate_ahead_time: 1.0
-
-      # DWB embedded controller — G1 bipedal envelope.
-      primary_controller: "dwb_core::DWBLocalPlanner"
-      debug_trajectory_details: True
-      min_vel_x: 0.0
-      min_vel_y: -0.5
-      max_vel_x: 1.0
-      max_vel_y: 0.5
-      max_vel_theta: 2.0
-      min_speed_xy: 0.01
-      max_speed_xy: 1.0
-      min_speed_theta: 0.1
-      acc_lim_x: 1.5
-      acc_lim_y: 1.5
-      acc_lim_theta: 3.0
-      decel_lim_x: -1.5
-      decel_lim_y: -1.5
-      decel_lim_theta: -3.0
-      vx_samples: 20
-      vy_samples: 10
-      vtheta_samples: 60
-      sim_time: 2.5
-      linear_granularity: 0.05
-      angular_granularity: 0.05
-      transform_tolerance: 0.3
-      xy_goal_tolerance: 0.15
-      yaw_goal_tolerance: 0.25
-      trans_stopped_velocity: 0.05
-      short_circuit_trajectory_evaluation: True
-      stateful: True
-      critics: ["RotateToGoal", "Oscillation", "BaseObstacle", "GoalAlign",
-                "PathAlign", "PathDist", "GoalDist"]
-      BaseObstacle.scale: 0.02
-      PathAlign.scale: 1.0
-      GoalAlign.scale: 0.3
-      PathDist.scale: 0.5
-      GoalDist.scale: 2.0
-      RotateToGoal.scale: 0.5
-      RotateToGoal.slowing_factor: 2.0
-      RotateToGoal.lookahead_time: 0.5
+      closed_loop: false
+      terminal_settle_time: 0.40
+      terminal_stopped_linear_velocity: 0.04
+      terminal_stopped_angular_velocity: 0.06
+      terminal_yaw_target_tolerance: 0.12
+      terminal_xy_exit_tolerance: 0.40
+      terminal_timeout: 15.0
+      terminal_correction_trigger: 0.28
+      terminal_correction_xy_tolerance: 0.10
+      terminal_correction_max_speed: 0.20
+      terminal_correction_linear_accel: 0.40
+      terminal_correction_max_distance: 0.30
+      terminal_correction_timeout: 6.0
+      time_steps: 56
+      model_dt: 0.05
+      batch_size: 1000
+      iteration_count: 1
+      motion_model: "DiffDrive"
+      vx_max: 0.35
+      vx_min: 0.0
+      vy_max: 0.0
+      wz_max: 0.60
+      vx_std: 0.15
+      vy_std: 0.0
+      wz_std: 0.25
+      prune_distance: 1.0
+      transform_tolerance: 0.20
+      temperature: 0.3
+      gamma: 0.015
+      visualize: false
+      regenerate_noises: true
+      critics: ["ConstraintCritic", "CostCritic", "GoalCritic", "GoalAngleCritic",
+                "PathAlignCritic", "PathFollowCritic", "PathAngleCritic", "PreferForwardCritic",
+                "VelocityDeadbandCritic"]
+      VelocityDeadbandCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 35.0
+        deadband_velocities: [0.20, 0.0, 0.0]
+      ConstraintCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 4.0
+      CostCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 3.81
+        consider_footprint: true
+        critical_cost: 300.0
+        collision_cost: 1000000.0
+        near_goal_distance: 0.5
+        trajectory_point_step: 2
+      GoalCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 5.0
+        threshold_to_consider: 0.5
+      GoalAngleCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 3.0
+        threshold_to_consider: 0.5
+      PathAlignCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 14.0
+        max_path_occupancy_ratio: 0.05
+        trajectory_point_step: 4
+        threshold_to_consider: 0.5
+        offset_from_furthest: 10
+        use_path_orientations: false
+      PathFollowCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 5.0
+        offset_from_furthest: 6
+        threshold_to_consider: 0.5
+      PathAngleCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 2.0
+        offset_from_furthest: 4
+        threshold_to_consider: 0.5
+        max_angle_to_furthest: 1.0
+        mode: 0
+      PreferForwardCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 5.0
+        threshold_to_consider: 0.5
 
 bt_navigator:
   ros__parameters:
@@ -107,6 +166,7 @@ local_costmap:
       always_send_full_costmap: true
       global_frame: odom
       robot_base_frame: base_footprint
+      transform_tolerance: 0.20
       use_sim_time: false
       rolling_window: true
       width: 5
@@ -123,7 +183,6 @@ local_costmap:
         observation_sources: scan
         scan:
           topic: "__ROBONIX_SCAN_TOPIC__"
-          max_obstacle_height: 2.0
           marking: true
           clearing: true
           obstacle_range: 5.0
@@ -150,8 +209,8 @@ global_costmap:
       robot_base_frame: base_footprint
       footprint: "[[0.20, 0.08], [0.20, -0.08], [-0.20, -0.08], [-0.20, 0.08]]"
       footprint_padding: 0.05
-      update_frequency: 10.0
-      publish_frequency: 10.0
+      update_frequency: 5.0
+      publish_frequency: 2.0
       resolution: 0.05
       rolling_window: false
       track_unknown_space: true
@@ -170,7 +229,6 @@ global_costmap:
         observation_sources: scan
         scan:
           topic: "__ROBONIX_SCAN_TOPIC__"
-          max_obstacle_height: 2.0
           marking: true
           clearing: true
           obstacle_range: 8.0

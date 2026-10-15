@@ -22,7 +22,7 @@ bool UnitreeLocoClient::Initialize(const std::string &network_interface,
     std::cerr << "[g1-sdk] LocoClient create/init\n";
     client_ = new unitree::robot::g1::LocoClient();
     static_cast<unitree::robot::g1::LocoClient *>(client_)->Init();
-    static_cast<unitree::robot::g1::LocoClient *>(client_)->SetTimeout(10.0F);
+    static_cast<unitree::robot::g1::LocoClient *>(client_)->SetTimeout(0.10F);
 
     std::cerr << "[g1-sdk] SDK2 initialized\n";
     return true;

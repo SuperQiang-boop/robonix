@@ -19,8 +19,11 @@
 #include <unistd.h>
 
 #include "g1_chassis/daemon_core.hpp"
+#include "g1_chassis/command_stream.hpp"
 #include "g1_chassis/protocol.hpp"
+#include "g1_chassis/state_forwarder.hpp"
 #include "g1_chassis/unitree_loco_client.hpp"
+#include "g1_chassis/unitree_state_reader.hpp"
 
 namespace {
 
@@ -33,6 +36,7 @@ std::atomic<bool> g_shutdown_requested{false};
 struct Options {
   std::string socket_path;
   std::string network_interface;
+  std::string state_topic;
   bool allow_motion{false};
   std::string acknowledgement;
   uint64_t watchdog_ms{kWatchdogMs};
@@ -55,6 +59,21 @@ std::uint64_t MonotonicNowNs() {
 
 void SignalHandler(int) { g_shutdown_requested.store(true); }
 
+/** Read and log the operator-selected locomotion mode before accepting motion commands. */
+void LogLocoState(g1_chassis::ILocoClient &client) {
+  std::int32_t fsm_id = -1;
+  std::int32_t fsm_mode = -1;
+  std::int32_t balance_mode = -1;
+  const auto fsm_id_result = client.GetFsmId(&fsm_id);
+  const auto fsm_mode_result = client.GetFsmMode(&fsm_mode);
+  const auto balance_mode_result = client.GetBalanceMode(&balance_mode);
+  std::cerr << "[g1-daemon] locomotion state: fsm_id=" << fsm_id
+            << " (rpc=" << fsm_id_result << "), fsm_mode=" << fsm_mode
+            << " (rpc=" << fsm_mode_result << "), balance_mode="
+            << balance_mode << " (rpc=" << balance_mode_result << ")\n";
+}
+
+/** Describe the motion gate and independent read-only state subscription. */
 void PrintUsage(const char *program) {
   std::cerr
       << "Usage: " << program
@@ -62,9 +81,10 @@ void PrintUsage(const char *program) {
          " [--allow-motion --interface IFACE"
          " --motion-ack G1_PHYSICAL_MOTION_APPROVED]"
          " --max-vx MAX --max-vy MAX --max-wz MAX"
-         " --max-motion-ms MAX_MS]\n";
+         " --max-motion-ms MAX_MS] [--state-topic rt/odommodestate --interface IFACE]\n";
 }
 
+/** Validate daemon arguments before initializing DDS or opening the IPC socket. */
 Options ParseOptions(int argc, char **argv) {
   Options options;
   for (int index = 1; index < argc; ++index) {
@@ -98,6 +118,8 @@ Options ParseOptions(int argc, char **argv) {
       options.socket_path = require_value("--socket");
     } else if (argument == "--interface") {
       options.network_interface = require_value("--interface");
+    } else if (argument == "--state-topic") {
+      options.state_topic = require_value("--state-topic");
     } else if (argument == "--watchdog-ms") {
       options.watchdog_ms = require_uint64("--watchdog-ms");
     } else if (argument == "--max-vx") {
@@ -240,7 +262,9 @@ void SendReply(int descriptor, const g1_chassis::ReplyPacket &reply) {
   }
 }
 
-int Run(const Options &options, g1_chassis::ILocoClient &client) {
+/** Run guarded command IPC and bounded latest-state delivery independently of motion permission. */
+int Run(const Options &options, g1_chassis::ILocoClient &client,
+        g1_chassis::UnitreeStateReader *state_reader) {
   g1_chassis::DaemonConfig daemon_config;
   daemon_config.allow_motion = options.allow_motion;
   daemon_config.watchdog_ns = options.watchdog_ms * 1'000'000ULL;
@@ -254,12 +278,14 @@ int Run(const Options &options, g1_chassis::ILocoClient &client) {
   const std::filesystem::path socket_path(options.socket_path);
   const int server = OpenServerSocket(socket_path);
   int peer = -1;
+  std::unique_ptr<g1_chassis::StateForwarder> state_forwarder;
   std::cout << "G1 SDK daemon ready at " << socket_path << "; motion="
             << (options.allow_motion ? "ENABLED (still disarmed)"
                                       : "DISABLED")
             << "\n";
 
   const auto cleanup = [&]() {
+    state_forwarder.reset();
     core.OnDisconnect();
     constexpr int kShutdownStopRetries = 3;
     for (int attempt = 0;
@@ -285,7 +311,7 @@ int Run(const Options &options, g1_chassis::ILocoClient &client) {
           {peer, static_cast<short>(POLLIN | POLLHUP | POLLERR), 0},
       };
       const nfds_t count = peer >= 0 ? 2U : 1U;
-      const int poll_result = ::poll(descriptors, count, 20);
+      const int poll_result = ::poll(descriptors, count, 10);
       if (poll_result < 0 && errno != EINTR) {
         throw std::runtime_error("poll() failed");
       }
@@ -298,23 +324,32 @@ int Run(const Options &options, g1_chassis::ILocoClient &client) {
             ::close(candidate);
           } else {
             peer = candidate;
+            if (state_reader) {
+              state_forwarder = std::make_unique<g1_chassis::StateForwarder>(
+                  peer, [state_reader](g1_chassis::StatePacket *state) {
+                    return state_reader->Latest(state);
+                  });
+            }
           }
         }
       }
 
       if (peer >= 0 &&
-          (descriptors[1].revents &
-           static_cast<short>(POLLHUP | POLLERR)) != 0) {
+          ((descriptors[1].revents &
+            static_cast<short>(POLLHUP | POLLERR)) != 0 ||
+           (state_forwarder && state_forwarder->failed()))) {
+        state_forwarder.reset();
         core.OnDisconnect();
         ::close(peer);
         peer = -1;
       }
 
       if (peer >= 0 && (descriptors[1].revents & POLLIN) != 0) {
-        g1_chassis::CommandPacket command{};
-        const ssize_t received =
-            ::recv(peer, &command, sizeof(command), MSG_DONTWAIT | MSG_TRUNC);
+        const auto result = g1_chassis::ReadLatestCommand(peer);
+        const auto &command = result.command;
+        const ssize_t received = result.size;
         if (received == 0) {
+          state_forwarder.reset();
           core.OnDisconnect();
           ::close(peer);
           peer = -1;
@@ -326,7 +361,8 @@ int Run(const Options &options, g1_chassis::ILocoClient &client) {
                         command.sequence, g1_chassis::ReplyCode::kMalformed,
                         core.armed(), core.faulted());
           SendReply(peer, reply);
-        } else if (errno != EAGAIN && errno != EWOULDBLOCK) {
+        } else if (result.error != EAGAIN && result.error != EWOULDBLOCK) {
+          state_forwarder.reset();
           core.OnDisconnect();
           ::close(peer);
           peer = -1;
@@ -348,6 +384,7 @@ int Run(const Options &options, g1_chassis::ILocoClient &client) {
 
 }  // namespace
 
+/** Start state reception independently of motion; report initialization failures. */
 int main(int argc, char **argv) {
   try {
     const Options options = ParseOptions(argc, argv);
@@ -360,10 +397,17 @@ int main(int argc, char **argv) {
       if (!client.Initialize(options.network_interface, &error)) {
         throw std::runtime_error("SDK2 init failed: " + error);
       }
+      LogLocoState(client);
     } else {
-      std::cout << "READ-ONLY/NO-MOTION MODE: SDK2 not initialized.\n";
+      std::cout << "READ-ONLY/NO-MOTION MODE: motion client not initialized.\n";
     }
-    return Run(options, client);
+    std::unique_ptr<g1_chassis::UnitreeStateReader> state_reader;
+    if (!options.state_topic.empty()) {
+      if (options.network_interface.empty()) throw std::runtime_error("state subscription requires --interface");
+      state_reader = std::make_unique<g1_chassis::UnitreeStateReader>();
+      state_reader->Start(options.network_interface, options.state_topic, !options.allow_motion);
+    }
+    return Run(options, client, state_reader.get());
   } catch (const std::exception &exception) {
     std::cerr << "g1_loco_daemon: " << exception.what() << "\n";
     PrintUsage(argv[0]);

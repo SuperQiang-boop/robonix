@@ -59,6 +59,16 @@ public:
 
   uint64_t value() const { return epoch_.load(std::memory_order_acquire); }
 
+  std::string uuid() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return active_uuid_;
+  }
+
+  std::pair<uint64_t, std::string> snapshot() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return {epoch_.load(std::memory_order_acquire), active_uuid_};
+  }
+
 private:
   static bool newerThan(const action_msgs::msg::GoalStatus &candidate,
                         const action_msgs::msg::GoalStatus &current) {

@@ -1,6 +1,7 @@
 #include <cstring>
 #include <cerrno>
 #include <chrono>
+#include <cmath>
 #include <fcntl.h>
 #include <filesystem>
 #include <iostream>
@@ -21,6 +22,7 @@
 #include "tf2_ros/transform_broadcaster.h"
 
 #include "g1_chassis/protocol.hpp"
+#include "g1_chassis/odometry.hpp"
 using g1_chassis::CommandPacket;
 using g1_chassis::PacketType;
 
@@ -28,6 +30,7 @@ namespace g1_chassis_adapter {
 
 class AdapterNode : public rclcpp::Node {
  public:
+  /** Connect to the daemon and publish measured planar state at the configured rate. */
   AdapterNode() : Node("g1_chassis_adapter") {
     // Resolve IPC socket path from environment.
     const char *socket_env = std::getenv("G1_IPC_SOCKET");
@@ -91,6 +94,11 @@ class AdapterNode : public rclcpp::Node {
     odom_frame_ = declare_parameter("odom_frame", "odom");
     base_frame_ = declare_parameter("base_frame", "base_footprint");
     joint_state_topic_ = declare_parameter("joint_state_topic", "/joint_states");
+    const auto publish_rate = declare_parameter("odom_publish_rate_hz", 50.0);
+    state_timeout_s_ = declare_parameter("state_timeout_s", 0.15);
+    if (!std::isfinite(publish_rate) || publish_rate < 10.0 || publish_rate > 100.0 ||
+        !std::isfinite(state_timeout_s_) || state_timeout_s_ < 0.05 || state_timeout_s_ > 0.30)
+      throw std::runtime_error("invalid odom_publish_rate_hz or state_timeout_s");
 
     // Twist subscriber.
     twist_sub_ = create_subscription<geometry_msgs::msg::Twist>(
@@ -99,8 +107,6 @@ class AdapterNode : public rclcpp::Node {
           OnTwist(msg);
         });
 
-    // Publish a dummy odometry (the real odom comes from the chassis primitive
-    // via topic declaration). We just need to confirm the graph.
     odom_pub_ = create_publisher<nav_msgs::msg::Odometry>(odom_topic_, 10);
     joint_state_pub_ =
         create_publisher<sensor_msgs::msg::JointState>(joint_state_topic_, 10);
@@ -110,7 +116,7 @@ class AdapterNode : public rclcpp::Node {
 
     // Periodic timer to keep the ROS graph alive and forward stale-free cmd_vel.
     timer_ = create_wall_timer(
-        std::chrono::milliseconds(50),
+        std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::duration<double>(1.0 / publish_rate)),
         [this]() { TimerTick(); });
 
     sequence_ = 0;
@@ -138,15 +144,37 @@ class AdapterNode : public rclcpp::Node {
     last_twist_time_ = std::chrono::steady_clock::now();
   }
 
+  /** Publish only new valid state, and stop command refresh when state or commands expire. */
   void TimerTick() {
     DrainReplies();
+    PublishNeutralJointState(get_clock()->now());
+    const auto now_ns = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count());
+    const bool fresh = state_received_ && now_ns >= latest_state_.received_monotonic_ns &&
+        (now_ns - latest_state_.received_monotonic_ns) / 1e9 <= state_timeout_s_;
+    if (fresh && latest_state_.sequence != processed_sequence_) {
+      processed_sequence_ = latest_state_.sequence;
+      std::string reason;
+      const auto wall_now = static_cast<uint64_t>(get_clock()->now().nanoseconds());
+      const bool timestamp_valid = latest_state_.received_unix_ns > last_stamp_ns_ &&
+          latest_state_.received_unix_ns <= wall_now &&
+          wall_now - latest_state_.received_unix_ns <= static_cast<uint64_t>(state_timeout_s_ * 1e9);
+      if (!timestamp_valid) reason = "non-increasing or stale local reception timestamp";
+      odometry_valid_ = timestamp_valid &&
+          projector_.Update(latest_state_, &reason);
+      if (odometry_valid_) PublishOdometry();
+      else RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), 2000, "SDK odometry rejected: %s", reason.c_str());
+    }
+    if (!fresh || !odometry_valid_) {
+      RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 2000, "No fresh valid G1 odometry; TF publication and motion refresh inhibited");
+    }
 
     // Keep streaming the latest command through short ROS scheduling gaps.
     // Stop refreshing after 250 ms so the daemon's 300 ms watchdog still
     // faults safely when the navigation publisher actually disappears.
     const auto command_age =
         std::chrono::steady_clock::now() - last_twist_time_;
-    if (last_twist_received_ &&
+    if (fresh && odometry_valid_ && last_twist_received_ &&
         command_age < std::chrono::milliseconds(250)) {
       send_command(last_twist_);
     } else if (last_twist_received_ && !stale_stop_sent_) {
@@ -159,35 +187,43 @@ class AdapterNode : public rclcpp::Node {
       stale_stop_sent_ = true;
     }
 
-    // Publish a stationary odometry heartbeat so the ROS2 graph is visible.
-    // The chassis primitive declares /odom with atlas; the real odometry
-    // stream will be provided by a future integration.
-    auto odom = std::make_unique<nav_msgs::msg::Odometry>();
-    const auto now = get_clock()->now();
-    PublishNeutralJointState(now);
+  }
 
-    odom->header.stamp = now;
+  /** Publish planar ground-projected pose; velocity comes from pose differences in the child frame. */
+  void PublishOdometry() {
+    const auto &pose = projector_.pose();
+    auto odom = std::make_unique<nav_msgs::msg::Odometry>();
+    const auto stamp = rclcpp::Time(static_cast<int64_t>(latest_state_.received_unix_ns), get_clock()->get_clock_type());
+    odom->header.stamp = stamp;
     odom->header.frame_id = odom_frame_;
     odom->child_frame_id = base_frame_;
-    odom->pose.pose.position.x = 0.0;
-    odom->pose.pose.position.y = 0.0;
-    odom->pose.pose.position.z = 0.0;
-    odom->pose.pose.orientation.w = 1.0;
-    odom->twist.twist.linear.x = 0.0;
-    odom->twist.twist.linear.y = 0.0;
-    odom->twist.twist.linear.z = 0.0;
-    odom->twist.twist.angular.x = 0.0;
-    odom->twist.twist.angular.y = 0.0;
-    odom->twist.twist.angular.z = 0.0;
+    odom->pose.pose.position.x = pose.x;
+    odom->pose.pose.position.y = pose.y;
+    odom->pose.pose.orientation.z = std::sin(pose.yaw / 2);
+    odom->pose.pose.orientation.w = std::cos(pose.yaw / 2);
+    odom->twist.twist.linear.x = pose.vx;
+    odom->twist.twist.linear.y = pose.vy;
+    odom->twist.twist.angular.z = pose.wz;
+    odom->pose.covariance[0] = odom->pose.covariance[7] = 0.01;
+    odom->pose.covariance[35] = 0.02;
+    odom->twist.covariance[0] = odom->twist.covariance[7] = 0.04;
+    odom->twist.covariance[35] = 0.04;
+    for (const auto index : {14, 21, 28}) {
+      odom->pose.covariance[index] = 1e6;
+      odom->twist.covariance[index] = 1e6;
+    }
     odom_pub_->publish(std::move(odom));
 
-    // Broadcast odom -> base_footprint TF transform.
     geometry_msgs::msg::TransformStamped tf;
-    tf.header.stamp = now;
+    tf.header.stamp = stamp;
     tf.header.frame_id = odom_frame_;
     tf.child_frame_id = base_frame_;
-    tf.transform.rotation.w = 1.0;
+    tf.transform.translation.x = pose.x;
+    tf.transform.translation.y = pose.y;
+    tf.transform.rotation.z = std::sin(pose.yaw / 2);
+    tf.transform.rotation.w = std::cos(pose.yaw / 2);
     if (publish_odom_tf_) tf_broadcaster_->sendTransform(tf);
+    last_stamp_ns_ = latest_state_.received_unix_ns;
   }
 
   // Publish the G1 29-DOF neutral visualization pose while SDK joint states
@@ -240,11 +276,12 @@ class AdapterNode : public rclcpp::Node {
     }
   }
 
+  /** Drain bounded mixed reply/state packets; ignore truncated or incompatible IPC data. */
   void DrainReplies() {
-    g1_chassis::ReplyPacket reply{};
-    for (;;) {
+    for (int attempt = 0; attempt < 256; ++attempt) {
+      uint8_t packet[sizeof(g1_chassis::StatePacket)]{};
       const ssize_t received =
-          ::recv(socket_fd_, &reply, sizeof(reply), MSG_DONTWAIT | MSG_TRUNC);
+          ::recv(socket_fd_, packet, sizeof(packet), MSG_DONTWAIT | MSG_TRUNC);
       if (received < 0) {
         if (errno == EAGAIN || errno == EWOULDBLOCK) return;
         if (errno != EINTR) {
@@ -253,9 +290,24 @@ class AdapterNode : public rclcpp::Node {
         continue;
       }
       if (received == 0) return;
-      if (received != static_cast<ssize_t>(sizeof(reply))) {
+      if (received == static_cast<ssize_t>(sizeof(g1_chassis::StatePacket)) &&
+          packet[0] == static_cast<uint8_t>(PacketType::kState)) {
+        g1_chassis::StatePacket state;
+        std::memcpy(&state, packet, sizeof(state));
+        if (state.version == 1 && state.sequence > latest_state_.sequence) {
+          latest_state_ = state;
+          state_received_ = true;
+        }
+        continue;
+      }
+      g1_chassis::ReplyPacket reply{};
+      if (received != static_cast<ssize_t>(sizeof(reply)) ||
+          packet[0] != static_cast<uint8_t>(PacketType::kReply)) {
         RCLCPP_WARN(this->get_logger(), "discarding malformed daemon reply");
-      } else if (reply.code !=
+        continue;
+      }
+      std::memcpy(&reply, packet, sizeof(reply));
+      if (reply.code !=
                  static_cast<uint8_t>(g1_chassis::ReplyCode::kOk)) {
         RCLCPP_ERROR(this->get_logger(),
                      "daemon rejected cmd_vel: code=%u armed=%u faulted=%u",
@@ -273,6 +325,13 @@ class AdapterNode : public rclcpp::Node {
   bool publish_odom_tf_{true};
   std::string odom_frame_{"odom"};
   std::string base_frame_{"base_link"};
+  g1_chassis::StatePacket latest_state_;
+  g1_chassis::OdometryProjector projector_;
+  double state_timeout_s_{0.15};
+  bool state_received_{false};
+  bool odometry_valid_{false};
+  uint64_t processed_sequence_{0};
+  uint64_t last_stamp_ns_{0};
 
   rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr twist_sub_;
   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr odom_pub_;

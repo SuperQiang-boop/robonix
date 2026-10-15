@@ -44,6 +44,17 @@ The VLM-facing RTDL envelope rules (grammar, example, constraints) live in `rtdl
 
 Pilot's standing system prompt is built in `src/planner.rs`; it includes the runtime operating principles, including the rule that failed required capability calls stop autonomous physical task progress until the user confirms the next step.
 
+For Scene-resolved navigation, Pilot computes the planar quaternion from the
+successful `goal_near`/`goal_room` result in code before publishing or dispatching
+the Plan. An LLM's quaternion is replaced only when the map-frame XY matches a
+Scene goal dispatched in the same user interaction (within 0.1 mm). Independent
+positions, other frames and direct navigation clients are unchanged. Results
+are matched by call id, provider and contract; a user steer clears both pending
+resolutions and cached poses. Matching resolutions older than 120 seconds must
+be requested again. Resolution and dependent navigation in the same tree are
+rejected. This does not grant arrival success or bypass Nav2 collision checks.
+Offline regression: `cargo test -p robonix-pilot navigation_goal`.
+
 Atlas discovery still runs before every planning round. When its LLM-visible provider, contract, description, and schema fields are unchanged, Pilot reuses the rendered capability catalog. The startup-cached Soma YAML is serialized as compact JSON while the authoritative URDF remains unchanged.
 
 Every request writes a `[pilot/prompt]` JSON log with text bytes and four-byte token estimates for the standing context, RTDL protocol, capability catalog, task, in-flight trees, Executor state, live embodiment, environment, history, and correction. Pilot supplies a random per-turn `prompt_cache_key`, with stable sections ordered before live state, so supporting providers can reuse the longest unchanged prefix without receiving a session identifier. Compatible providers also report exact prompt/completion tokens and cached prompt tokens through streaming usage; those totals are logged separately under the same prefix. The fake VLM's reported usage is explicitly a deterministic four-byte estimate, not a production tokenizer result. A provider that rejects a named optional cache/usage field with HTTP 400 or 422 is retried once without those fields; unrelated client errors are returned unchanged.

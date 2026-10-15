@@ -88,6 +88,66 @@ goal, or resubmit it.
 
 ## Runtime
 
+The final velocity guard also bounds terminal wandering. After first entering
+`guard_terminal_xy_m`, it retains a `guard_terminal_timeout_s` deadline even if
+the controller is translating or replanning. Moving farther than twice that XY
+window, or exceeding the deadline, latches zero output and requests cancellation
+of the active goal. This is a failure stop, never an arrival-success shortcut;
+only a new goal UUID resets the latch. Stationary-rotation limits still apply.
+
+The G1 profile additionally uses `PersistentRotationShim` and
+`SettledGoalChecker` from `terminal_controller/`. The shim holds zero until
+measured speed remains below 0.04 m/s and 0.06 rad/s for 0.40 s, then owns
+collision-checked zero-linear terminal turning across same-goal replans,
+including when position drifts outside the 0.20 m arrival radius. It never
+falls back to MPPI during terminal rotation. It aims for 0.12 rad before
+commanding a stop; the arrival checker independently requires current XY/yaw
+within 0.20 m/0.25 rad and continuously stopped measurements for 0.40 s.
+If position remains outside arrival tolerance after the turn settles, or exceeds
+0.28 m while turning, it admits one position correction per navigation UUID:
+measured stop, face the goal bearing, measured stop, then collision-checked
+forward steering toward an inner 0.10 m window. Limits are 0.20 m/s (also honoring
+external speed caps), 0.40 m/s², 0.30 m commanded travel/net displacement and
+6 seconds including alignment/stops. It stops again before the final heading.
+Same-goal replans do not reset this attempt or budget. A second correction,
+collision or divergent bearing latches zero. The original
+0.40 m outer boundary, 15-second overall deadline and strict arrival tolerances
+remain unchanged; no infinite correction loop or false success is introduced.
+If command travel/time is exhausted but current XY is already within the
+original arrival radius, stop correction and resume final heading rather than
+requiring the preferred inner 0.10 m window. The strict goal checker must still
+observe simultaneous XY/yaw/standstill tolerance for the full dwell; drifting
+out again does not grant a second correction. Measured displacement exhaustion
+and budget exhaustion outside the arrival radius still fail closed. Failure
+reports distinguish time, commanded travel and measured displacement limits.
+
+The controller publishes UUID-scoped phase/failure diagnostics on
+`/robonix/navigation/terminal`. The velocity guard pauses only final-goal-yaw
+progress checks during correction, never outer XY/time or global spin limits.
+Before requesting cancellation it atomically writes `guard-<uuid>.json` into
+the configured `trajectory_log_dir` (default `rbnx-build/data/trajectories`).
+The result callback reads only the matching UUID: safety stops become `FAILED`
+with `safety_stop` and actual XY/yaw errors, while explicit user cancellation
+remains `CANCELED`. Normal success still requires Nav2's real successful result.
+This preserves the failure cause for Pilot rather than masking an unfinished
+goal; Pilot may still fail if bounded recovery cannot complete navigation.
+Offline result/UUID regression: `PYTHONPATH=. python3 -m unittest test_guard_failure`.
+The deployment's `packages/g1_chassis/tests/nav2_guard_smoke.py` exercises the
+production ROS guard with a synthetic cancellation service in a network-isolated
+container (`ROS_DOMAIN_ID=217`, `ROS_LOCALHOST_ONLY=1`); it checks exact UUIDs,
+cached reports, persist-before-cancel ordering and zero output after a trip.
+
+Rebuild the navigation image after changing these C++ plugins using
+`RBNX_PACKAGE_ROOT="$PWD" bash scripts/build.sh` from this service directory.
+The Docker build context is the service root, with runtime data excluded by
+`.dockerignore`; the image installs the plugins under
+`/opt/robonix_nav2_terminal`, sourced by the entrypoint. Native builds use
+`rbnx-build/terminal_controller/install`, sourced by `scripts/start_native.sh`,
+and also require `ros-humble-nav2-rotation-shim-controller`.
+The isolated G1 regression in the deployment README tests drift plus replans,
+strict stopped arrival, both turn directions, and ordinary MPPI transit without
+connecting a chassis. It does not establish physical in-place turning accuracy.
+
 At `Driver(CMD_INIT)`, the wrapper:
 
 1. resolves the selected Atlas providers;

@@ -1,5 +1,5 @@
 ---
-description: Guarded Unitree G1 chassis topics with no-motion default and stationary odometry heartbeat.
+description: Guarded Unitree G1 chassis topics with measured planar SDK odometry and no-motion default.
 ---
 
 # Unitree G1 chassis capability
@@ -21,17 +21,21 @@ source of velocity commands.
 
 The provider starts a ROS 2 adapter and an SDK2 daemon connected through a
 same-user Unix `SOCK_SEQPACKET` socket. The adapter subscribes to the
-configured velocity input topic, publishes `/odom`, publishes neutral waist
-joint states, and broadcasts `odom -> base_link` so the example graph has a
-stable base frame for mapping and navigation.
+configured velocity input topic, publishes measured `/odom`, publishes all 29
+neutral joint placeholders, and broadcasts `odom -> base_footprint`. The URDF
+owns `base_footprint -> base_link` at nominal standing pelvis height.
 
-The current `/odom` stream is a stationary heartbeat. It is useful for keeping
-the ROS graph connected while real G1 odometry is not integrated, but it must
-not be treated as measured chassis motion. A physical navigation deployment
-needs a reviewed odometry source before motion is enabled.
+The daemon subscribes to `rt/odommodestate` independently of its motion gate.
+The adapter projects measured position and quaternion onto planar odometry at
+50 Hz. Twist is derived in the child frame from consecutive pose differences.
+Timestamps represent local DDS reception, not acquisition. Only fresh, new,
+valid samples publish; there is no synthetic odometry heartbeat. State older
+than 150 ms inhibits command refresh and TF; pose discontinuities above 0.30 m
+or 0.50 rad latch a fault until restart. Neutral joints remain visualization
+data and must not be treated as measured posture.
 
-The committed Robonix startup path launches the SDK daemon without
-`--allow-motion`, so SDK2 motion commands are disabled by default. The daemon
+The provider defaults to motion disabled; deployment `allow_motion` or
+`G1_ALLOW_MOTION` can explicitly enable the gate. The daemon
 can parse a motion-capable command line only when `--allow-motion`,
 `--interface`, and the exact `--motion-ack G1_PHYSICAL_MOTION_APPROVED` value
 are supplied together, with the audited `300 ms` watchdog.
@@ -40,8 +44,9 @@ are supplied together, with the audited `300 ms` watchdog.
 
 Motion-disabled operation does not initialize the Unitree SDK2 client and
 therefore cannot issue `SetVelocity` or `StopMove` through SDK2. It still
-starts the IPC daemon and ROS adapter so the package can register its chassis
-contracts and publish the stationary graph heartbeat.
+starts a receive-only SDK state subscriber and ROS adapter. Chassis contracts
+are declared only after a real odometry message; a 10 s startup timeout cleans
+up the processes and returns Deferred.
 
 When motion is explicitly enabled outside the current default startup path, the
 daemon applies the following local checks:

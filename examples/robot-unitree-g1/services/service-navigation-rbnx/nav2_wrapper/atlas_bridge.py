@@ -42,6 +42,7 @@ from pathlib import Path
 import grpc
 
 from nav2_wrapper.diagnostics import classify_nav2_line, format_result_detail, summarize_blockage
+from nav2_wrapper.guard_failure import classify_guard_result, read_guard_failure
 from nav2_wrapper.configuration import (
     resolve_bt_xml_file,
     resolve_deployment_file,
@@ -129,6 +130,7 @@ nav = Service(id=CAP_ID, namespace=NAMESPACE)
 _state_lock = threading.Lock()
 _cap_id: str = CAP_ID
 _pkg_root: Path = Path(__file__).resolve().parent.parent
+_guard_trace_dir = _pkg_root / "rbnx-build" / "data" / "trajectories"
 _nav2_proc: subprocess.Popen | None = None
 _velocity_guard_proc: subprocess.Popen | None = None
 _scan_projector_proc: subprocess.Popen | None = None
@@ -582,12 +584,13 @@ def _materialize_guarded_launch() -> str:
 
 
 def _spawn_velocity_guard(cfg: dict) -> None:
-    global _velocity_guard_proc
+    global _velocity_guard_proc, _guard_trace_dir
     output_topic = resolve_velocity_output_topic(cfg)
     settings = _speed_settings
     if settings is None:
         raise RuntimeError("dynamic speed settings are not initialized")
     env = os.environ.copy()
+    _guard_trace_dir = Path(cfg.get("trajectory_log_dir", _pkg_root / "rbnx-build" / "data" / "trajectories"))
     env.update({
         # Always pass a validated, fully-qualified topic explicitly.  This
         # prevents the child from inheriting an empty/relative value and lets
@@ -601,9 +604,7 @@ def _spawn_velocity_guard(cfg: dict) -> None:
             settings.default_percentage
         ),
         "ROBONIX_NAV_GUARD_SPEED_LIMIT_TOPIC": _GUARD_SPEED_LIMIT_TOPIC,
-        "ROBONIX_NAV_TRACE_DIR": str(
-            cfg.get("trajectory_log_dir", _pkg_root / "rbnx-build" / "data" / "trajectories")
-        ),
+        "ROBONIX_NAV_TRACE_DIR": str(_guard_trace_dir),
         "ROBONIX_GUARD_TERMINAL_XY_M": str(cfg.get("guard_terminal_xy_m", 0.45)),
         "ROBONIX_GUARD_TERMINAL_TIMEOUT_S": str(cfg.get("guard_terminal_timeout_s", 15.0)),
         "ROBONIX_GUARD_NO_PROGRESS_S": str(cfg.get("guard_no_progress_s", 3.0)),
@@ -1012,22 +1013,30 @@ def _feedback_cb(message, gid: str) -> None:
 
 
 def _result_cb(fut, gid: str):
+    """Preserve explicit user cancellations; report UUID-matched safety stops as failures."""
     try:
         res = fut.result()
         st_name = _goal_status_name(getattr(res, "status", -1))
         state = _canonical_state(st_name)
         with _state_lock:
             previous = _goal_states.get(gid, {})
+            handle = _goal_handles.get(gid)
+            nav_uuid = bytes(handle.goal_id.uuid).hex() if handle is not None else ""
+            failure = read_guard_failure(_guard_trace_dir, nav_uuid)
+            state, safety_detail = classify_guard_result(
+                state, bool(previous.get("cancel_requested")), failure)
             diagnostics = list(_nav_diagnostics) if state == "FAILED" else []
             if state == "FAILED" and _local_costmap_snapshot is not None:
                 blockage = summarize_blockage(*_local_costmap_snapshot)
                 if blockage:
                     diagnostics.append(blockage)
                     log.warning("[nav-diag] %s", blockage)
+            if safety_detail:
+                diagnostics.append(safety_detail)
             _goal_states[gid] = {
                 "state": state,
                 "detail": format_result_detail(
-                    st_name, previous.get("feedback"), diagnostics
+                    "FAILED" if safety_detail else st_name, previous.get("feedback"), diagnostics
                 ),
             }
             _goal_handles.pop(gid, None)

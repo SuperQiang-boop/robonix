@@ -4,6 +4,7 @@ project(robonix_nav2_terminal)
 find_package(ament_cmake REQUIRED)
 find_package(action_msgs REQUIRED)
 find_package(angles REQUIRED)
+find_package(diagnostic_msgs REQUIRED)
 find_package(dwb_core REQUIRED)
 find_package(dwb_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
@@ -13,6 +14,7 @@ find_package(nav_msgs REQUIRED)
 find_package(nav2_core REQUIRED)
 find_package(nav2_costmap_2d REQUIRED)
 find_package(nav2_navfn_planner REQUIRED)
+find_package(nav2_rotation_shim_controller REQUIRED)
 find_package(nav2_util REQUIRED)
 find_package(pluginlib REQUIRED)
 find_package(rclcpp REQUIRED)
@@ -21,7 +23,7 @@ find_package(tf2 REQUIRED)
 find_package(tf2_ros REQUIRED)
 
 add_library(robonix_nav2_goal_checker SHARED
-  src/persistent_goal_checker.cpp)
+  src/persistent_goal_checker.cpp src/settled_goal_checker.cpp)
 target_compile_features(robonix_nav2_goal_checker PUBLIC cxx_std_17)
 target_include_directories(robonix_nav2_goal_checker PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -29,6 +31,15 @@ target_include_directories(robonix_nav2_goal_checker PUBLIC
 ament_target_dependencies(robonix_nav2_goal_checker
   action_msgs angles geometry_msgs nav2_core nav2_costmap_2d nav2_util pluginlib rclcpp
   rclcpp_lifecycle tf2)
+
+add_library(robonix_nav2_rotation_shim SHARED src/persistent_rotation_shim.cpp)
+target_compile_features(robonix_nav2_rotation_shim PUBLIC cxx_std_17)
+target_include_directories(robonix_nav2_rotation_shim PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>)
+ament_target_dependencies(robonix_nav2_rotation_shim
+  action_msgs angles diagnostic_msgs geometry_msgs nav_msgs nav2_core nav2_costmap_2d
+  nav2_rotation_shim_controller nav2_util pluginlib rclcpp rclcpp_lifecycle tf2 tf2_ros)
 
 add_library(robonix_nav2_dwb_critic SHARED
   src/persistent_rotate_to_goal_critic.cpp)
@@ -58,7 +69,7 @@ pluginlib_export_plugin_description_file(nav2_core nav2_core_plugins.xml)
 pluginlib_export_plugin_description_file(dwb_core dwb_core_plugins.xml)
 
 install(TARGETS robonix_nav2_goal_checker robonix_nav2_dwb_critic
-  robonix_nav2_goal_aware_planner
+  robonix_nav2_goal_aware_planner robonix_nav2_rotation_shim
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION bin)
@@ -78,6 +89,11 @@ if(BUILD_TESTING)
     test/test_controller_plugin_loading.cpp)
   ament_target_dependencies(test_controller_plugin_loading nav2_core pluginlib)
 
+  ament_add_gtest(test_settled_goal_checker test/test_settled_goal_checker.cpp)
+  target_link_libraries(test_settled_goal_checker robonix_nav2_goal_checker)
+  ament_target_dependencies(test_settled_goal_checker
+    geometry_msgs nav2_util rclcpp rclcpp_lifecycle)
+
   ament_add_gtest(test_unknown_path_budget
     test/test_unknown_path_budget.cpp)
   target_link_libraries(test_unknown_path_budget
@@ -88,6 +104,6 @@ endif()
 
 ament_export_include_directories(include)
 ament_export_libraries(robonix_nav2_goal_checker robonix_nav2_dwb_critic
-  robonix_nav2_goal_aware_planner)
-ament_export_dependencies(nav2_core dwb_core nav2_navfn_planner)
+  robonix_nav2_goal_aware_planner robonix_nav2_rotation_shim)
+ament_export_dependencies(diagnostic_msgs nav2_core dwb_core nav2_navfn_planner nav2_rotation_shim_controller)
 ament_package()

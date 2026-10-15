@@ -39,8 +39,13 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends \
         python3-pip \
         python3-yaml \
+        build-essential \
+        python3-colcon-common-extensions \
         ros-humble-navigation2 \
         ros-humble-nav2-bringup \
+        ros-humble-nav2-mppi-controller \
+        ros-humble-nav2-rotation-shim-controller \
+        ros-humble-nav2-smac-planner \
         ros-humble-tf2-ros \
         ros-humble-pointcloud-to-laserscan \
         ros-humble-rtabmap-util \
@@ -65,9 +70,16 @@ RUN pip install --no-cache-dir \
         protobuf>=4.25.0 \
         pyyaml>=6.0
 
+COPY terminal_controller /tmp/terminal_controller
+RUN . /opt/ros/humble/setup.sh \
+ && colcon --log-base /tmp/terminal_log build \
+      --base-paths /tmp/terminal_controller --build-base /tmp/terminal_build \
+      --install-base /opt/robonix_nav2_terminal --cmake-args -DBUILD_TESTING=OFF \
+ && rm -rf /tmp/terminal_controller /tmp/terminal_log /tmp/terminal_build
+
 WORKDIR /nav2
-COPY entrypoint.sh /entrypoint.sh
-COPY no_shm_profile.xml /etc/fastrtps_no_shm.xml
+COPY docker/entrypoint.sh /entrypoint.sh
+COPY docker/no_shm_profile.xml /etc/fastrtps_no_shm.xml
 RUN chmod +x /entrypoint.sh
 
 # Left for operators who explicitly override RMW back to FastRTPS.

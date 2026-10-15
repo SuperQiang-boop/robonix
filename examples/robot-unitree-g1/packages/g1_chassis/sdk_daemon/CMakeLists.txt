@@ -4,6 +4,7 @@ project(g1_loco_daemon LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+find_package(Threads REQUIRED)
 
 set(UNITREE_SDK2_DIR "" CACHE PATH "Path to an official unitree_sdk2 checkout")
 if(NOT UNITREE_SDK2_DIR OR NOT EXISTS "${UNITREE_SDK2_DIR}/CMakeLists.txt")
@@ -17,12 +18,15 @@ add_subdirectory("${UNITREE_SDK2_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/unitree_sdk2
 add_executable(g1_loco_daemon
   src/main.cpp
   src/daemon_core.cpp
+  src/command_stream.cpp
+  src/state_forwarder.cpp
   src/unitree_loco_client.cpp
+  src/unitree_state_reader.cpp
 )
 target_include_directories(g1_loco_daemon PRIVATE
   include
 )
-target_link_libraries(g1_loco_daemon PRIVATE unitree_sdk2)
+target_link_libraries(g1_loco_daemon PRIVATE unitree_sdk2 Threads::Threads)
 target_compile_options(g1_loco_daemon PRIVATE -Wall -Wextra -Wpedantic)
 
 # The installed daemon must find its private Unitree/Cyclone DDS libraries

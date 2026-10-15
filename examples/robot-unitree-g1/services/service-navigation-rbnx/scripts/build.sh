@@ -49,7 +49,7 @@ case "$TARGET" in
             robonix_ensure_local_base_image "$ROS_BASE_IMAGE" "$UPSTREAM_ROS_BASE_IMAGE"
         [[ "$CLEAN" == "1" ]] && DOCKER_BUILD_FLAGS+=(--no-cache)
         echo "[nav2/build] docker build -f docker/Dockerfile -t $IMG"
-        docker build "${DOCKER_BUILD_FLAGS[@]}" -f docker/Dockerfile -t "$IMG" docker/
+        docker build "${DOCKER_BUILD_FLAGS[@]}" -f docker/Dockerfile -t "$IMG" .
         ;;
     jetson-native)
         echo "[nav2/build] native target — verifying host ROS2 + nav2"
@@ -76,6 +76,10 @@ case "$TARGET" in
             exit 1
         fi
         TERMINAL_BUILD="$PKG/rbnx-build/terminal_controller"
+        if ! ros2 pkg prefix nav2_rotation_shim_controller >/dev/null 2>&1; then
+            echo "[nav2/build] ERROR: install ros-humble-nav2-rotation-shim-controller" >&2
+            exit 1
+        fi
         echo "[nav2/build] building replan-persistent terminal plugins"
         colcon --log-base "$TERMINAL_BUILD/log" build \
             --base-paths "$PKG/terminal_controller" \

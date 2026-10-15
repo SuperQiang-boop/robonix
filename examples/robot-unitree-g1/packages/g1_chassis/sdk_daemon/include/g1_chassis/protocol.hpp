@@ -11,6 +11,7 @@ namespace g1_chassis {
 enum class PacketType : uint8_t {
   kCmd = 1,
   kReply = 2,
+  kState = 3,
 };
 
 // Reply codes returned by the daemon core.
@@ -53,5 +54,22 @@ struct __attribute__((packed)) ReplyPacket {
 
 static_assert(sizeof(ReplyPacket) == 16,
               "ReplyPacket must be exactly 16 bytes for IPC");
+
+struct __attribute__((packed)) StatePacket {
+  uint8_t type{static_cast<uint8_t>(PacketType::kState)};
+  uint8_t version{1};
+  uint16_t reserved{0};
+  uint32_t error_code{0};
+  uint64_t sequence{0};
+  uint64_t received_unix_ns{0};
+  uint64_t received_monotonic_ns{0};
+  float position[3]{};
+  float quaternion_wxyz[4]{};
+  float velocity[3]{};
+  float yaw_speed{0};
+};
+
+static_assert(sizeof(StatePacket) == 76,
+              "StatePacket must be exactly 76 bytes for IPC");
 
 }  // namespace g1_chassis

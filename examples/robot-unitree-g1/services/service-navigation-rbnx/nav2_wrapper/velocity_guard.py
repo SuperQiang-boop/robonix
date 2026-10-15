@@ -13,6 +13,7 @@ from pathlib import Path
 import rclpy
 from action_msgs.msg import GoalStatus, GoalStatusArray
 from action_msgs.srv import CancelGoal
+from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus
 from geometry_msgs.msg import Twist
 from nav2_msgs.action import NavigateToPose
 from nav2_msgs.msg import SpeedLimit
@@ -20,8 +21,10 @@ from nav_msgs.msg import Odometry, Path as NavPath
 from sensor_msgs.msg import LaserScan
 from rclpy.node import Node
 from rclpy.executors import ExternalShutdownException
+from rclpy.qos import DurabilityPolicy, QoSProfile
 
 from nav2_wrapper.cmd_vel_summary import CmdVelSummary
+from nav2_wrapper.guard_failure import write_guard_failure
 from nav2_wrapper.configuration import resolve_velocity_output_topic
 from nav2_wrapper.rotation_guard_core import GuardLimits, RotationGuard, normalize_uuid_octets
 from nav2_wrapper.velocity_limit import bounded_linear_velocity
@@ -77,6 +80,8 @@ class VelocityGuardNode(Node):
         self._last_cmd = (0.0, 0.0)
         self._cmd_summary = CmdVelSummary()
         self._cancel_sent = False
+        self._trip_recorded = False
+        self._terminal_reports = {}
         self._trace = None
         self._trace_dir = Path(os.getenv("ROBONIX_NAV_TRACE_DIR", "/tmp/robonix-nav-traces"))
         self._trace_dir.mkdir(parents=True, exist_ok=True)
@@ -91,6 +96,10 @@ class VelocityGuardNode(Node):
 
         self._pub = self.create_publisher(Twist, output_topic, 10)
         self.create_subscription(Twist, "/cmd_vel_guard_input", self._on_cmd, 20)
+        self.create_subscription(
+            DiagnosticArray, "/robonix/navigation/terminal", self._on_terminal_report,
+            QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL),
+        )
         self.create_subscription(
             SpeedLimit, speed_limit_topic, self._on_speed_limit, 10
         )
@@ -159,12 +168,42 @@ class VelocityGuardNode(Node):
         self._active_uuid = goal_uuid
         self._active_uuid_raw = normalize_uuid_octets(raw_uuid)
         self._cancel_sent = False
+        self._trip_recorded = False
         self._robot_pose = None
         self._goal_pose = None
         self.guard.begin_goal(goal_uuid)
         stamp = time.strftime("%Y%m%d-%H%M%S")
         self._trace = (self._trace_dir / f"{stamp}-{goal_uuid}.jsonl").open("a", encoding="utf-8")
         self._event("goal_active", uuid=goal_uuid)
+        if goal_uuid in self._terminal_reports:
+            self._apply_terminal_report(self._terminal_reports[goal_uuid])
+
+    def _on_terminal_report(self, msg: DiagnosticArray) -> None:
+        """Associate controller reports with their exact action UUID, including discovery races."""
+        with self._lock:
+            for status in msg.status:
+                if status.name != "robonix/navigation/terminal":
+                    continue
+                uuid = status.hardware_id
+                if len(uuid) != 32 or any(value not in "0123456789abcdef" for value in uuid):
+                    continue
+                self._terminal_reports[uuid] = status
+                while len(self._terminal_reports) > 8:
+                    self._terminal_reports.pop(next(iter(self._terminal_reports)))
+                if uuid == self._active_uuid and self.guard.goal_uuid:
+                    self._apply_terminal_report(status)
+
+    def _apply_terminal_report(self, status) -> None:
+        """Apply phase changes without resetting safety budgets, or latch an explicit failure."""
+        values = {item.key: item.value for item in status.values}
+        self.guard.set_correction_active(values.get("correction_active") == "true")
+        self._event("terminal_report", failed=status.level >= DiagnosticStatus.ERROR,
+                    reason=status.message, correction_active=self.guard.correction_active)
+        if status.level >= DiagnosticStatus.ERROR:
+            reason = status.message or "terminal controller stopped for safety"
+            self.guard._trip(reason)
+            self._pub.publish(Twist())
+            self._trip(reason)
 
     def _on_status(self, msg: GoalStatusArray) -> None:
         with self._lock:
@@ -304,6 +343,7 @@ class VelocityGuardNode(Node):
                 terminal_rotation=self.guard.terminal_rotation,
                 continuous_rotation=self.guard.spin_rotation,
                 latched=bool(reason),
+                correction_active=self.guard.correction_active,
             )
             line = self._cmd_summary.observe(
                 now_s, self._last_cmd[0], self._last_cmd[1], limited, bool(reason))
@@ -316,15 +356,23 @@ class VelocityGuardNode(Node):
                 self._pub.publish(output)
 
     def _trip(self, reason: str) -> None:
+        """Persist the reason before cancellation; retry discovery without losing the zero latch."""
         if self._cancel_sent:
             return
-        self._cancel_sent = True
-        self.get_logger().error(f"ROTATION GUARD TRIPPED uuid={self._active_uuid}: {reason}")
-        self._event("guard_trip", reason=reason)
+        if not self._trip_recorded:
+            self._trip_recorded = True
+            self.get_logger().error(f"ROTATION GUARD TRIPPED uuid={self._active_uuid}: {reason}")
+            self._event("guard_trip", reason=reason)
+            try:
+                write_guard_failure(self._trace_dir, self._active_uuid, reason,
+                                    self._robot_pose, self._goal_pose)
+            except (OSError, ValueError) as error:
+                self.get_logger().error(f"cannot persist navigation safety reason: {error}")
         if self._active_uuid_raw is None or not self._cancel.service_is_ready():
             return
         request = CancelGoal.Request()
         request.goal_info.goal_id.uuid = self._active_uuid_raw
+        self._cancel_sent = True
         self._cancel.call_async(request)
         self._event("cancel_requested", uuid=self._active_uuid)
 
@@ -332,6 +380,7 @@ class VelocityGuardNode(Node):
         with self._lock:
             if self.guard.latched_reason:
                 self._pub.publish(Twist())
+                self._trip(self.guard.latched_reason)
 
 
 def main() -> None:

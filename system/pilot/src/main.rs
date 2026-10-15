@@ -23,6 +23,7 @@ mod config;
 mod discovery;
 mod history;
 mod memory;
+mod navigation_goal;
 mod pb;
 mod planner;
 mod service;
