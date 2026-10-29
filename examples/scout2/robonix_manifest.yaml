@@ -14,7 +14,9 @@ catalog:
 
 env:
   ROBONIX_MAPPING_FORCE: docker
-  SCENE_MAP_ID: scout2_main
+  # Docker wrappers resolve these relative to this deployment directory.
+  RELOCALIZATION_COORDINATION_DIR: .runtime/relocalization
+  RELOCALIZATION_PACKAGE_ROOT: services/service-relocalization
   SCENE_RESTORE_ON_START: "true"
   ROS_DOMAIN_ID: "42"
   RMW_IMPLEMENTATION: rmw_fastrtps_cpp
@@ -37,8 +39,6 @@ system:
   scene:
     log: info
     web_host: 0.0.0.0
-    # Keep Scene's object/annotation frame bound to the same saved map as mapping.
-    map_id: scout2_main
     # Scout2 camera optical frame for scene 3D fusion
     camera_frame: camera_color_optical_frame
   # execution layer
@@ -133,12 +133,17 @@ service:
   - name: mapping
     path: ./services/service-map-rbnx
     config:
+      # Auto selects the newest saved map for localization. With no saved map,
+      # scout2_main is the name of the first mapping session.
       map_id: scout2_main
       map_mode: auto
       reset_map: false
+      # Save the optimized graph and sensor data without restarting RTAB-Map.
+      # Reject incomplete/disconnected exports and retain the last good map.
       checkpoint_interval_s: 30
-      # auto loads scout2_main, or the newest saved map if it is missing,
-      # in localization mode; no saved map starts fresh in mapping mode.
+      coordination_dir: .runtime/relocalization
+      relocalization_package_root: services/service-relocalization
+      # Relocalization is in this manifest and waits for localization mode.
       webui_host: 0.0.0.0
       webui_port: 8091
       # Production localization uses chassis odometry. The timestamped Mid360
@@ -157,6 +162,23 @@ service:
         odom: scout2_chassis
           #rgb: scout2_camera
           #depth: scout2_camera
+
+  - name: relocalization
+    path: ./services/service-relocalization
+    config:
+      mapping_provider_id: mapping
+      lidar_provider_id: scout2_lidar
+      odom_provider_id: scout2_chassis
+      maps_dir: services/service-map-rbnx/maps
+      index_dir: services/service-relocalization/data
+      profile_file: config/relocalization.json
+      coordination_dir: .runtime/relocalization
+      base_frame: base_link
+      odom_frame: odom
+      use_sim_time: false
+      auto_relocalize: true
+      timeout_s: 15.0
+      status_period_s: 0.1
   
   # ── Navigation — Nav2 ───────────────────────────────────────────────
   - name: nav2
@@ -167,10 +189,15 @@ service:
       params_file: config/nav2_params.yaml
       bt_xml_file: config/navigate.xml
       use_sim_time: false
+      coordination_dir: .runtime/relocalization
+      relocalization_package_root: services/service-relocalization
+      relocalization_provider_id: relocalization
+      # 101 ms scan; keep motion within the relocalizer's per-scan bound.
+      relocalization_max_angular_rps: 0.1485148514851485
       action_wait_s: 240.0
       guard_terminal_xy_m: 0.20
       dynamic_speed:
-        max_linear_speed_mps: 0.5
+        max_linear_speed_mps: 0.19801980198019803
         default_percentage: 75
         step_percentage: 20
         min_percentage: 20

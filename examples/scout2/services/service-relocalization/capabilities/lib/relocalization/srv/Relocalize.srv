@@ -1,0 +1,11 @@
+# Identity and SHA-256 of the snapshot actually loaded by mapping.
+string map_id
+uint64 generation
+string database_sha256
+# Zero uses the configured deadline. No initial pose is accepted.
+float64 timeout_s
+---
+# Acceptance is not successful localization. Rejection has an empty request_id.
+bool accepted
+string request_id
+string detail

@@ -100,16 +100,33 @@ optional:
     default: auto
     allowed: [auto, mapping, localization]
     description: >-
-      Startup mode. auto localizes against the configured saved map, or the
-      newest saved map when that id is absent; with no saved map it creates a
-      new mapping session. mapping resumes or creates a writable map;
-      localization loads the configured saved map read-only.
+      Startup mode. auto selects the newest saved map by directory modification
+      time (map_id order breaks ties); with no saved map it starts mapping
+      under the configured map_id. mapping resumes or creates a writable map;
+      localization loads the configured saved map, or the newest saved map
+      when map_id is omitted. Localization fails when no saved map exists.
   map_id:
     type: string
     description: >-
-      Stable spatial-map identifier. Required for localization and recommended
-      for resumable mapping; mapping stores its writable runtime database
-      under this id and save_map checkpoints update the same published map.
+      Stable spatial-map identifier. In auto mode, names the first mapping
+      session only when no saved map exists. In localization mode, explicitly
+      selects a saved map (omitted means newest). Recommended for resumable
+      mapping; automatic checkpoints update the same published map.
+  coordination_dir:
+    type: path
+    path_base: directory containing robonix_manifest.yaml
+    description: >-
+      Optional shared relocalization directory. Docker deployments also set
+      RELOCALIZATION_COORDINATION_DIR so the startup wrapper mounts it writable.
+      Mapping publishes its actual mode and, after a checked localization load,
+      the snapshot identity. The same directory must be used by navigation
+      and relocalization on the same host.
+  relocalization_package_root:
+    type: path
+    path_base: directory containing robonix_manifest.yaml
+    description: >-
+      Required with coordination_dir. Path to service-relocalization. Docker
+      deployments also set RELOCALIZATION_PACKAGE_ROOT for its read-only mount.
   reset_map:
     type: boolean
     default: false
@@ -120,10 +137,10 @@ optional:
     type: number
     default: 60
     description: >-
-      Periodic save_map checkpoint interval for named mapping sessions. The
-      flush writes RTAB-Map working memory to disk before publishing a snapshot.
-      A crash can lose changes since the last successful flush. Set to 0 to
-      disable periodic saves and keep only shutdown checkpoints.
+      Interval for publishing stable automatic map checkpoints. Exports the
+      optimized graph and sensor data without restarting RTAB-Map or reading
+      its live SQLite file. Incomplete/disconnected exports retain the previous
+      checkpoint. A crash can lose changes since the last successful snapshot.
   webui_port:
     type: integer_or_string
     default: 8091

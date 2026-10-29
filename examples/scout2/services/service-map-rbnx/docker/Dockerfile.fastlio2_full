@@ -119,6 +119,7 @@ FROM runtime-bridge AS runtime
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libpcl-io1.12 libyaml-cpp0.7 \
+    build-essential cmake ros-humble-rtabmap-ros \
     ros-humble-pcl-ros \
     ros-humble-tf2-ros ros-humble-rmw-cyclonedds-cpp \
     ros-humble-message-filters ros-humble-visualization-msgs \

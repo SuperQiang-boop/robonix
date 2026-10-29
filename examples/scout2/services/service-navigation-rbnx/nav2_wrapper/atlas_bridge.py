@@ -60,6 +60,38 @@ from nav2_wrapper.speed_control import (
 logging.basicConfig(level=os.environ.get("NAV2_LOG_LEVEL", "INFO").upper(),
                     format="[nav2_wrapper] %(message)s")
 log = logging.getLogger("nav2_wrapper")
+_localization_check = None
+
+
+def _configure_relocalization(cfg):
+    """Enable snapshot-bound navigation admission for coordinated deployments."""
+    global _localization_check
+    directory = cfg.get('coordination_dir') or os.environ.get('RELOCALIZATION_COORDINATION_DIR')
+    if not directory:
+        _localization_check = None
+        return
+    root = cfg.get('relocalization_package_root') or os.environ.get('RELOCALIZATION_PACKAGE_ROOT')
+    invocation_dir = os.environ.get('RBNX_INVOCATION_CWD')
+    if not Path(directory).is_absolute():
+        if not invocation_dir or not Path(invocation_dir).is_absolute():
+            raise ValueError('relative coordination_dir requires RBNX_INVOCATION_CWD')
+        directory = str(Path(invocation_dir) / directory)
+    if root and not Path(root).is_absolute():
+        if not invocation_dir or not Path(invocation_dir).is_absolute():
+            raise ValueError('relative relocalization_package_root requires RBNX_INVOCATION_CWD')
+        root = str(Path(invocation_dir) / root)
+    if not root or not Path(directory).is_absolute() or not Path(root).is_absolute():
+        raise ValueError('absolute coordination_dir and relocalization_package_root are required')
+    sys.path.insert(0, str(Path(root).resolve(strict=True)))
+    from relocalization_rbnx.navigation import check
+    provider_id = cfg.get('relocalization_provider_id', 'relocalization')
+    os.environ.update(RELOCALIZATION_COORDINATION_DIR=str(directory),
+        RELOCALIZATION_PACKAGE_ROOT=str(root), RELOCALIZATION_PROVIDER_ID=provider_id)
+    angular = cfg.get('relocalization_max_angular_rps')
+    if type(angular) not in (int, float) or not math.isfinite(angular) or not 0 < angular <= 0.2:
+        raise ValueError('relocalization_max_angular_rps must be in (0, 0.2]')
+    os.environ['ROBONIX_RELOCALIZATION_MAX_ANGULAR_RPS'] = str(angular)
+    _localization_check = lambda: check(directory, provider_id)
 
 
 def _pump_output(stream, tag: str) -> None:
@@ -923,6 +955,7 @@ def _spawn_velocity_guard(cfg: dict) -> None:
 def _spawn_nav2(cfg: dict, remap_args: list[str]) -> None:
     global _nav2_proc
     params_file, launch_remaps = _materialize_params(cfg, remap_args)
+    os.environ['ROBONIX_NAV_GUARD_ODOM_TOPIC'] = _binding_value(remap_args, 'odom')
     _spawn_velocity_guard(cfg)
     launch_file = _materialize_guarded_launch()
     use_sim_time = "true" if cfg.get("use_sim_time", False) else "false"
@@ -1321,6 +1354,14 @@ def _result_cb(fut, gid: str):
 
 
 def _dispatch_goal(node, gid: str, payload: dict):
+    """Recheck localization at dispatch, including targets queued before a reload."""
+    if _localization_check is not None:
+        valid, detail = _localization_check()
+        if not valid:
+            with _state_lock:
+                _goal_states[gid] = {'state': 'FAILED', 'detail': detail}
+            _restore_speed_after_run(gid)
+            return
     with _state_lock:
         current = _goal_states.get(gid)
         if current is None:
@@ -1390,6 +1431,7 @@ def init(cfg: dict):
     # scan/Nav2 child is started.  _spawn_velocity_guard resolves it again and
     # explicitly passes the validated value into the child environment.
     try:
+        _configure_relocalization(cfg)
         resolve_velocity_output_topic(cfg)
     except (TypeError, ValueError) as error:
         return Err(f"invalid velocity_output_topic: {error}")
@@ -1476,6 +1518,10 @@ def _navigate_impl(goal) -> dict:
     global _last_run_id
     if _ros_node is None:
         return {"accepted": False, "run_id": "", "detail": "ROS2 not initialized"}
+    if _localization_check is not None:
+        valid, detail = _localization_check()
+        if not valid:
+            return {'accepted': False, 'run_id': '', 'detail': detail}
     if not _map_ready:
         return {"accepted": False, "run_id": "", "detail": "map is not ready; wait for a non-empty map"}
     run_id = str(uuid.uuid4())

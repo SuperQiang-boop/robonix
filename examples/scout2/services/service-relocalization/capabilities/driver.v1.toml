@@ -1,0 +1,8 @@
+[contract]
+id = "robonix/service/relocalization/driver"
+version = "1"
+kind = "service"
+idl = "lifecycle/srv/Driver.srv"
+description = "Lifecycle control for the relocalization service."
+[mode]
+type = "rpc"

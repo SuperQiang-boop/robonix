@@ -1131,6 +1131,8 @@ async def _lifecycle_watch(
     live_binding: Optional[dict] = None,
     ops_lock: Optional[asyncio.Lock] = None,
     semantic_hold: Optional[dict] = None,
+    map_meta: Optional[MapMetaStore] = None,
+    restore_on_start: bool = False,
     interval_s: float = 5.0,
 ) -> None:
     """Lifecycle linkage: track mapping's latched identity broadcast against
@@ -1144,12 +1146,10 @@ async def _lifecycle_watch(
       in the new frame); room annotations are user assets — flagged stale
       for confirmation, never deleted. The live binding's generation is
       advanced so the response fires exactly once per epoch.
-    - a DIFFERENT map_id (map loaded/switched outside scene's facade):
-      the registry's objects belong to the previous frame and are flushed,
-      but scene cannot restore the new map's semantic state from here —
-      that stays a WARNING telling the operator to Load via the map UI
-      (or restart scene). The live binding is left pointing at what scene
-      last knowingly bound.
+    - a DIFFERENT map_id: default/lifecycle bindings follow mapping under
+      the shared operation lock. Mapping starts with fresh objects;
+      localization restores the committed snapshot when restore_on_start is
+      enabled. Explicit config/env/UI bindings retain the cross-map guard.
 
     Every reaction is best-effort: a failing marker write / flush must
     never kill the watcher — the drift detection itself is load-bearing.
@@ -1189,6 +1189,54 @@ async def _lifecycle_watch(
             )
             return False
 
+    async def _bind_lifecycle(live_id: str, live_gen: int, mode: str,
+                              source: str) -> bool:
+        """Bind a confirmed frame and restore only its committed localization snapshot.
+
+        The caller holds ops_lock. Failed reads leave persistence held and are
+        retried next tick; no historical live partition is used as a snapshot.
+        """
+        if semantic_hold is not None:
+            semantic_hold["reason"] = f"binding map {live_id} generation {live_gen}"
+        restored = []
+        meta = map_meta.read(live_id) if map_meta is not None else None
+        if (restore_on_start and mode == "localization" and meta is not None
+                and object_store is not None):
+            if meta.mapping_generation not in (None, live_gen):
+                log.warning("[scene-persist] snapshot generation mismatch for %s: %s != %s; not restored",
+                            live_id, meta.mapping_generation, live_gen)
+            else:
+                restored = await asyncio.to_thread(
+                    object_store.load_all, partition=meta.object_partition, strict=True
+                )
+        if not await _flush_registry("before lifecycle binding"):
+            return False
+        if object_store is not None:
+            await asyncio.to_thread(object_store.delete_map, live_id)
+        if anno_store is not None:
+            # Load existing room assets; never overwrite another map's file
+            # with the startup fallback's annotations.
+            if anno_store.map_id != live_id:
+                anno_store.rebind(live_id, generation=live_gen)
+            anno_store.reconcile_generation(live_gen)
+        current, _stamp, _count = hub.latest("map_lifecycle")
+        if (str(current.map_id), int(current.generation), str(current.mode)) != (live_id, live_gen, mode):
+            return False
+        if registry is not None:
+            async with registry.lock():
+                current, _stamp, _count = hub.latest("map_lifecycle")
+                if (str(current.map_id), int(current.generation), str(current.mode)) != (live_id, live_gen, mode):
+                    return False
+                for obj in restored:
+                    registry.restore_object(obj)
+        live_binding.update(map_id=live_id, generation=live_gen,
+                            mode=mode, source=source)
+        if semantic_hold is not None:
+            semantic_hold["reason"] = None
+        log.info("[scene] lifecycle binding: id=%s gen=%s mode=%s restored=%d object(s)",
+                 live_id, live_gen, mode, len(restored))
+        return True
+
     async def _tick() -> None:
         nonlocal confirmed_key, warned_ephemeral, last_warned
         msg, _stamp, _count = hub.latest("map_lifecycle")
@@ -1220,7 +1268,17 @@ async def _lifecycle_watch(
                     "[scene] map binding confirmed by mapping lifecycle: "
                     "id=%s gen=%d mode=%s", live_id, live_gen, str(msg.mode),
                 )
+                if (restore_on_start and confirmed_key is None
+                        and live_binding.get("source") not in ("ui_load", "ui_save")):
+                    async with ops_lock:
+                        if str(live_binding.get("map_id") or "") != live_id:
+                            return
+                        if not await _bind_lifecycle(
+                                live_id, live_gen, str(msg.mode),
+                                str(live_binding.get("source") or "default")):
+                            return
                 confirmed_key = (live_id, live_gen)
+                live_binding["mode"] = str(msg.mode)
                 # Learn the epoch (static bindings start without one); from
                 # now on a bump IS detectable. The annotation store compares
                 # the confirmed epoch against the one its file recorded.
@@ -1235,7 +1293,16 @@ async def _lifecycle_watch(
                             "[scene-anno] generation reconcile failed "
                             "(annotation staleness may be outdated): %s", e,
                         )
+            live_binding["mode"] = str(msg.mode)
             last_warned = None
+            return
+        if live_id != bound_id and live_binding.get("source") in ("default", "lifecycle"):
+            async with ops_lock:
+                if live_binding.get("source") not in ("default", "lifecycle"):
+                    return
+                if await _bind_lifecycle(live_id, live_gen, str(msg.mode), "lifecycle"):
+                    confirmed_key = (live_id, live_gen)
+                    last_warned = None
             return
         if live_id == bound_id:
             # Same map, new frame epoch. Respond, don't just warn — under
@@ -1348,6 +1415,7 @@ async def _persist_live_objects(
     object_store: Any,
     live_binding: dict,
     semantic_hold: dict,
+    ops_lock: asyncio.Lock,
 ) -> None:
     """Persist the active map's current object poses independently of graph inference.
 
@@ -1358,27 +1426,28 @@ async def _persist_live_objects(
     interval = max(1.0, float(os.environ.get("SCENE_OBJECT_PERSIST_INTERVAL_S", "3")))
     while True:
         await asyncio.sleep(interval)
-        map_id = str(live_binding.get("map_id") or "")
-        if not map_id or semantic_hold.get("reason"):
-            continue
-        objects, _surfaces = await registry.snapshot()
-        pairs = [
-            (obj, None) for obj in objects.values()
-            if not obj.attributes.get("is_robot", False)
-        ]
-        if not pairs:
-            continue
-        try:
-            written = await asyncio.to_thread(
-                object_store.persist, pairs, partition=map_id
-            )
-            if written != len(pairs):
-                log.error(
-                    "[scene-persist] live checkpoint incomplete for %s: %d/%d objects",
-                    map_id, written, len(pairs),
+        async with ops_lock:
+            map_id = str(live_binding.get("map_id") or "")
+            if not map_id or semantic_hold.get("reason"):
+                continue
+            objects, _surfaces = await registry.snapshot()
+            pairs = [
+                (obj, None) for obj in objects.values()
+                if not obj.attributes.get("is_robot", False)
+            ]
+            if not pairs:
+                continue
+            try:
+                written = await asyncio.to_thread(
+                    object_store.persist, pairs, partition=map_id
                 )
-        except Exception as e:  # noqa: BLE001
-            log.error("[scene-persist] live checkpoint failed for %s: %s", map_id, e)
+                if written != len(pairs):
+                    log.error(
+                        "[scene-persist] live checkpoint incomplete for %s: %d/%d objects",
+                        map_id, written, len(pairs),
+                    )
+            except Exception as e:  # noqa: BLE001
+                log.error("[scene-persist] live checkpoint failed for %s: %s", map_id, e)
 
 
 # ── main ───────────────────────────────────────────────────────────────────
@@ -1401,10 +1470,9 @@ async def _run() -> None:
     self_tracker = _SelfTracker(registry, robot_geometry)
 
     # Object persistence. The store backs the map UI's Save/Load snapshots;
-    # boot-time warm restore and builder-driven continuous writes exist only
-    # under the legacy SCENE_RESTORE_ON_START mode. Created before
-    # perception so a legacy restore repopulates the registry before the
-    # first detections arrive; the embedder is wired in later.
+    # Lifecycle-confirmed localization restore and continuous live writes
+    # are enabled by SCENE_RESTORE_ON_START. The embedder is wired in later;
+    # object restore waits until mapping confirms its map and mode.
     # Which SLAM map this scene session belongs to. This is the join key
     # against mapping (lifecycle watch) and, in legacy mode, the partition
     # key for scene's persistent state; the default mode partitions session
@@ -1425,10 +1493,10 @@ async def _run() -> None:
     )
     map_id = binding.map_id
     restore_on_start = os.environ.get("SCENE_RESTORE_ON_START", "false").lower() in ("true", "1", "yes")
-    # A live (unsaved) session is NEVER persisted — objects only reach the
-    # DB via an explicit Save snapshot (web facade) or, in the legacy
-    # restore_on_start mode, the builder's continuous writes under the bound
-    # map id. The constant `.live` name is just the in-memory partition label
+    # Object snapshots are committed through the web facade by an explicit
+    # Save or mapping's automatic checkpoint notification. With restore_on_start,
+    # continuous writes also maintain the live map partition. The constant
+    # `.live` name is just the in-memory partition label
     # for the annotation/scene-graph session state below.
     scene_state_map_id = map_id if restore_on_start else ".live"
     log.info(
@@ -1450,9 +1518,9 @@ async def _run() -> None:
     semantic_hold: dict = {"reason": None}
     live_binding: dict = {
         "map_id": binding.map_id,
-        "mode": binding.mode if restore_on_start else "",
-        "generation": binding.generation if restore_on_start else None,
-        "source": binding.source if restore_on_start else "default",
+        "mode": binding.mode,
+        "generation": binding.generation,
+        "source": binding.source,
     }
     if broadcast is not None and not str(broadcast.get("map_id") or ""):
         # mapping is provably UP but running ephemeral (no map_id) — its
@@ -1477,38 +1545,16 @@ async def _run() -> None:
         )
         try:
             obj_store = ObjectStore(db_path, map_id=scene_state_map_id)
-            restore_partition = map_id
-            restore_meta = None
-            if restore_on_start:
-                anno_dir_for_meta = os.environ.get(
-                    "SCENE_ANNOTATIONS_DIR", "/data/robonix/scene_annotations"
-                )
-                meta_dir = os.environ.get("SCENE_MAP_META_DIR") or os.path.join(
-                    os.path.dirname(anno_dir_for_meta.rstrip("/")) or ".",
-                    "scene_maps",
-                )
-                restore_meta = MapMetaStore(meta_dir).read(map_id)
-                if restore_meta is not None:
-                    if live_binding.get("generation") is None:
-                        live_binding["generation"] = restore_meta.mapping_generation
             purged = obj_store.purge_live_partitions()
             if purged:
                 log.info(
                     "[scene-persist] purged %d leftover live-session row(s) "
                     "from earlier boots", purged,
                 )
-            restored = obj_store.load_all(partition=restore_partition) if restore_on_start else []
-            if restore_on_start and not restored and restore_meta is not None:
-                restore_partition = restore_meta.object_partition
-                restored = obj_store.load_all(partition=restore_partition)
-            if restored:
-                async with registry.lock():
-                    for o in restored:
-                        registry.restore_object(o)
-            log.info(
-                "[scene-persist] object store ready: restored %d object(s) (partition=%s, restore_on_start=%s) from %s",
-                len(restored), restore_partition, restore_on_start, db_path,
-            )
+            # Wait for a confirmed lifecycle mode before restoring: Scene
+            # normally starts before mapping, whose first map may be new.
+            log.info("[scene-persist] object store ready; waiting for map lifecycle before restore: %s",
+                     db_path)
         except Exception as e:  # noqa: BLE001
             # Object memory is opted in (default on), so a failure here is not
             # benign: persistence is OFF for the whole session — no warm
@@ -1673,18 +1719,20 @@ async def _run() -> None:
             ).run(),
             name="object-watchdog",
         )] if os.environ.get("SCENE_OBJECT_WATCHDOG", "1") in ("1", "true", "yes") else []),
-        # P2 guard: warn when mapping's live map identity drifts from the
-        # binding scene started with (P3 will act on it instead).
+        # Follow default/lifecycle map bindings and guard explicit bindings
+        # against changes to the spatial map's frame.
         asyncio.create_task(
             _lifecycle_watch(hub, binding, anno_store,
                              registry=registry, live_binding=live_binding,
                              object_store=obj_store,
                              ops_lock=map_ops_lock,
-                             semantic_hold=semantic_hold),
+                             semantic_hold=semantic_hold,
+                             map_meta=map_meta, restore_on_start=restore_on_start),
             name="scene-lifecycle-watch",
         ),
         *([asyncio.create_task(
-            _persist_live_objects(registry, obj_store, live_binding, semantic_hold),
+            _persist_live_objects(registry, obj_store, live_binding, semantic_hold,
+                                  map_ops_lock),
             name="scene-object-persistence",
         )] if restore_on_start and obj_store is not None else []),
         # Background reconciler: keeps scene's hub adding subscriptions

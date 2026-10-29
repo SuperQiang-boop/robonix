@@ -1,0 +1,33 @@
+{
+  "capture": {
+    "scan_duration_ns": 101000000,
+    "header_is_end": true,
+    "voxel_size_m": 0.075
+  },
+  "base_from_sensor": [
+    1.0,
+    0.0,
+    0.0,
+    -0.1,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.6,
+    0.0,
+    0.0,
+    0.0,
+    1.0
+  ],
+  "registration": {
+    "base_z": 0.0,
+    "roll": 0.0,
+    "pitch": 0.0
+  },
+  "search": {
+    "min_score": 0.6
+  }
+}

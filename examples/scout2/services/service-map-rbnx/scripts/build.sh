@@ -29,6 +29,11 @@ ROS_BASE_IMAGE="${ROBONIX_MAPPING_ROS_BASE_IMAGE:-robonix-ros:humble-ros-base}"
 UPSTREAM_ROS_BASE_IMAGE="ros:humble-ros-base"
 JETSON_ROS_BASE_IMAGE="${ROBONIX_MAPPING_JETSON_ROS_BASE_IMAGE:-dustynv/ros:humble-ros-base-l4t-r36.4.0}"
 PYBIN="${MAPPING_NATIVE_PYTHON:-python3}"
+# The generator may need a different Python environment from the native
+# runtime. For example, the runtime can provide protobuf while grpcio-tools is
+# installed in the deployment's codegen environment. Honor the caller's
+# selection instead of replacing it with PYBIN below.
+CODEGEN_PYBIN="${RBNX_CODEGEN_PYTHON:-$PYBIN}"
 
 if [[ "$CLEAN" == "1" ]]; then
     echo "[build] clean: removing $BUILD"
@@ -51,7 +56,7 @@ if command -v rbnx >/dev/null 2>&1; then
     FLAGS=(--mcp --ros2)
     [[ "$CLEAN" == "1" ]] && FLAGS+=(--clean)
     echo "[build] rbnx codegen ${FLAGS[*]}"
-    RBNX_CODEGEN_PYTHON="$PYBIN" \
+    RBNX_CODEGEN_PYTHON="$CODEGEN_PYBIN" \
         rbnx codegen -p "$PKG" "${FLAGS[@]}"
 
     CODEGEN_PYTHONPATH="$PKG/$BUILD/codegen/proto_gen:$PKG/$BUILD/codegen/robonix_mcp_types"
@@ -104,6 +109,10 @@ case "$TARGET" in
         echo "[build] docker build -f $DF -t $IMG"
         docker build "${DOCKER_BUILD_FLAGS[@]}" -f "$DF" -t "$IMG" docker/
 
+        docker run --rm --network none --entrypoint bash --user "$(id -u):$(id -g)" -e HOME=/tmp \
+            -v "$PKG":/mapping "$IMG" -lc \
+            'source /opt/ros/${ROS_DISTRO:-humble}/setup.bash && bash /mapping/scripts/build_snapshot.sh'
+
         # colcon-build the ros2_idl overlay (map interface package for the
         # lifecycle broadcast) inside the image we just built, so the
         # install tree lands on the host bind mount at the SAME path the
@@ -150,6 +159,7 @@ case "$TARGET" in
         fi
         [[ "$missing" == "1" ]] && exit 1
         echo "[build] host rtabmap OK ($(ros2 pkg prefix rtabmap_slam))"
+        bash "$PKG/scripts/build_snapshot.sh"
         ;;
 
     *)

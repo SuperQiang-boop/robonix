@@ -32,7 +32,7 @@ from typing import Optional
 
 import logging
 
-from mapping_rbnx import lifecycle
+from mapping_rbnx import lifecycle, relocalization
 
 log = logging.getLogger("mapping_rbnx.map_ops")
 
@@ -47,7 +47,15 @@ def serialized(fn):
     """Serialize database changes across HTTP, RPC, and periodic saves."""
     @wraps(fn)
     def call(*args, **kwargs):
+        """Invalidate and exclude handoffs before changing the active map."""
         with _SAVE_LOCK:
+            if fn.__name__ in ('load_map_impl', 'switch_mode_impl', 'reset_map_impl'):
+                try:
+                    with relocalization.transition():
+                        return fn(*args, **kwargs)
+                except Exception as exc:
+                    log.exception('map transition rejected')
+                    return {'ok': False, 'detail': str(exc)}
             return fn(*args, **kwargs)
     return call
 
@@ -109,7 +117,7 @@ def persistent_runtime_db(map_id: str, reset: bool = False) -> str:
         raise RuntimeError("runtime database absent after recovery failure; restore a checkpoint or explicitly reset_map")
     return runtime
 
-# rtabmap node name prefix; the launch runs the slam node as `/rtabmap/rtabmap`
+# rtabmap node name prefix; the launch runs the slam node as `/rtabmap`
 # so its services live under `/rtabmap/...`.
 RTABMAP_NS = os.environ.get("MAPPING_RTABMAP_NS", "/rtabmap")
 # Where rtabmap subscribes for an externally-seeded pose. The launch remaps
@@ -167,11 +175,11 @@ def _sqlite_quick_check(db_path: str, *, recover: bool = False) -> tuple[bool, s
 
 
 def _sqlite_backup(src: str, dst: str) -> tuple[bool, str]:
-    """Consistently snapshot a live SQLite DB using sqlite3's backup API.
+    """Copy a stable checkpoint or a runtime DB before its engine starts.
 
-    A plain file copy of ~/.ros/rtabmap.db races RTAB-Map's writer and can
-    produce "database disk image is malformed" on load. SQLite backup takes a
-    transactionally-consistent snapshot while the source remains live.
+    Never use this against RTAB-Map's active rollback-journal database: even
+    SQLite's online backup reader can make its writer abort with a busy error.
+    Live saves must use the optimized map export instead.
     """
     if not os.path.isfile(src):
         return False, f"live database not found: {src}"
@@ -264,6 +272,27 @@ def _call_service(node, srv_type, name: str, request, timeout_s: float = 5.0):
 
 
 # ── pose_estimate ─────────────────────────────────────────────────────────────
+def _pose_serialized(fn):
+    """Exclude map transitions from every pose injection when coordination is enabled."""
+    @wraps(fn)
+    def call(*args, **kwargs):
+        """Validate readiness under a shared file lease before publishing a pose."""
+        if relocalization.writer is None:
+            return fn(*args, **kwargs)
+        import fcntl
+        try:
+            path = relocalization.writer.directory / 'map.lock'
+            with path.open('a') as stream:
+                fcntl.flock(stream, fcntl.LOCK_SH | fcntl.LOCK_NB)
+                if not relocalization.writer._state.get('ready'):
+                    return {'ok': False, 'detail': 'mapping localization snapshot is unavailable'}
+                return fn(*args, **kwargs)
+        except (OSError, RuntimeError) as exc:
+            return {'ok': False, 'detail': f'map transition prevents pose injection: {exc}'}
+    return call
+
+
+@_pose_serialized
 def pose_estimate_impl(x: float, y: float, theta: float,
                        cov_xy: float = 0.0, cov_theta: float = 0.0) -> dict:
     """Publish a PoseWithCovarianceStamped to INITIALPOSE_TOPIC so rtabmap
@@ -271,6 +300,9 @@ def pose_estimate_impl(x: float, y: float, theta: float,
     node = _get_node()
     if node is None:
         return {"ok": False, "detail": "rclpy node unavailable (ROS not running?)"}
+    if not all(math.isfinite(value) for value in (x, y, theta, cov_xy, cov_theta)):
+        return {'ok': False, 'detail': 'initial pose and covariance must be finite'}
+    pub = None
     try:
         from geometry_msgs.msg import PoseWithCovarianceStamped
         msg = PoseWithCovarianceStamped()
@@ -296,13 +328,19 @@ def pose_estimate_impl(x: float, y: float, theta: float,
         pub = node.create_publisher(PoseWithCovarianceStamped, INITIALPOSE_TOPIC, 1)
         # DDS needs a beat to match the subscriber before the sample is kept.
         time.sleep(0.3)
+        if pub.get_subscription_count() == 0:
+            return {'ok': False, 'detail': 'no mapping subscriber matched the initial-pose publisher'}
         pub.publish(msg)
         time.sleep(0.2)
         node.destroy_publisher(pub)
+        pub = None
         return {"ok": True, "detail": f"seeded pose ({x:.2f}, {y:.2f}, {theta:.2f}) on {INITIALPOSE_TOPIC}"}
     except Exception as e:  # noqa: BLE001
         log.exception("pose_estimate failed")
         return {"ok": False, "detail": str(e)}
+    finally:
+        if pub is not None:
+            node.destroy_publisher(pub)
 
 
 # ── list_maps ─────────────────────────────────────────────────────────────────
@@ -376,12 +414,17 @@ def _runtime_db_copy(saved_db: str, map_id: str) -> str:
         except OSError:
             pass
     runtime_db = os.path.join(RUNTIME_DB_DIR, f"{safe_id}-{time.time_ns()}.db")
+    identity = relocalization.fingerprint(saved_db, map_id) if relocalization.writer else None
     ok, detail = _sqlite_backup(saved_db, runtime_db)
     if not ok:
         raise RuntimeError(f"cannot copy saved map: {detail}")
     db_ok, db_detail = _sqlite_quick_check(runtime_db)
     if not db_ok:
         raise RuntimeError(f"runtime db copy failed integrity check: {db_detail}")
+    if identity is not None:
+        if relocalization.fingerprint(saved_db, map_id) != identity:
+            raise RuntimeError('saved checkpoint changed while making the localization copy')
+        relocalization.snapshots[runtime_db] = identity
     return runtime_db
 
 
@@ -565,13 +608,18 @@ def load_map_impl(map_id: str, mode: str = "localization",
         if not verified:
             log.error("load_map[%s] stage=verify failed: %s", map_id, verify_detail)
             return {"ok": False, "detail": f"loaded {map_id}, but {verify_detail}"}
+        relocalization.loaded(runtime_db)
         elapsed = time.monotonic() - started
         log.info("load_map[%s] stage=complete elapsed=%.3fs %s", map_id, elapsed,
                  verify_detail)
 
         seeded = ""
         if has_initial_pose:
-            ps = pose_estimate_impl(x, y, theta)
+            # This load already holds the exclusive transition lease. Acquiring
+            # a second shared flock here would deadlock against our own lease.
+            ps = pose_estimate_impl.__wrapped__(x, y, theta)
+            if not ps['ok']:
+                return {'ok': False, 'detail': f'map loaded but initial pose rejected: {ps["detail"]}'}
             seeded = f"; {ps['detail']}"
         note = "" if requested_mode == "localization" else f"; requested {requested_mode} coerced to localization"
         return {"ok": True,
@@ -664,8 +712,12 @@ def _set_mode(node, mode: str) -> tuple[bool, str]:
 
 @serialized
 def switch_mode_impl(mode: str) -> dict:
-    """Flip the running rtabmap between mapping and localization on the CURRENT
-    map — no map load, no restart. Returns {ok, detail}."""
+    """Switch the current map's mode without restarting the service.
+
+    With relocalization coordination, localization requires a verified saved
+    snapshot: checkpoint live mapping first, then use the existing load path.
+    The outer transition already excludes concurrent pose handoffs.
+    """
     mode = (mode or "").strip().lower()
     if mode not in ("localization", "mapping"):
         return {"ok": False, "detail": f"mode={mode!r} invalid (localization|mapping)"}
@@ -673,6 +725,16 @@ def switch_mode_impl(mode: str) -> dict:
     if node is None:
         return {"ok": False, "detail": "rclpy node unavailable (ROS not running?)"}
     try:
+        if mode == "localization" and relocalization.writer is not None:
+            state = lifecycle.current()
+            map_id = state.get("map_id")
+            if not map_id:
+                return {"ok": False, "detail": "save a named map before switching to localization"}
+            if state.get("mode") == "mapping":
+                saved = save_map_impl(map_id, active_db=_ACTIVE_DB)
+                if not saved["ok"]:
+                    return {"ok": False, "detail": f"cannot checkpoint before localization: {saved['detail']}"}
+            return load_map_impl.__wrapped__(map_id)
         if mode == "mapping":
             _prepare_mapping_runtime(node)
         ok, info = _set_mode(node, mode)
@@ -682,6 +744,8 @@ def switch_mode_impl(mode: str) -> dict:
         set_current_mode(mode)
         # Mode flip only — the live frame does not move, so no generation bump.
         lifecycle.set_mode(mode)
+        if mode == "mapping":
+            relocalization.mapping(lifecycle.current().get("map_id", ""))
         return {"ok": True, "detail": f"switched to {mode} mode"}
     except Exception as e:  # noqa: BLE001
         log.exception("switch_mode failed")
@@ -747,6 +811,7 @@ def reset_map_impl() -> dict:
         # their stored map-frame coordinates just went stale. Reset resumes
         # in mapping mode — broadcast that too.
         lifecycle.mark_reset(mode="mapping")
+        relocalization.mapping(lifecycle.current().get("map_id", ""))
         return {"ok": True, "detail": "map cleared — rebuilding from current pose "
                                       "(origin reset; new frame won't match the old map); switched to mapping mode"}
     except Exception as e:  # noqa: BLE001
@@ -755,24 +820,6 @@ def reset_map_impl() -> dict:
 
 
 
-
-def _set_rtabmap_paused(node, paused: bool, timeout_s: float = 10.0) -> tuple[bool, str]:
-    """Pause/resume RTAB-Map processing around live database snapshots.
-
-    RTAB-Map writes statistics and node data while mapping. A concurrent SQLite
-    backup can otherwise make the RTAB-Map process abort with
-    "database is locked". Treat pause failure as a hard save failure; an
-    unchecked live snapshot is worse than refusing to save.
-    """
-    try:
-        from std_srvs.srv import Empty
-    except Exception as e:  # noqa: BLE001
-        return False, f"std_srvs/Empty unavailable: {e}"
-    service = f"{RTABMAP_NS}/{'pause' if paused else 'resume'}"
-    ok, res = _call_service(node, Empty, service, Empty.Request(), timeout_s=timeout_s)
-    if not ok:
-        return False, str(res)
-    return True, f"rtabmap {'paused' if paused else 'resumed'}"
 
 def _flush_rtabmap_database(node, live_db: str, timeout_s: float = 180.0) -> tuple[bool, str, str]:
     """Ask RTAB-Map to serialize memory without switching databases.
@@ -887,6 +934,33 @@ def save_map_impl(map_id: str, note: str = "",
         return _save_map_impl(map_id, note, active_db)
 
 
+def _export_live_snapshot(staging_dir: str) -> tuple[bool, str]:
+    """Export RAM and disk nodes through RTAB-Map, never read its live SQLite DB.
+
+    The helper validates connected optimized poses, decoded scans and local
+    grids before writing an independent DB and preview from the same graph.
+    Service failures and incomplete graphs cannot replace the last checkpoint.
+    """
+    import subprocess
+    package = Path(__file__).resolve().parents[2]
+    helper = package / 'rbnx-build/snapshot/mapping_snapshot'
+    if not helper.is_file():
+        return False, f'mapping snapshot helper missing: {helper}; run rbnx build'
+    try:
+        timeout = float(os.environ.get('MAPPING_SAVE_SNAPSHOT_TIMEOUT_S', '120'))
+        if not math.isfinite(timeout) or timeout <= 0:
+            raise ValueError('MAPPING_SAVE_SNAPSHOT_TIMEOUT_S must be positive and finite')
+        result = subprocess.run(
+            [str(helper), staging_dir, RTABMAP_NS, str(timeout)],
+            check=False, capture_output=True, text=True, timeout=timeout + 10,
+        )
+        if result.returncode != 0:
+            return False, f'RTAB-Map snapshot failed (rc={result.returncode}): {result.stderr[-2000:]} {result.stdout[-1000:]}'
+        return True, result.stdout[-1000:].strip()
+    except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
+        return False, str(exc)
+
+
 def _save_map_impl(map_id: str, note: str = "",
                    active_db: Optional[str] = None) -> dict:
     """Snapshot the current SLAM map under {MAPS_DIR}/<map_id>/.
@@ -924,29 +998,6 @@ def _save_map_impl(map_id: str, note: str = "",
         if os.path.realpath(live_db) == os.path.realpath(db_path):
             return {"ok": False, "map_id": map_id, "detail": "refusing to replace the engine's active database"}
 
-        node = _get_node()
-        if node is None:
-            return {
-                "ok": False,
-                "map_id": map_id,
-                "artifact_path": "",
-                "detail": "rclpy node unavailable; cannot ask RTAB-Map to save",
-            }
-
-        flush_ok, flush_detail, snapshot_src = _flush_rtabmap_database(
-            node,
-            live_db,
-            float(os.environ.get("MAPPING_SAVE_BACKUP_TIMEOUT_S",
-                                 os.environ.get("MAPPING_SAVE_FLUSH_TIMEOUT_S", "180"))),
-        )
-        if not flush_ok:
-            return {
-                "ok": False,
-                "map_id": map_id,
-                "artifact_path": "",
-                "detail": f"rtabmap save/flush failed: {flush_detail}",
-            }
-
         staging_dir = os.path.join(
             MAPS_DIR,
             f".{map_id}.staging-{os.getpid()}-{int(time.time() * 1000)}",
@@ -956,25 +1007,17 @@ def _save_map_impl(map_id: str, note: str = "",
         os.makedirs(staging_dir, exist_ok=False)
         staged_db = os.path.join(staging_dir, "rtabmap.db")
 
-        # RTAB-Map's /backup service has already produced a consistent
-        # immutable sibling. Move it into staging when possible; this avoids
-        # another multi-GB SQLite backup during the shutdown deadline.
-        can_move_backup = os.path.realpath(snapshot_src) != os.path.realpath(live_db)
-        try:
-            if not can_move_backup:
-                raise OSError("backup source is the active database")
-            os.replace(snapshot_src, staged_db)
-            detail = "moved flushed RTAB-Map backup"
-        except OSError:
-            ok, detail = _sqlite_backup(snapshot_src, staged_db)
-            if not ok:
-                return {
-                    "ok": False,
-                    "map_id": map_id,
-                    "artifact_path": "",
-                    "detail": f"failed to snapshot flushed RTAB-Map database: {detail}",
-                }
-        flush_detail = f"{flush_detail}; sqlite_backup={detail}"
+        # The engine owns its rollback-journal writer. Reading that SQLite file
+        # concurrently can abort RTAB-Map, and misses optimized poses in RAM.
+        ok, detail = _export_live_snapshot(staging_dir)
+        if not ok:
+            return {
+                "ok": False,
+                "map_id": map_id,
+                "artifact_path": "",
+                "detail": detail,
+            }
+        flush_detail = f"optimized RTAB-Map snapshot; {detail}"
 
         db_ok, db_detail = _sqlite_quick_check(staged_db)
         if not db_ok:
@@ -985,14 +1028,7 @@ def _save_map_impl(map_id: str, note: str = "",
                 "detail": f"staged database failed integrity check: {db_detail}",
             }
 
-        pub_ok, pub_detail = _publish_full_map(
-            node, timeout_s=float(os.environ.get("MAPPING_PUBLISH_MAP_TIMEOUT_S", "45"))
-        )
-        if not pub_ok:
-            log.warning("checkpoint preview unavailable: %s", pub_detail)
-        flush_detail = f"{flush_detail}; {pub_detail}"
-
-        preview_ok = pub_ok and _run_preview_snapshot(staging_dir)
+        preview_ok = os.path.isfile(os.path.join(staging_dir, "occupancy.png"))
         meta_path = os.path.join(staging_dir, "meta.yaml")
         if os.path.isfile(meta_path):
             try:
@@ -1010,9 +1046,8 @@ def _save_map_impl(map_id: str, note: str = "",
                         fh.write(f"map_id: {map_id}\n")
             except Exception as e:  # noqa: BLE001
                 log.warning("failed to normalize metadata map_id for %s: %s", staging_dir, e)
-        if not preview_ok or not os.path.isfile(os.path.join(staging_dir, "occupancy.png")):
-            log.warning("saving database checkpoint without fresh preview for %s", map_id)
-            flush_detail += "; preview unavailable (database saved; existing preview may be stale)"
+        if not preview_ok:
+            return {"ok": False, "map_id": map_id, "detail": "snapshot has no occupancy preview"}
 
         # Re-check after preview generation so the published directory is known
         # loadable at the exact point it becomes visible to list/load calls.

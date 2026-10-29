@@ -970,6 +970,8 @@ def make_app(*, registry: ObjectRegistry,
         reserved = _reserved_map_id_error(map_id)
         if reserved is not None:
             return reserved
+        if not isinstance(body.get("spatial_saved", False), bool):
+            return _anno_error(400, "spatial_saved must be a boolean")
         async with ops_lock:
             return await _maps_save_locked(map_id, body)
 
@@ -981,10 +983,26 @@ def make_app(*, registry: ObjectRegistry,
                 "(any map) until it reports success, then Save"
             ))
         note = str(body.get("note") or "")
-        before_payload = await asyncio.to_thread(_maps_payload)
-        spatial_exists, existing_map = _map_exists_in_payload(before_payload, map_id)
+        spatial_saved = body.get("spatial_saved", False)
         current_bound_id = str(map_binding.get("map_id") or "")
         current_mode = str(map_binding.get("mode") or "")
+        if spatial_saved:
+            # Mapping already saved geometry. Do not call back into mapping:
+            # that could recursively save or deadlock its shutdown checkpoint.
+            generation = body.get("generation")
+            gen, broadcast_mode = _latched_lifecycle(map_id)
+            if (type(generation) is not int or generation < 0):
+                return _anno_error(400, "checkpoint generation must be a non-negative integer")
+            if (current_bound_id != map_id or gen != generation
+                    or map_binding.get("generation") != generation
+                    or current_mode != "mapping" or broadcast_mode != "mapping"):
+                return _anno_error(409, "checkpoint does not match Scene's active mapping frame")
+            if object_store is None or map_meta is None:
+                return _anno_error(503, "object snapshot store unavailable")
+            spatial_exists = True
+        else:
+            before_payload = await asyncio.to_thread(_maps_payload)
+            spatial_exists, _existing_map = _map_exists_in_payload(before_payload, map_id)
         if (anno_store is not None
                 and _sanitize_map_id(map_id) != anno_store.map_id
                 and anno_store.has_saved(map_id)):
@@ -998,7 +1016,10 @@ def make_app(*, registry: ObjectRegistry,
                 "first (or delete the map) instead of overwriting them with "
                 "this live session"
             ))
-        if spatial_exists:
+        if spatial_saved:
+            out = {"ok": True, "map_id": map_id, "spatial_saved": True,
+                   "detail": f"saved scene objects for mapping checkpoint {map_id}"}
+        elif spatial_exists:
             if current_bound_id and current_bound_id != map_id:
                 return _anno_error(409, f"spatial map {map_id} already exists; load it before updating scene annotations/objects")
             if current_mode == "mapping":
@@ -1029,7 +1050,8 @@ def make_app(*, registry: ObjectRegistry,
         object_count = 0
         object_persist_error = None
         if out.get("ok"):
-            gen, broadcast_mode = _latched_lifecycle(map_id)
+            if not spatial_saved:
+                gen, broadcast_mode = _latched_lifecycle(map_id)
             if anno_store is not None:
                 anno_store.rebind(map_id, generation=gen, carry_current=True)
             # Object snapshot: write into a FRESH partition token, commit the
@@ -1052,6 +1074,8 @@ def make_app(*, registry: ObjectRegistry,
                             f"snapshot incomplete: {written}/{expected} rows written"
                         )
                     object_count = written
+                    if spatial_saved and _latched_lifecycle(map_id) != (gen, broadcast_mode):
+                        raise RuntimeError("map lifecycle changed during object snapshot")
                     map_meta.write(make_meta(
                         map_id, partition, seq,
                         generation=gen, mode=broadcast_mode,
@@ -1078,7 +1102,8 @@ def make_app(*, registry: ObjectRegistry,
                 )
                 out["object_persist_error"] = object_persist_error
             mode_after_save = current_mode if spatial_exists and current_bound_id == map_id and current_mode else "mapping"
-            _set_map_binding(map_id, mode_after_save, "ui_save", generation=gen)
+            if not spatial_saved:
+                _set_map_binding(map_id, mode_after_save, "ui_save", generation=gen)
             if object_persist_error is not None:
                 # The public Save contract is geometry + rooms + objects as
                 # ONE unit. With the object snapshot uncommitted the artifact
@@ -1091,6 +1116,7 @@ def make_app(*, registry: ObjectRegistry,
                 # immutable, so "retry Save" would only bounce off the
                 # mapping-mode 409 — deleting and re-saving is the real path.
                 recovery = (
+                    "retry at the next automatic checkpoint" if spatial_saved else
                     "retry Save" if mode_after_save != "mapping" else (
                         "delete the map and Save anew (this mapping "
                         "session's artifact is immutable, so a plain retry "
@@ -1107,6 +1133,11 @@ def make_app(*, registry: ObjectRegistry,
 
         annotations = anno_store.list_json() if anno_store is not None else []
         out.setdefault("annotations", len(annotations))
+        if spatial_saved:
+            log.info("[scene-persist] checkpoint map_id=%s generation=%s ok=%s objects=%s partition=%s detail=%s",
+                     map_id, gen, out.get("ok"), object_count,
+                     out.get("snapshot_partition"), out.get("detail"))
+            return JSONResponse(out, status_code=200 if out.get("ok") else 502)
         if out.get("ok"):
             maps_payload = await asyncio.to_thread(_maps_payload)
             saved_map = None
@@ -1450,8 +1481,14 @@ def make_app(*, registry: ObjectRegistry,
         map_id = _sanitize_map_id(request.path_params["map_id"])
         active_id = _sanitize_map_id(str(map_binding.get("map_id") or ""))
         meta = map_meta.read(map_id) if map_meta is not None else None
-        partition = map_id if map_id == active_id else (
-            meta.object_partition if meta is not None else ""
+        meta_matches_active_frame = (
+            map_id != active_id or map_binding.get("generation") is None
+            or meta is None or meta.mapping_generation is None
+            or meta.mapping_generation == map_binding.get("generation")
+        )
+        partition = (
+            meta.object_partition if meta is not None and meta_matches_active_frame
+            else map_id if map_id == active_id else ""
         )
         if not partition:
             return JSONResponse(
@@ -1462,26 +1499,12 @@ def make_app(*, registry: ObjectRegistry,
             objects = await asyncio.to_thread(
                 object_store.load_all, partition=partition, strict=True
             )
-            meta_matches_active_frame = (
-                map_binding.get("generation") is None
-                or meta is None
-                or meta.mapping_generation is None
-                or meta.mapping_generation == map_binding.get("generation")
-            )
-            if (
-                not objects and map_id == active_id and meta is not None
-                and meta_matches_active_frame
-            ):
-                partition = meta.object_partition
-                objects = await asyncio.to_thread(
-                    object_store.load_all, partition=partition, strict=True
-                )
         except Exception as e:  # noqa: BLE001
             log.exception("map object query failed for %s", map_id)
             return JSONResponse({"ok": False, "detail": str(e)}, status_code=503)
         generation = (
-            map_binding.get("generation") if map_id == active_id
-            else (meta.mapping_generation if meta is not None else None)
+            meta.mapping_generation if meta is not None and partition == meta.object_partition
+            else map_binding.get("generation")
         )
         snapshot = sg_store.get_snapshot() if map_id == active_id and sg_store is not None else None
         return JSONResponse({

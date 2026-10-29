@@ -10,6 +10,17 @@ ROOT = Path(__file__).resolve().parent
 
 class RuntimeIntegrationTest(unittest.TestCase):
     def test_docker_start_mounts_manifest_directory_read_only(self):
+        """An uncoordinated deployment only receives the normal read-only mount."""
+        self._check_docker_mounts('nav2', coordinated=False)
+
+    def test_relative_relocalization_paths_are_shared_in_both_containers(self):
+        """Both launchers resolve explicit relative paths and mount coordination RW."""
+        for kind in ('nav2', 'mapping'):
+            with self.subTest(kind=kind):
+                self._check_docker_mounts(kind, coordinated=True)
+
+    def _check_docker_mounts(self, kind, coordinated):
+        """Run launchers against fake Docker, isolated files and no real processes."""
         bash_major = int(
             subprocess.run(
                 ["bash", "-c", "printf %s ${BASH_VERSINFO[0]}"],
@@ -49,6 +60,7 @@ class RuntimeIntegrationTest(unittest.TestCase):
                 '        output="${arg%:/proto-gen}"\n'
                 '        touch "$output/atlas_pb2.py"\n'
                 '        touch "$output/navigation_pb2.py"\n'
+                '        touch "$output/map_pb2.py"\n'
                 '        touch "$output/robonix_contracts_pb2_grpc.py"\n'
                 '      fi\n'
                 '    done\n'
@@ -71,6 +83,8 @@ class RuntimeIntegrationTest(unittest.TestCase):
             )
             rbnx.chmod(0o755)
             env = os.environ.copy()
+            env.pop('RELOCALIZATION_COORDINATION_DIR', None)
+            env.pop('RELOCALIZATION_PACKAGE_ROOT', None)
             env.update(
                 {
                     "PATH": f"{fake_bin}:/usr/bin:/bin",
@@ -79,10 +93,21 @@ class RuntimeIntegrationTest(unittest.TestCase):
                     "RBNX_PACKAGE_ROOT": str(package),
                     "RBNX_INVOCATION_CWD": str(deploy),
                     "ROBONIX_NAV2_FORCE": "docker",
+                    "ROBONIX_MAPPING_FORCE": "docker",
+                    "MAPPING_ENABLE_VIZ": "false",
                 }
             )
+            if coordinated:
+                relocalization = deploy / 'services/service-relocalization/relocalization_rbnx'
+                relocalization.mkdir(parents=True)
+                (relocalization / 'coordination.py').touch()
+                env.update(RELOCALIZATION_COORDINATION_DIR='.runtime/relocalization',
+                    RELOCALIZATION_PACKAGE_ROOT='services/service-relocalization')
+            script = ROOT / 'scripts/start.sh'
+            if kind == 'mapping':
+                script = ROOT.parent / 'service-map-rbnx/scripts/start.sh'
             subprocess.run(
-                ["bash", str(ROOT / "scripts" / "start.sh")],
+                ["bash", str(script)],
                 check=True,
                 env=env,
                 capture_output=True,
@@ -92,10 +117,20 @@ class RuntimeIntegrationTest(unittest.TestCase):
             self.assertIn(f"RBNX_INVOCATION_CWD={deploy}", args)
             self.assertIn(f"{deploy}:{deploy}:ro", args)
             self.assertIn(
-                f"{package}/rbnx-build/codegen/nav2_proto_gen:"
-                "/nav2/rbnx-build/codegen/proto_gen:ro",
+                f"{package}/rbnx-build/codegen/{kind}_proto_gen:"
+                f"/{kind}/rbnx-build/codegen/proto_gen:ro",
                 args,
             )
+            shared = deploy / '.runtime/relocalization'
+            if coordinated:
+                service = deploy / 'services/service-relocalization'
+                self.assertIn(f'RELOCALIZATION_COORDINATION_DIR={shared}', args)
+                self.assertIn(f'{shared}:{shared}', args)
+                self.assertIn(f'{service}:{service}:ro', args)
+                self.assertTrue(shared.is_dir())
+            else:
+                self.assertFalse(shared.exists())
+                self.assertFalse(any('RELOCALIZATION_COORDINATION_DIR=' in arg for arg in args))
 
     def test_nav_consumes_provider_pinned_canonical_odom(self):
         source = (ROOT / "nav2_wrapper" / "atlas_bridge.py").read_text()

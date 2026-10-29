@@ -74,6 +74,12 @@ RUN pip install --no-cache-dir \
         pillow \
         'mcp>=1.28.1,<2'
 
+# Keep build tools separate so adding the checkpoint helper does not invalidate
+# the much larger ROS/RTAB-Map dependency layer on existing robots.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends build-essential cmake \
+ && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /mapping
 COPY entrypoint.sh /entrypoint.sh
 COPY no_shm_profile.xml /etc/fastrtps_no_shm.xml

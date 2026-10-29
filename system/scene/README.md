@@ -329,10 +329,11 @@ through the deployment's normal launch flow first.
 
 When `SCENE_OBJECT_MEMORY_ENABLED` is on, scene keeps an embedded milvus-lite
 DB (`SCENE_OBJECT_MEMORY_DB`) for its stable objects. By default a boot starts
-a **fresh live session** that is never persisted; objects reach the DB only
-when the operator **saves a map** in the map UI, which snapshots the live
-registry together with the spatial artifact, and come back only when that map
-is **loaded** (see "Map library" below for the epoch rules). Each row carries
+a **fresh live session**; objects reach the DB when the operator **saves a
+map**, or when mapping notifies Scene after a successful automatic spatial
+checkpoint. Both paths snapshot the live registry for the map's spatial
+artifact. Objects come back when that map is **loaded** (see "Map library"
+below for the epoch rules). Each row carries
 a caption vector embedded with the open_clip text encoder already loaded for
 perception (512-d, shared with the per-object image features), so a future
 object-search layer can reuse the table. The DB is scene-owned — a separate
@@ -343,8 +344,10 @@ survive boots.
 `SCENE_RESTORE_ON_START=true` enables continuous persistence for deployments
 that keep a stable `map_id`. Scene checkpoints current object coordinates on
 the configured interval, independently of VLM graph rebuilds. On boot it
-restores the latest map snapshot when one exists, otherwise it restores the
-live map partition. A map-frame generation change clears the live partition;
+waits for mapping's lifecycle before restoring the committed snapshot for a
+confirmed localization map. Mapping starts with fresh objects; absent or
+mismatched snapshots restore nothing. Historical live partitions are not used
+as saved snapshots. A map-frame generation change clears the live partition;
 map-UI Save continues to use its own snapshot partition. The Scout2 deployment
 enables this setting.
 
@@ -368,9 +371,11 @@ under scene) **flushes the derived objects** from the registry — their stored
 map-frame coordinates are no longer anchored, and re-observation rebuilds them
 in the new frame — and flags room annotations stale for user confirmation
 (user assets are never deleted automatically). A broadcast naming a different
-map (loaded outside scene's map UI) also flushes stale objects, but scene
-cannot restore the new map's semantic state from there — the log tells the
-operator to Load it in the map UI (or restart scene). A Load performed through
+map automatically switches a default/lifecycle binding under the same lock as
+Save/Load: mapping starts fresh, while localization restores the committed
+snapshot when `SCENE_RESTORE_ON_START=true`. This also handles Scene starting
+before mapping and temporarily binding `default`. Explicit config/env/UI
+bindings keep the cross-map guard and require a successful Load. A Load performed through
 the map UI updates the same live binding the watcher tracks, so it never
 registers as drift.
 
@@ -429,6 +434,15 @@ map without a sidecar (saved before this mechanism, or a foreign DB) restores
 **no objects** — response field `semantic_snapshot` says so — because rows of
 unknown epoch may anchor to a map frame that no longer exists (the off-map
 "ghost object" bug). Re-save the map to create its snapshot.
+
+Mapping's automatic checkpoint uses the existing `POST /api/maps/save` with
+`{"map_id":"scout2_main","generation":4,"spatial_saved":true}` after spatial
+publication. Scene requires the same active mapping ID and generation, saves
+a fresh object snapshot without invoking mapping again, and allows repeated
+checkpoints. A failed write preserves the previous sidecar and returns an
+error for mapping to log and retry at the next checkpoint. `GET
+/api/maps/<map_id>/objects` prefers the committed snapshot over live detections
+when it matches the active frame.
 
 Save refuses (409) three epoch hazards rather than corrupting state silently:
 updating an existing map's semantics **from a still-running mapping session**

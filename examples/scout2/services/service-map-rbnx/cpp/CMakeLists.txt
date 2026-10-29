@@ -1,0 +1,17 @@
+cmake_minimum_required(VERSION 3.16)
+project(mapping_snapshot LANGUAGES C CXX)
+
+find_package(ament_cmake REQUIRED)
+find_package(rclcpp REQUIRED)
+find_package(rcl_interfaces REQUIRED)
+find_package(rtabmap_msgs REQUIRED)
+find_package(rtabmap_conversions REQUIRED)
+find_package(RTABMap 0.23.7 EXACT REQUIRED COMPONENTS core)
+find_package(OpenCV REQUIRED COMPONENTS core imgcodecs)
+
+add_executable(mapping_snapshot snapshot.cpp)
+target_compile_features(mapping_snapshot PRIVATE cxx_std_17)
+target_compile_options(mapping_snapshot PRIVATE -Wall -Wextra -Wpedantic)
+target_include_directories(mapping_snapshot SYSTEM PRIVATE ${RTABMap_INCLUDE_DIRS})
+ament_target_dependencies(mapping_snapshot rclcpp rcl_interfaces rtabmap_msgs rtabmap_conversions)
+target_link_libraries(mapping_snapshot ${RTABMap_LIBRARIES} ${OpenCV_LIBS})

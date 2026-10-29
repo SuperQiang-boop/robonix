@@ -14,6 +14,37 @@ SLAM engine.
 - Capability surface, config schema, and persistence layout: **[CAPABILITY.md](CAPABILITY.md)**.
 - Provider instance configuration reference: **[config.spec](config.spec)**.
 
+## Scout2 automatic relocalization
+
+The Scout2 deployment can optionally use the independent
+`examples/scout2/services/service-relocalization` package. Use one Scout2
+manifest with `map_mode: auto`. Set `RELOCALIZATION_PACKAGE_ROOT` and
+`RELOCALIZATION_COORDINATION_DIR` in its environment and the corresponding
+config paths; relative paths resolve from the deployment directory. Docker
+mounts the shared directory writable and the service package read-only.
+Native deployments use the same host paths. Mapping records the saved database SHA-256 while making its
+runtime copy and publishes private readiness only after a confirmed database
+load and occupancy check. Existing capability contracts are unchanged.
+
+Map load, reset and mode changes invalidate localization before acquiring an
+exclusive lease. With navigation running, they wait for its velocity guard to
+confirm stationary odometry. Failed coordination leaves localization invalid.
+During mapping the relocalization service waits; periodic automatic saving
+continues. Localization requests start only after a ready localization load,
+controlled by `auto_relocalize` in the relocalization service config (default
+true). With coordination enabled, switching from mapping to localization first
+checkpoints and reloads the current named map through the checked load path.
+See the relocalization README and Scout2 `scout2-start.md` for configuration.
+
+Successful periodic mapping checkpoints and the final shutdown checkpoint also
+save Scene's object snapshot for the active lifecycle `map_id` and generation.
+This uses `POST /api/maps/save` with `spatial_saved: true`; Scene validates the
+frame and writes its object partition and `scene_maps/<map_id>.json` without
+calling mapping's save capability again. `SCENE_WEB_URL` defaults to
+`http://127.0.0.1:50107`. A failed object save logs a warning while preserving
+the spatial checkpoint; the next automatic checkpoint retries. SLAM remains
+online throughout. Query saved objects with `GET /api/maps/<map_id>/objects`.
+
 ## SLAM engines (`algo`)
 
 | algo | use | inputs |
@@ -130,8 +161,8 @@ and CMake exports for consumers such as `cv_bridge`.
 
 Named mapping sessions keep a writable runtime database under
 `{MAPPING_RUNTIME_DB_DIR}/{map_id}/`, which must be on a Docker bind mount.
-RTAB-Map keeps some nodes in working memory; periodic or explicit
-`save_map(map_id)` checkpoints publish a stable map under
+RTAB-Map writes nodes and links to its live database while mapping; automatic
+optimized-map checkpoints publish a stable map under
 `{MAPPING_MAPS_DIR}/{map_id}/` (default: the package's `maps/` dir):
 
 ```
@@ -140,16 +171,20 @@ maps/lab_3f/rtabmap.db  occupancy.pgm  occupancy.yaml  occupancy.png  cloud.pcd 
 
 - **Build or continue a map:** set `map_id` plus `map_mode: mapping`. The first
   boot creates a runtime database; later boots restore the latest published
-  checkpoint into the runtime database before continuing. Drive the robot
-  around, then call `save_map(map_id)` to publish or update the checkpoint and
-  previews.
-- **Re-use a map:** set `map_id` plus `map_mode: localization`. Mapping copies
-  the saved db to a private runtime path and re-localizes against it; the
-  saved graph is retained, but robot localization must be checked before
-  using stored Scene coordinates or navigation goals.
-- **Choose a map at startup:** set `map_mode: auto`. The configured `map_id` is
-  preferred; if it has no saved map, the newest saved map is selected. With no
-  saved maps, a new mapping session starts.
+  checkpoint into the runtime database before continuing. While the robot
+  drives, periodic checkpoints request the optimized graph and sensor data
+  through RTAB-Map `/get_map_data`. They write a separate database without
+  closing the engine or reading its live SQLite file. A final checkpoint is
+  published at clean shutdown as well.
+- **Re-use a map:** set `map_mode: localization`. Mapping copies the configured
+  saved db to a private runtime path; if `map_id` is omitted it selects the
+  newest saved map. This mode fails when no saved map exists. The saved graph
+  is retained, but robot localization must be checked before using stored
+  Scene coordinates or navigation goals.
+- **Choose a map at startup:** set `map_mode: auto`. The newest saved map by
+  directory modification time is selected (map ID breaks timestamp ties).
+  The configured `map_id` names a new mapping session only when no saved map
+  exists. Use explicit `localization` plus `map_id` to select a particular map.
 - **Start fresh:** set `reset_map: true` with `map_mode: mapping`. This clears
   the named runtime database before rebuilding; without `reset_map`, mapping
   resumes the existing runtime database.
@@ -164,25 +199,43 @@ Graph optimization can still move stored map-frame coordinates.
 
 ### Scout2 Docker persistence
 
-The Scout2 deployment sets `ROBONIX_MAPPING_FORCE: docker`, `map_id:
-scout2_main`, `map_mode: auto`, `reset_map: false`, and
-`checkpoint_interval_s: 30`. Auto mode localizes against `scout2_main` when it
-exists, falls back to the newest saved map, and starts mapping when no saved
-map is available. Run `rbnx build` and `rbnx boot` from the Scout2
-deployment directory as usual. The package bind mount preserves:
+The Scout2 manifest uses `map_id: scout2_main`, `map_mode: auto`, and
+`checkpoint_interval_s: 30`, with mapping and relocalization in the same
+deployment. With no saved maps, mapping starts a new named map and the
+relocalization service waits without preparing an index or issuing a request.
+Once saved maps exist, `auto` selects the newest saved map for localization;
+the manifest's `auto_relocalize` setting controls the startup request. Scene
+uses the map lifecycle broadcast instead of a fixed map ID. Run `rbnx build`
+and `rbnx boot` from the Scout2 deployment directory as usual. The package bind mount preserves:
 
 - Host live DB: `services/service-map-rbnx/maps/.runtime/scout2_main/rtabmap.db`
 - Host checkpoint: `services/service-map-rbnx/maps/scout2_main/rtabmap.db`
 - Container equivalents: `/mapping/maps/.runtime/scout2_main/rtabmap.db` and
   `/mapping/maps/scout2_main/rtabmap.db`.
 
-Every 60 seconds after the preceding save completes, the bridge asks RTAB-Map
-to flush working memory via `/backup`, then publishes a checked SQLite copy.
-Normal shutdown checkpoints before stopping the engine. This is periodic
+Every configured interval after the preceding save completes, the bridge runs
+`rbnx-build/snapshot/mapping_snapshot`. This helper uses the existing
+`/rtabmap/get_map_data` and `/rtabmap/get_parameters` services and RTAB-Map's
+official database codec. It includes nodes still in memory, saves real optimized
+poses, preserves sensor extrinsics, and assembles occupancy and cloud previews
+from that same graph. It refuses disconnected graphs, missing valid nodes,
+missing scans/local grids, and service failures; the previous checkpoint stays
+available when saving fails. Invalid removed nodes (weight below -1) do not
+count as disconnected components. `checkpoint.json` records the saved node
+and scan-point counts. Normal shutdown also
+publishes a checkpoint before stopping the engine. This is periodic
 durability, **not per-frame zero-loss recording**: a crash can lose changes
-since the latest successful flush (longer when saves fail). Setting the interval
-to `0` disables periodic saves, not shutdown saves. Preview export is best-effort
-and may lag; it is never used to recover the SLAM graph.
+since the latest successful snapshot (longer when saves fail). Setting the
+interval to `0` disables periodic saves, not shutdown saves. Saving never pauses
+or restarts SLAM. Exporting the graph uses the engine's processing callback;
+its cost grows with map size, so monitor processing delays on the actual robot.
+There is no direct online SQLite read or periodic `/backup` call.
+
+`rbnx build` compiles the helper for the selected target (Docker or native),
+using ROS Humble and RTAB-Map **0.23.7**. CMake and a C++ compiler are required;
+Docker images include them. `MAPPING_SAVE_SNAPSHOT_TIMEOUT_S` defaults to `120`
+seconds and bounds the whole helper process (plus 10 seconds for cleanup).
+An absent helper is an explicit save failure requiring a rebuild.
 
 `MAPPING_MAPS_DIR` changes the host/container map root; `MAPPING_RUNTIME_DB_DIR`
 can set a separate bind-mounted runtime root. `ROBONIX_MAPPING_STOP_TIMEOUT_S`
@@ -199,8 +252,14 @@ Offline regression tests:
 `PYTHONPATH=src /usr/bin/python3 -m unittest discover -p 'test_*.py'`.
 The isolated ROS test `scripts/test_persistence_ros.py` requires the package at
 `/mapping`, Scout2 at `/deploy` (read-only mounts), `PYTHONPATH=/mapping/src`, ROS
-Humble sourced, and a Docker `--network none` container. It uses temporary maps
-and synthetic inputs; it must not run on the robot's live ROS graph.
+Humble sourced, and a Docker `--network none` container. It feeds scans during
+multiple executions of the production automatic-save loop, checks graph growth
+across normal/abrupt restarts, and rejects deliberately incomplete responses.
+Set `MAPPING_TEST_EXPORTER` to the built `relocalization_export` executable and
+include the relocalization package in `PYTHONPATH` to require formal export and
+index preparation on every saved checkpoint. `MAPPING_PERSISTENCE_TEST_DIR`
+retains the isolated test databases/logs in a new output directory. It must not
+run on the robot's live ROS graph.
 
 ## Web UI (live map + runtime map ops)
 

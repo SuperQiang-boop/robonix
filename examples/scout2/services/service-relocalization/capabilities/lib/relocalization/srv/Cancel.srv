@@ -1,0 +1,5 @@
+# Scoped to an accepted request; never cancels another caller's newer request.
+string request_id
+---
+bool ok
+string detail

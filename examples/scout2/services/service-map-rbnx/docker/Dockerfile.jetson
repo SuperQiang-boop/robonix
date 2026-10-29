@@ -92,6 +92,7 @@ WORKDIR /ws
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libpcl-io1.12 libyaml-cpp0.7 \
+    build-essential cmake ros-humble-rtabmap-ros \
     libboost-serialization1.74.0 libboost-filesystem1.74.0 libtbb12 \
     python3-pip \
     && rm -rf /var/lib/apt/lists/*

@@ -1,0 +1,17 @@
+manifestVersion: 1
+package:
+  name: com.robonix.service.relocalization
+  version: 0.1.0
+  description: Global map relocalization with verified mapping handoff and navigation admission.
+  license: MulanPSL-2.0
+  tags: [service, relocalization, ros2]
+build: bash scripts/build.sh
+start: bash scripts/start.sh
+stop: bash scripts/stop.sh
+capabilities:
+  - name: robonix/service/relocalization/driver
+  - name: robonix/service/relocalization/relocalize
+  - name: robonix/service/relocalization/relocalize_by_map
+  - name: robonix/service/relocalization/get_status
+  - name: robonix/service/relocalization/cancel
+  - name: robonix/service/relocalization/status

@@ -26,7 +26,7 @@ Rtabmap/DetectionRate: 1.0
 # reconnecting after boot. Do not split the restored graph into a new map on
 # that transient reset; wait for a sustained reset before accepting it.
 # Keep the database on disk with a recoverable SQLite journal. Working-memory
-# nodes still require the periodic /backup or a graceful engine shutdown.
+# nodes are included by periodic optimized-map export or graceful shutdown.
 DbSqlite3/InMemory: false
 DbSqlite3/JournalMode: 0
 DbSqlite3/Synchronous: 2

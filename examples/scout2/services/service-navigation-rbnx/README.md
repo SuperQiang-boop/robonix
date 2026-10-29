@@ -4,6 +4,25 @@ Robonix wrapper around a system-installed ROS 2 Nav2 stack. The service
 discovers map, odometry, and lidar inputs through Atlas and exposes
 `robonix/service/navigation/*` over gRPC and MCP.
 
+## Scout2 verified localization
+
+The optional Scout2 relocalization deployment sets
+`RELOCALIZATION_COORDINATION_DIR` and `RELOCALIZATION_PACKAGE_ROOT` to shared
+same-host paths, mounted by the Docker launcher. Relative paths resolve from
+the deployment directory. The wrapper and final velocity
+guard check a fresh result bound to the exact mapping process and database load.
+Unverified or expired localization rejects goals, blocks velocity output and
+cancels NavigateToPose actions, including direct action clients.
+
+Set `relocalization_provider_id` (default `relocalization`) and
+`relocalization_max_angular_rps` in `(0, 0.2]` when enabling this integration.
+Scout2 uses one deployment manifest and conservative linear/angular limits
+matched to scan duration. A fresh ready mapping heartbeat suppresses timer
+zero velocities so teleoperation can build the map; Nav2 commands still require
+verified localization. Missing/stale heartbeats and transitions still stop
+autonomous motion. The guard
+acknowledges map transitions only after fresh, continuously stationary odometry.
+
 ## Deployment config
 
 Navigation behavior belongs to the robot deployment, not this provider. Each

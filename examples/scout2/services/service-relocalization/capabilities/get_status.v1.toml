@@ -1,0 +1,8 @@
+[contract]
+id = "robonix/service/relocalization/get_status"
+version = "1"
+kind = "service"
+idl = "relocalization/srv/GetStatus.srv"
+description = "Read relocalization availability and the current result."
+[mode]
+type = "rpc"

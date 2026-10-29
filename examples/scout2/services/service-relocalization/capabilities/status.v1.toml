@@ -1,0 +1,8 @@
+[contract]
+id = "robonix/service/relocalization/status"
+version = "1"
+kind = "service"
+idl = "relocalization/msg/Status.msg"
+description = "Periodic relocalization availability and result; consumers must expire stale samples."
+[mode]
+type = "topic_out"

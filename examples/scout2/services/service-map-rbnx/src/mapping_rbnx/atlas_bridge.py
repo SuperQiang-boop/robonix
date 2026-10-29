@@ -74,6 +74,8 @@ from map_mcp import (  # type: ignore  # noqa: E402
 from mapping_rbnx import lifecycle  # noqa: E402
 from mapping_rbnx import map_ops  # noqa: E402
 from mapping_rbnx import webui  # noqa: E402
+from mapping_rbnx import relocalization  # noqa: E402
+from mapping_rbnx import scene_snapshot  # noqa: E402
 from mapping_rbnx.profiles import (  # noqa: E402
     choose_provider_record,
     resolve_occupancy_sources,
@@ -124,9 +126,11 @@ def _resolve_persistence(cfg: dict) -> dict[str, str]:
     a published checkpoint is copied into that path before mapping resumes;
     the published artifact remains separate and is updated by save_map.
 
-    In ``auto`` mode, prefer the configured map_id when its database exists.
-    Otherwise select the newest valid map directory. A selected saved map is
-    loaded for localization. Start a new named map only when none is available.
+    In ``auto`` mode, select the newest saved map directory for localization.
+    The configured map_id is used only as the name for a first map when the
+    library is empty; it never hides a newer user-saved map.
+    Localization mode may omit map_id to select the newest saved map, but it
+    fails closed when no saved map exists.
     """
     raw_id = cfg.get("map_id")
     map_id = _sanitize_map_id(str(raw_id)) if raw_id else ""
@@ -135,39 +139,19 @@ def _resolve_persistence(cfg: dict) -> dict[str, str]:
 
     # ── Auto-detect: check for existing persisted maps ──────────────────────
     if mode == "auto":
-        if not map_id:
-            # No map_id specified — scan MAPS_DIR for saved maps
-            map_id = _find_latest_map()
-            if map_id:
-                log.info("persistence: auto mode detected saved map map_id=%s → localization", map_id)
-                mode = "localization"
+        newest_map_id = _find_latest_map()
+        if newest_map_id:
+            if map_id and map_id != newest_map_id:
+                log.info("persistence: auto mode configured map_id=%s; selecting newest saved map_id=%s",
+                         map_id, newest_map_id)
             else:
-                log.info("persistence: auto mode no saved maps found → mapping")
-                mode = "mapping"
+                log.info("persistence: auto mode detected saved map map_id=%s → localization",
+                         newest_map_id)
+            map_id = newest_map_id
+            mode = "localization"
         else:
-            map_dir = os.path.join(MAPS_DIR, map_id)
-            saved_db = os.path.join(map_dir, "rtabmap.db")
-            if os.path.isfile(saved_db):
-                log.info("persistence: auto mode detected saved map at %s → localization", saved_db)
-                mode = "localization"
-            else:
-                requested_id = map_id
-                map_id = _find_latest_map()
-                if map_id:
-                    log.info(
-                        "persistence: auto mode map_id=%s is missing; "
-                        "loading latest map_id=%s for localization",
-                        requested_id, map_id,
-                    )
-                    mode = "localization"
-                else:
-                    map_id = requested_id
-                    log.info(
-                        "persistence: auto mode no saved map for map_id=%s "
-                        "or in %s → mapping",
-                        requested_id, MAPS_DIR,
-                    )
-                    mode = "mapping"
+            log.info("persistence: auto mode no saved maps found → mapping")
+            mode = "mapping"
 
     if mode not in _VALID_MODES:
         raise RuntimeError(
@@ -177,7 +161,12 @@ def _resolve_persistence(cfg: dict) -> dict[str, str]:
     # ── Localization: load existing map ────────────────────────────────────
     if mode == "localization":
         if not map_id:
-            raise RuntimeError("map_mode=localization requires a saved map_id")
+            map_id = _find_latest_map()
+            if not map_id:
+                raise RuntimeError(
+                    "map_mode=localization requires at least one saved map"
+                )
+            log.info("persistence: localization selected latest saved map_id=%s", map_id)
         map_dir = os.path.join(MAPS_DIR, map_id)
         saved_db = os.path.join(map_dir, "rtabmap.db")
         if not os.path.isfile(saved_db):
@@ -225,17 +214,17 @@ def _resolve_persistence(cfg: dict) -> dict[str, str]:
 
 
 def _find_latest_map() -> str:
-    """Return the newest valid saved map by its directory modification time.
+    """Return the newest saved map by its directory modification time.
 
-    A valid map directory contains ``rtabmap.db``. Hidden directories and
-    runtime data are ignored.
+    Candidates contain ``rtabmap.db``; load-time checks validate the database.
+    Hidden directories and runtime data are ignored.
     """
     if not os.path.isdir(MAPS_DIR):
         log.info("persistence: MAPS_DIR=%s does not exist", MAPS_DIR)
         return ""
 
     latest_map_id = ""
-    latest_mtime = 0.0
+    latest_key = (-1, "")
 
     for entry in os.listdir(MAPS_DIR):
         # Skip hidden directories
@@ -249,9 +238,10 @@ def _find_latest_map() -> str:
             continue
         # Directory mtime reflects map-level changes such as checkpoint files.
         try:
-            mtime = os.path.getmtime(map_dir)
-            if mtime > latest_mtime:
-                latest_mtime = mtime
+            mtime_ns = os.stat(map_dir).st_mtime_ns
+            candidate_key = (mtime_ns, entry)
+            if candidate_key > latest_key:
+                latest_key = candidate_key
                 latest_map_id = entry
         except OSError as e:
             log.warning("persistence: cannot stat %s: %s", saved_db, e)
@@ -259,7 +249,7 @@ def _find_latest_map() -> str:
 
     if latest_map_id:
         import datetime
-        mtime_str = datetime.datetime.fromtimestamp(latest_mtime).isoformat()
+        mtime_str = datetime.datetime.fromtimestamp(latest_key[0] / 1e9).isoformat()
         log.info("persistence: found latest map map_id=%s modified=%s",
                  latest_map_id, mtime_str)
     else:
@@ -636,6 +626,7 @@ def init(cfg: dict):
         log.warning("algo=fastlio2 is BROKEN (drift); use only for repro/debug")
 
     log.info("CMD_INIT: algo=%s atlas=%s cap=%s", algo, ATLAS_ENDPOINT, CAP_ID)
+    relocalization.configure(mapping.id, cfg)
 
     # Persist algo for start_engine.sh.
     os.environ["MAPPING_ALGO"] = algo
@@ -715,6 +706,8 @@ def init(cfg: dict):
     # A new/reset map opens an epoch; resuming the same graph keeps it.
     lifecycle.set_state(persist.get("map_id", ""), active_mode,
                         bump=new_mapping)
+    if active_mode == "mapping":
+        relocalization.mapping(persist.get("map_id", ""))
     map_ops._ACTIVE_DB = active_db
     try:
         mapping.declare_ros2_topic("robonix/service/map/lifecycle",
@@ -749,6 +742,7 @@ def init(cfg: dict):
     webui.set_active_db_hint(_active_db)
     webui.maybe_start()
     _start_checkpoint_loop(cfg, active_mode)
+    relocalization.start(persist.get('map_id', ''), active_mode)
     return Ok()
 
 
@@ -761,7 +755,7 @@ _SHUTDOWN_RESULT = None
 
 
 def _start_checkpoint_loop(cfg: dict, active_mode: str) -> None:
-    """Persist named mapping checkpoints periodically while RTAB-Map runs."""
+    """Publish periodic optimized map snapshots without restarting RTAB-Map."""
     global _CHECKPOINT_THREAD
     _CHECKPOINT_STOP.clear()
     if _ACTIVE.get("algo") != "rtabmap":
@@ -776,16 +770,18 @@ def _start_checkpoint_loop(cfg: dict, active_mode: str) -> None:
         return
 
     def run() -> None:
-        """Save the current database only while a named map is being extended."""
+        """Snapshot the current named map while leaving its engine online."""
         while not _CHECKPOINT_STOP.wait(interval):
             with map_ops._SAVE_LOCK:
                 state = lifecycle.current()
                 map_id = state.get("map_id", "")
-                if not map_id or map_ops.get_mode_impl().get("mode") != "mapping":
+                mode = map_ops.get_mode_impl().get("mode")
+                if not map_id or mode != "mapping":
                     continue
                 out = map_ops.save_map_impl(map_id, active_db=_active_db())
             if out.get("ok"):
                 log.info("checkpoint: saved map_id=%s", map_id)
+                scene_snapshot.save_objects(map_id, state.get("generation"))
             else:
                 log.warning("checkpoint failed for map_id=%s: %s",
                             map_id, out.get("detail", "unknown error"))
@@ -805,11 +801,14 @@ def shutdown():
     with _SHUTDOWN_LOCK:
         if _SHUTDOWN_RESULT is not None:
             return _SHUTDOWN_RESULT
+        relocalization.close()
         _CHECKPOINT_STOP.set()
         if _CHECKPOINT_THREAD and _CHECKPOINT_THREAD.is_alive():
             _CHECKPOINT_THREAD.join()
+        out = None
         with map_ops._SAVE_LOCK:
-            map_id = lifecycle.current().get("map_id")
+            state = lifecycle.current()
+            map_id = state.get("map_id")
             if (not map_id or _ACTIVE.get("algo") != "rtabmap"
                     or map_ops.get_mode_impl().get("mode") != "mapping"):
                 _SHUTDOWN_RESULT = Ok()
@@ -817,6 +816,8 @@ def shutdown():
                 out = map_ops.save_map_impl(map_id, active_db=_active_db())
                 _SHUTDOWN_RESULT = Ok() if out.get("ok") else Err(str(out.get("detail")))
                 log.info("shutdown checkpoint: %s", out.get("detail"))
+        if out is not None and out.get("ok"):
+            scene_snapshot.save_objects(map_id, state.get("generation"))
         return _SHUTDOWN_RESULT
 
 

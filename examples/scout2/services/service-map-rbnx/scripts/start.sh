@@ -136,6 +136,30 @@ if [[ -n "${ROBONIX_ZENOH_LISTEN:-}" ]]; then
 fi
 
 declare -a EXTRA_MOUNTS=()
+RELOCALIZATION_COORDINATION_DIR="${RELOCALIZATION_COORDINATION_DIR:-}"
+RELOCALIZATION_PACKAGE_ROOT="${RELOCALIZATION_PACKAGE_ROOT:-}"
+if [[ -n "$RELOCALIZATION_COORDINATION_DIR" ]]; then
+    : "${RELOCALIZATION_PACKAGE_ROOT:?set the service-relocalization directory}"
+    if [[ "$RELOCALIZATION_COORDINATION_DIR" != /* ]]; then
+        : "${RBNX_INVOCATION_CWD:?relative coordination path requires deployment directory}"
+        RELOCALIZATION_COORDINATION_DIR="$RBNX_INVOCATION_CWD/$RELOCALIZATION_COORDINATION_DIR"
+    fi
+    if [[ "$RELOCALIZATION_PACKAGE_ROOT" != /* ]]; then
+        : "${RBNX_INVOCATION_CWD:?relative package path requires deployment directory}"
+        RELOCALIZATION_PACKAGE_ROOT="$RBNX_INVOCATION_CWD/$RELOCALIZATION_PACKAGE_ROOT"
+    fi
+    [[ -f "$RELOCALIZATION_PACKAGE_ROOT/relocalization_rbnx/coordination.py" ]] || {
+        echo "[mapping/start] relocalization package not found: $RELOCALIZATION_PACKAGE_ROOT" >&2
+        exit 2
+    }
+    mkdir -p "$RELOCALIZATION_COORDINATION_DIR"
+    EXTRA_MOUNTS+=(
+        -e "RELOCALIZATION_COORDINATION_DIR=$RELOCALIZATION_COORDINATION_DIR"
+        -e "RELOCALIZATION_PACKAGE_ROOT=$RELOCALIZATION_PACKAGE_ROOT"
+        -v "$RELOCALIZATION_COORDINATION_DIR:$RELOCALIZATION_COORDINATION_DIR"
+        -v "$RELOCALIZATION_PACKAGE_ROOT:$RELOCALIZATION_PACKAGE_ROOT:ro"
+    )
+fi
 # NOTE: RBNX_CONFIG_FILE intentionally NOT mounted — config arrives via
 # Driver(CMD_INIT, config_json) over gRPC, never a file.
 # A deploy-owned params_file is resolved relative to the robot manifest, not
@@ -217,6 +241,7 @@ docker run --rm \
     -e MAPPING_WEBUI_HOST="${MAPPING_WEBUI_HOST:-127.0.0.1}" \
     -e MAPPING_MAPS_DIR="${MAPPING_MAPS_DIR:-/mapping/maps}" \
     -e MAPPING_RUNTIME_DB_DIR="${MAPPING_RUNTIME_DB_DIR:-${MAPPING_MAPS_DIR:-/mapping/maps}/.runtime}" \
+    -e MAPPING_SAVE_SNAPSHOT_TIMEOUT_S="${MAPPING_SAVE_SNAPSHOT_TIMEOUT_S:-120}" \
     -e ROBONIX_MAPPING_STOP_TIMEOUT_S="${ROBONIX_MAPPING_STOP_TIMEOUT_S:-180}" \
     "${DEPLOY_ARGS[@]}" \
     "${X11_ARGS[@]}" \

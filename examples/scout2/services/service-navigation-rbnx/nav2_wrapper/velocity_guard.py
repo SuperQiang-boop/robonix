@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import json
+import copy
 import math
 import os
 import threading
+import sys
 import time
 from collections import deque
 from pathlib import Path
@@ -60,6 +62,19 @@ class VelocityGuardNode(Node):
                 "ROBONIX_NAV_DEFAULT_SPEED_PERCENTAGE must be in (0, 100]"
             )
         super().__init__("robonix_velocity_guard")
+        self._localization_dir = os.environ.get('RELOCALIZATION_COORDINATION_DIR')
+        self._localization_check = None
+        self._localization_angular = None
+        self._last_localization_cancel = 0.0
+        self._stationary = deque(maxlen=100)
+        if self._localization_dir:
+            sys.path.insert(0, os.environ['RELOCALIZATION_PACKAGE_ROOT'])
+            from relocalization_rbnx.navigation import check
+            provider = os.environ.get('RELOCALIZATION_PROVIDER_ID', 'relocalization')
+            self._localization_check = lambda: check(self._localization_dir, provider)
+            self._localization_angular = float(os.environ['ROBONIX_RELOCALIZATION_MAX_ANGULAR_RPS'])
+            if not math.isfinite(self._localization_angular) or not 0 < self._localization_angular <= 0.2:
+                raise ValueError('invalid relocalization angular speed bound')
         limits = GuardLimits(
             terminal_xy_m=float(os.getenv("ROBONIX_GUARD_TERMINAL_XY_M", "0.45")),
             terminal_timeout_s=float(os.getenv("ROBONIX_GUARD_TERMINAL_TIMEOUT_S", "15.0")),
@@ -92,7 +107,7 @@ class VelocityGuardNode(Node):
         self.create_subscription(
             SpeedLimit, speed_limit_topic, self._on_speed_limit, 10
         )
-        self.create_subscription(Odometry, "/odom", self._on_odom, 50)
+        self.create_subscription(Odometry, os.environ.get('ROBONIX_NAV_GUARD_ODOM_TOPIC', '/odom'), self._on_odom, 50)
         self.create_subscription(NavPath, "/plan", self._on_plan, 10)
         self.create_subscription(LaserScan, "/scanner/scan", self._on_scan, 20)
         self.create_subscription(
@@ -205,10 +220,24 @@ class VelocityGuardNode(Node):
             self._event("plan", frame=msg.header.frame_id, points=len(msg.poses), goal=self._goal_pose)
 
     def _on_odom(self, msg: Odometry) -> None:
+        """Observe motion and retain fresh measurements for transition stop acknowledgement."""
         with self._lock:
             pose = msg.pose.pose
             yaw = _yaw(pose.orientation)
             self.guard.observe_odom(yaw)
+            if self._localization_dir:
+                stamp = msg.header.stamp.sec*1_000_000_000+msg.header.stamp.nanosec
+                age = self.get_clock().now().nanoseconds-stamp
+                twist = msg.twist.twist
+                values = (pose.position.x, pose.position.y, pose.position.z, yaw,
+                    twist.linear.x, twist.linear.y, twist.linear.z,
+                    twist.angular.x, twist.angular.y, twist.angular.z)
+                if (not 0 <= age <= 200_000_000 or not all(math.isfinite(x) for x in values) or
+                        math.sqrt(sum(x*x for x in values[4:7])) > 0.02 or
+                        math.sqrt(sum(x*x for x in values[7:])) > 0.02):
+                    self._stationary.clear()
+                else:
+                    self._stationary.append((time.monotonic(), stamp, values[:4]))
             self._event(
                 "odom", pose=(pose.position.x, pose.position.y, yaw),
                 twist=(msg.twist.twist.linear.x, msg.twist.twist.angular.z),
@@ -273,7 +302,15 @@ class VelocityGuardNode(Node):
         self._front_min_history.append(front_min)
 
     def _on_cmd(self, msg: Twist) -> None:
+        """Gate every Nav2 output on live localization, including direct action clients."""
         with self._lock:
+            if self._localization_check is not None and not self._localization_check()[0]:
+                self._pub.publish(Twist())
+                self._cancel_for_localization()
+                return
+            if self._localization_angular is not None:
+                msg = copy.deepcopy(msg)
+                msg.angular.z = max(-self._localization_angular, min(self._localization_angular, msg.angular.z))
             x, y, limited = bounded_linear_velocity(
                 float(msg.linear.x),
                 float(msg.linear.y),
@@ -322,9 +359,56 @@ class VelocityGuardNode(Node):
         self._event("cancel_requested", uuid=self._active_uuid)
 
     def _publish_latched_zero(self) -> None:
+        """Stop on lost localization; leave steady manual mapping undisturbed.
+
+        A fresh mapping heartbeat suppresses unsolicited timer zeros only.
+        _on_cmd still rejects every autonomous command in mapping mode, and
+        map transitions revoke readiness before requesting a stationary stop.
+        """
         with self._lock:
-            if self.guard.latched_reason:
+            mapping = False
+            if self._localization_check is not None:
+                from relocalization_rbnx.navigation import mapping_active
+                mapping = mapping_active(self._localization_dir)
+                valid, _ = self._localization_check()
+                if not valid:
+                    if not mapping:
+                        self._pub.publish(Twist())
+                    self._cancel_for_localization()
+                self._write_localization_stop(not valid)
+            if self.guard.latched_reason and not mapping:
                 self._pub.publish(Twist())
+
+    def _cancel_for_localization(self):
+        """Repeatedly cancel all NavigateToPose actions while localization is invalid."""
+        now = time.monotonic()
+        if now-self._last_localization_cancel < 0.5 or not self._cancel.service_is_ready():
+            return
+        self._last_localization_cancel = now
+        # Empty UUID and zero stamp are the ROS action protocol's cancel-all.
+        self._cancel.call_async(CancelGoal.Request())
+
+    def _write_localization_stop(self, blocked):
+        """Acknowledge a map transition only after continuously stationary odometry."""
+        from relocalization_rbnx.coordination import read_record, write_record
+        try:
+            directory = Path(self._localization_dir)
+            mapping = read_record(directory / 'mapping.json', 0.6)
+            now = time.monotonic()
+            samples = list(self._stationary)
+            stopped = blocked and bool(samples) and now-samples[-1][0] < 0.15
+            stopped = stopped and samples[-1][0]-samples[0][0] >= 0.5
+            if stopped:
+                reference = samples[-1][2]
+                stopped = all(math.dist(p[:3], reference[:3]) < 0.01 and
+                    abs(math.remainder(p[3]-reference[3], 2*math.pi)) < 0.01
+                    for _, _, p in samples)
+                stopped = stopped and all(a[1] < b[1] and b[0]-a[0] <= 0.1
+                    for a, b in zip(samples, samples[1:]))
+            write_record(directory / 'navigation.json',
+                dict(load_id=mapping['load_id'], stopped=bool(stopped)))
+        except (OSError, ValueError, KeyError, RuntimeError) as exc:
+            self.get_logger().error(f'cannot acknowledge localization stop: {exc}')
 
 
 def main() -> None:

@@ -120,6 +120,32 @@ prepare_runtime_proto_gen() {
 prepare_runtime_proto_gen
 mkdir -p rbnx-build/data
 
+declare -a RELOCALIZATION_ARGS=()
+RELOCALIZATION_COORDINATION_DIR="${RELOCALIZATION_COORDINATION_DIR:-}"
+RELOCALIZATION_PACKAGE_ROOT="${RELOCALIZATION_PACKAGE_ROOT:-}"
+if [[ -n "$RELOCALIZATION_COORDINATION_DIR" ]]; then
+    : "${RELOCALIZATION_PACKAGE_ROOT:?set the service-relocalization directory}"
+    if [[ "$RELOCALIZATION_COORDINATION_DIR" != /* ]]; then
+        : "${RBNX_INVOCATION_CWD:?relative coordination path requires deployment directory}"
+        RELOCALIZATION_COORDINATION_DIR="$RBNX_INVOCATION_CWD/$RELOCALIZATION_COORDINATION_DIR"
+    fi
+    if [[ "$RELOCALIZATION_PACKAGE_ROOT" != /* ]]; then
+        : "${RBNX_INVOCATION_CWD:?relative package path requires deployment directory}"
+        RELOCALIZATION_PACKAGE_ROOT="$RBNX_INVOCATION_CWD/$RELOCALIZATION_PACKAGE_ROOT"
+    fi
+    [[ -f "$RELOCALIZATION_PACKAGE_ROOT/relocalization_rbnx/coordination.py" ]] || {
+        echo "[nav2/start] relocalization package not found: $RELOCALIZATION_PACKAGE_ROOT" >&2
+        exit 2
+    }
+    mkdir -p "$RELOCALIZATION_COORDINATION_DIR"
+    RELOCALIZATION_ARGS=(
+        -e "RELOCALIZATION_COORDINATION_DIR=$RELOCALIZATION_COORDINATION_DIR"
+        -e "RELOCALIZATION_PACKAGE_ROOT=$RELOCALIZATION_PACKAGE_ROOT"
+        -v "$RELOCALIZATION_COORDINATION_DIR:$RELOCALIZATION_COORDINATION_DIR"
+        -v "$RELOCALIZATION_PACKAGE_ROOT:$RELOCALIZATION_PACKAGE_ROOT:ro"
+    )
+fi
+
 declare -a ZENOH_ARGS=()
 if [[ -n "${ROBONIX_ZENOH_ROUTER:-}" ]]; then
     ZENOH_ARGS=(-e "ROBONIX_ZENOH_ROUTER=${ROBONIX_ZENOH_ROUTER}")
@@ -178,6 +204,7 @@ exec docker run --rm \
     -e NAV2_DRIVER_PORT="${NAV2_DRIVER_PORT:-50235}" \
     -e NAV2_LOG_LEVEL="${NAV2_LOG_LEVEL:-info}" \
     "${DEPLOY_ARGS[@]}" \
+    "${RELOCALIZATION_ARGS[@]}" \
     -v "$(pwd)":/nav2 \
     -v "$PKG/rbnx-build/codegen/nav2_proto_gen:/nav2/rbnx-build/codegen/proto_gen:ro" \
     -v "$(rbnx path robonix-api)":/robonix-api:ro \

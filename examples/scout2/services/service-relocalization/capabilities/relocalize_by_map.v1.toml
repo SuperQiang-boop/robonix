@@ -1,0 +1,8 @@
+[contract]
+id = "robonix/service/relocalization/relocalize_by_map"
+version = "1"
+kind = "service"
+idl = "relocalization/srv/RelocalizeByMap.srv"
+description = "Request global relocalization using the currently loaded snapshot for a map ID."
+[mode]
+type = "rpc"

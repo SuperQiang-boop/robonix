@@ -1,0 +1,16 @@
+[project]
+name = "robonix-service-relocalization"
+version = "0.1.0"
+description = "Global relocalization service for Robonix"
+requires-python = ">=3.10"
+dependencies = ["robonix-api>=0.1.0rc1", "numpy>=1.21,<2", "PyYAML>=6"]
+
+[project.optional-dependencies]
+build = ["grpcio-tools>=1.50"]
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["relocalization_rbnx*"]
