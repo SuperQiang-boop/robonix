@@ -12,6 +12,10 @@
 
 namespace g1_chassis {
 
+namespace {
+constexpr float kSdkRpcTimeoutSeconds = 0.25F;
+}
+
 bool UnitreeLocoClient::Initialize(const std::string &network_interface,
                                     std::string *error) {
   try {
@@ -22,9 +26,11 @@ bool UnitreeLocoClient::Initialize(const std::string &network_interface,
     std::cerr << "[g1-sdk] LocoClient create/init\n";
     client_ = new unitree::robot::g1::LocoClient();
     static_cast<unitree::robot::g1::LocoClient *>(client_)->Init();
-    static_cast<unitree::robot::g1::LocoClient *>(client_)->SetTimeout(0.10F);
+    static_cast<unitree::robot::g1::LocoClient *>(client_)->SetTimeout(
+        kSdkRpcTimeoutSeconds);
 
-    std::cerr << "[g1-sdk] SDK2 initialized\n";
+    std::cerr << "[g1-sdk] SDK2 initialized; RPC timeout="
+              << static_cast<int>(kSdkRpcTimeoutSeconds * 1000.0F) << " ms\n";
     return true;
   } catch (const std::exception &exception) {
     if (error != nullptr) {

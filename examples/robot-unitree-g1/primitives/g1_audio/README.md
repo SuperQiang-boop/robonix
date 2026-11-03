@@ -1,9 +1,9 @@
 # G1 Audio
 
 This package provides the G1 built-in microphone and speaker as a Robonix audio primitive.
-The `speech` service continues to synthesize speech; its speaker provider can
-use `g1_audio`, while Liaison can consume the onboard microphone through the
-standard `robonix/primitive/audio/mic` stream.
+The `speech` service can send text to G1's built-in speech service, or
+synthesize PCM for the `g1_audio` speaker. Liaison can consume the onboard
+microphone through the standard `robonix/primitive/audio/mic` stream.
 
 The microphone is captured on demand. When a client opens the mic stream, the
 primitive enables the G1 voice service (API 1008, mode 1), joins the configured
@@ -70,6 +70,21 @@ service performs synthesis and routes the PCM stream to the selected speaker.
 They do not need to call the SDK primitive directly.
 The existing `audio_client_bridge` remains available for browser/client audio
 but is no longer the default TTS output.
+
+For G1 built-in Chinese text playback, select
+`speech_tts_backend_class: speech_service.unitree_tts:UnitreeTTSBackend`
+in the speech service config. The speech service invokes
+one persistent `rbnx-build/bin/g1_audio_tts_helper` over a private socket; this calls SDK2
+`TtsMaker(text, 0)` so G1 handles synthesis and speaker output. Edge TTS is
+not called for these requests. Rebuild this package and restart the speech
+service with the updated deployment config before testing. The helper uses
+`G1_NETWORK_INTERFACE` and does not change speaker volume. A zero SDK result
+confirms acceptance, not playback completion. Text is limited to 4096 UTF-8
+bytes; no audio is returned by the robot for export.
+The SDK client stays alive between phrases because `TtsMaker` can return
+before audible playback; exiting immediately can interrupt speech. Speech
+closes the helper on shutdown or backend replacement. Rebuild this helper
+alongside the updated Speech Python code because its private protocol changed.
 
 The provider accepts 16 kHz mono `pcm_s16le`, matching the current speech
 service and the G1 SDK2 streaming example. See `CAPABILITY.md` for constraints,

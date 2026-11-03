@@ -41,6 +41,10 @@ def format_result_detail(
 ) -> str:
     """Describe an action result without inventing unavailable Humble codes."""
     parts = [status.lower()]
+    if status.upper() == "SUCCEEDED":
+        parts.append("Nav2 goal checker accepted arrival tolerances and stopped dwell; "
+                     "last feedback distance need not be zero and last_pose is the endpoint, "
+                     "not the starting pose")
     if feedback:
         parts.append(
             "distance_remaining={:.3f}m recoveries={} last_pose=({:.3f},{:.3f})".format(

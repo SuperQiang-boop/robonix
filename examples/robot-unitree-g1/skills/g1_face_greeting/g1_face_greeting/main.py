@@ -6,6 +6,8 @@ import asyncio
 import concurrent.futures
 import json
 import logging
+import math
+import sys
 import threading
 import time
 from collections import OrderedDict
@@ -24,6 +26,7 @@ from g1_face_greeting_mcp import (
     ListFaceMessages_Request, ListFaceMessages_Response,
 )
 from g1_face_greeting.messages import MessageStore
+from g1_face_greeting import coordination
 
 log = logging.getLogger("g1_face_greeting")
 FACE_EVENTS = "robonix/service/face_recognition/events/next"
@@ -31,6 +34,10 @@ FACE_RESOLVE = "robonix/service/face_recognition/people/resolve"
 SCENE_OBJECTS = "robonix/system/scene/list_objects"
 SPEECH = "robonix/service/speech/speak"
 ARM = "robonix/skill/g1_arm_actions/run"
+NAVIGATION = "robonix/service/navigation/navigate"
+# Enable arm actions and confirmed release for the navigation comparison.
+# Set False to repeat the speech-only SDK isolation trial.
+ARM_GREETING_ENABLED = True
 ALLOWED_ACTIONS = {
     "wave_under_head",
     "wave_above_head",
@@ -51,6 +58,8 @@ class Settings:
     cooldown_sec: float
     actions: dict[int, str]
     message_store_path: Path
+    navigation_provider_id: str
+    greeting_wait_sec: float
 
     @classmethod
     def parse(cls, raw: dict[str, Any]) -> "Settings":
@@ -67,6 +76,8 @@ class Settings:
             "poll_wait_ms",
             "cooldown_sec",
             "message_store_path",
+            "navigation_provider_id",
+            "greeting_wait_sec",
             *(f"action_level_{level}" for level in range(1, 6)),
         }
         unknown = sorted(set(raw) - allowed)
@@ -98,10 +109,13 @@ class Settings:
             raise ValueError("cooldown_sec must be in [0, 3600]")
         navigation = flag("navigation_enabled")
         turn = flag("turn_to_face_enabled")
-        if navigation or turn:
+        if turn:
             raise ValueError(
-                "navigation_enabled and turn_to_face_enabled are reserved and must remain false"
+                "turn_to_face_enabled must remain false"
             )
+        wait = raw.get("greeting_wait_sec", 12.0)
+        if isinstance(wait, bool) or not isinstance(wait, (int, float)) or not math.isfinite(wait) or not 1 <= wait <= 240:
+            raise ValueError("greeting_wait_sec must be finite and in [1, 240]")
         actions = {}
         defaults = {
             1: "wave_under_head",
@@ -133,6 +147,8 @@ class Settings:
             cooldown,
             actions,
             store_path,
+            text("navigation_provider_id", "nav2"),
+            float(wait),
         )
 
 
@@ -147,6 +163,7 @@ _lock = threading.RLock()
 _last_greet: dict[int, float] = {}
 _seen_events: OrderedDict[str, None] = OrderedDict()
 _store: MessageStore | None = None
+_greeting_lock = threading.Lock()
 
 
 def _find(contract: str, provider_id: str):
@@ -164,6 +181,10 @@ def _find_optional(contract: str, provider_id: str):
 
 
 def _result_value(result: Any) -> dict[str, Any]:
+    """Decode MCP results and preserve original text when the server reports errors."""
+    if getattr(result, "isError", False):
+        details = [str(getattr(item, "text", "")) for item in (getattr(result, "content", None) or [])]
+        raise RuntimeError("MCP tool error: " + ("; ".join(filter(None, details)) or str(getattr(result, "structuredContent", None))))
     structured = getattr(result, "structuredContent", None)
     if isinstance(structured, dict):
         return structured
@@ -178,8 +199,6 @@ def _result_value(result: Any) -> dict[str, Any]:
                 continue
             if isinstance(value, dict):
                 return value
-    if getattr(result, "isError", False):
-        raise RuntimeError("MCP tool returned an error without a JSON result")
     return {}
 
 
@@ -310,7 +329,8 @@ def _valid_level(value: Any) -> int | None:
     return value
 
 
-def _greet(event: dict[str, Any]) -> dict[str, Any]:
+def _greet_stationary(event: dict[str, Any]) -> dict[str, Any]:
+    """Speak greetings and messages, optionally running the arm action."""
     assert _settings is not None
     try:
         person_id = int(event.get("person_id", -1))
@@ -343,7 +363,7 @@ def _greet(event: dict[str, Any]) -> dict[str, Any]:
         if greet_due:
             _last_greet[person_id] = now
 
-    action = _settings.actions[level]
+    action = _settings.actions[level] if ARM_GREETING_ENABLED else ""
     speech_ok = False
     action_ok = False
     details: list[str] = []
@@ -351,11 +371,13 @@ def _greet(event: dict[str, Any]) -> dict[str, Any]:
     for message in messages:
         prefix = f"{message['sender']}托我告诉您：" if message["sender"] else "有人托我告诉您："
         speech_parts.append(f"{prefix}{message['body']}")
+    if event.get("ask_for_task"):
+        speech_parts.append("有什么可以帮助您的吗？")
     speech_text = "。".join(
         part.rstrip("。！？!?；;，,") for part in speech_parts if part.strip()
     ) + "。"
     with concurrent.futures.ThreadPoolExecutor(
-        max_workers=2,
+        max_workers=2 if ARM_GREETING_ENABLED else 1,
         thread_name_prefix="g1-face-greeting",
     ) as executor:
         speech_future = executor.submit(
@@ -366,21 +388,23 @@ def _greet(event: dict[str, Any]) -> dict[str, Any]:
             {"target": "", "text": speech_text},
             max(65.0, min(240.0, len(speech_text) * 1.2)),
         )
-        action_future = executor.submit(
-            _timed_call,
-            "arm action",
-            _arm_connection,
-            "run",
-            {"action": action},
-            30.0,
-        )
+        action_future = None
+        if ARM_GREETING_ENABLED:
+            action_future = executor.submit(
+                _timed_call,
+                "arm action",
+                _arm_connection,
+                "run",
+                {"action": action},
+                30.0,
+            )
         try:
             speech = speech_future.result()
             speech_ok = bool(speech.get("ok", False))
             details.append(f"speech={speech.get('detail', 'ok' if speech_ok else 'failed')}")
         except Exception as exc:  # noqa: BLE001
             details.append(f"speech_error={exc}")
-            log.exception("speech failed for person_id=%s", person_id)
+            log.exception("speech failed for person_id=%s: %s", person_id, exc)
         if messages:
             try:
                 assert _store is not None
@@ -388,20 +412,174 @@ def _greet(event: dict[str, Any]) -> dict[str, Any]:
                 log.info("face message delivery person_id=%s count=%d status=%s", person_id, len(messages), "delivered" if speech_ok else "uncertain")
             except Exception:  # noqa: BLE001
                 log.exception("failed to save face message delivery result")
-        try:
-            arm = action_future.result()
-            action_ok = bool(arm.get("accepted", False))
-            details.append(f"action={arm.get('detail', 'ok' if action_ok else 'failed')}")
-        except Exception as exc:  # noqa: BLE001
-            details.append(f"action_error={exc}")
-            log.exception("arm action failed for person_id=%s", person_id)
+        if action_future is not None:
+            try:
+                arm = action_future.result()
+                action_ok = bool(arm.get("accepted", False))
+                details.append(f"action={arm.get('detail', 'ok' if action_ok else 'failed')}")
+            except Exception as exc:  # noqa: BLE001
+                details.append(f"action_error={exc}")
+                log.exception("arm action failed for person_id=%s", person_id)
+        else:
+            details.append("arm action skipped for SDK isolation test")
     return {
         "accepted": True,
         "speech_ok": speech_ok,
         "action_ok": action_ok,
         "action": action,
+        "playback_wait_sec": max(_settings.greeting_wait_sec, len(speech_text) / 3.0),
         "detail": "; ".join(details),
     }
+
+
+def _navigation_call(tool: str, payload: dict) -> dict:
+    """Resolve each navigation operation through Atlas and release its connection."""
+    contract = NAVIGATION + '/' + tool
+    log.info('navigation %s requested run_id=%s', tool, payload.get('run_id', ''))
+    connection = skill.connect_capability(_find(contract, _settings.navigation_provider_id), contract, Transport.MCP)
+    try:
+        response = _call_sync(connection, tool, payload, 8.0)
+        log.info('navigation %s result: %s', tool, response)
+        return response
+    finally:
+        _close_connection(connection)
+
+
+def _release_arm() -> dict:
+    """Release the preset and require SDK action-state feedback, not acceptance alone."""
+    try:
+        response = _timed_call('arm release', _arm_connection, 'run', {'action': 'release_arm'}, 30.0)
+        detail = str(response.get('detail', ''))
+        confirmed = bool(response.get('accepted')) and any(marker in detail for marker in (
+            'release_arm confirmed by action state: id=99 holding=false',
+            'release_arm confirmed by action state: id=0 holding=false name=""; idle confirmed for >=0.2s',
+        ))
+        return {'ok': confirmed, 'detail': detail or 'release feedback unavailable'}
+    except Exception as exc:  # noqa: BLE001
+        log.exception('arm release failed')
+        return {'ok': False, 'detail': f'{type(exc).__name__}: {exc}'}
+
+
+def _wait_for_greeting(result: dict[str, Any], started: float) -> None:
+    """Count SDK call time toward playback waiting; shutdown interrupts the remainder."""
+    assert _settings is not None
+    wait_sec = result.get('playback_wait_sec', _settings.greeting_wait_sec)
+    elapsed_sec = time.monotonic() - started
+    remaining_sec = max(0.0, wait_sec - elapsed_sec)
+    log.info('greeting playback wait: elapsed_sec=%.3f remaining_sec=%.3f total_sec=%.3f',
+             elapsed_sec, remaining_sec, wait_sec)
+    _stop.wait(remaining_sec)
+
+
+def _greet(event: dict[str, Any]) -> dict[str, Any]:
+    """Serialize greetings and retain the navigation run until greeting finishes."""
+    run_id = ''
+    result = None
+    if not _greeting_lock.acquire(blocking=False):
+        return {'accepted': False, 'detail': 'another greeting is running'}
+    try:
+        if _settings is not None and _settings.navigation_enabled and coordination.enabled():
+            return coordination.greet(sys.modules[__name__], event)
+        if _settings is None or not _settings.navigation_enabled:
+            return _greet_stationary(event)
+        if _valid_level(event.get('intimacy_level', 1)) is None:
+            return {'accepted': False, 'detail': 'invalid intimacy level'}
+        person_id = int(event.get('person_id', -1))
+        if person_id < 0:
+            return {'accepted': False, 'detail': 'navigation greetings require a recognized person'}
+        with _lock:
+            if str(event.get('event_id', '')) in _seen_events:
+                return {'accepted': False, 'detail': 'duplicate event'}
+            if time.monotonic() - _last_greet.get(person_id, -1e9) < _settings.cooldown_sec:
+                return {'accepted': False, 'detail': 'greeting cooldown'}
+        paused = _navigation_call('pause', {'run_id': ''})
+        if (not paused.get('accepted') and not paused.get('run_id')
+                and paused.get('detail') == 'no active navigation; stationary=true'):
+            if _stop.is_set():
+                return {'accepted': False, 'detail': 'skill stopped before greeting'}
+            log.info('stationary greeting without navigation person_id=%s', person_id)
+            try:
+                greeting_started = time.monotonic()
+                result = _greet_stationary(event)
+                _wait_for_greeting(result, greeting_started)
+            finally:
+                if ARM_GREETING_ENABLED:
+                    release = _release_arm()
+                    log.log(logging.INFO if release['ok'] else logging.ERROR,
+                            'stationary greeting arm release: %s', release)
+                else:
+                    log.info('stationary greeting arm release skipped for SDK isolation test')
+            if ARM_GREETING_ENABLED:
+                result['detail'] += '; arm release: ' + release['detail']
+                if not release['ok']:
+                    result['detail'] += '; arm release unconfirmed'
+                    log.error('%s', result['detail'])
+            else:
+                result['detail'] += '; arm release skipped for SDK isolation test'
+            result['detail'] += '; no navigation to resume'
+            return result
+        if not paused.get('accepted'):
+            return {'accepted': False, 'detail': 'navigation pause rejected: ' + str(paused.get('detail'))}
+        run_id = paused['run_id']
+        deadline = time.monotonic() + 8.0
+        while not _stop.is_set() and time.monotonic() < deadline:
+            state = _navigation_call('status', {'run_id': run_id})
+            if state.get('state') == 'PAUSED' and state.get('detail', '').endswith('stationary=true'):
+                break
+            if state.get('state') not in {'RUNNING', 'PAUSED'}:
+                raise RuntimeError('navigation ended before greeting: ' + str(state))
+            _stop.wait(0.1)
+        else:
+            raise RuntimeError('navigation did not stop with fresh odometry before greeting')
+        if _stop.is_set():
+            return {'accepted': False, 'detail': 'skill stopped; navigation remains paused'}
+        # Cleanup also runs if greeting raises or shutdown interrupts the wait.
+        try:
+            greeting_started = time.monotonic()
+            result = _greet_stationary(event)
+            if not result.get('speech_ok') or (ARM_GREETING_ENABLED and not result.get('action_ok')):
+                log.error('navigation greeting failed run_id=%s: %s', run_id, result)
+            _wait_for_greeting(result, greeting_started)
+        finally:
+            if ARM_GREETING_ENABLED:
+                release = _release_arm()
+                log.log(logging.INFO if release['ok'] else logging.ERROR,
+                        'arm release result run_id=%s: %s', run_id, release)
+            else:
+                log.info('arm release skipped for SDK isolation test run_id=%s', run_id)
+        if ARM_GREETING_ENABLED:
+            result['detail'] += '; arm release: ' + release['detail']
+            if not release['ok']:
+                result['detail'] += f'; navigation run_id={run_id} remains paused: arm release unconfirmed'
+                log.error('%s', result['detail'])
+                return result
+        else:
+            result['detail'] += '; arm release skipped for SDK isolation test'
+        if _stop.is_set():
+            result['detail'] += '; navigation remains paused because skill stopped'
+            return result
+        state = _navigation_call('status', {'run_id': run_id})
+        if state.get('state') != 'PAUSED' or not state.get('detail', '').endswith('stationary=true'):
+            result['detail'] += f'; navigation run_id={run_id} not resumed: {state}'
+            log.error('%s', result['detail'])
+            return result
+        resumed = _navigation_call('resume', {'run_id': run_id})
+        result['detail'] += '; navigation resume: ' + str(resumed.get('detail', ''))
+        if not resumed.get('accepted'):
+            log.error('navigation resume rejected run_id=%s: %s', run_id, resumed)
+            result['detail'] += f'; run_id={run_id}; resume rejected; inspect navigation status before retrying'
+        return result
+    except Exception as exc:  # noqa: BLE001
+        detail = f'{type(exc).__name__}: {exc}'
+        if run_id:
+            detail += f'; navigation run_id={run_id}; no automatic resume; inspect navigation status'
+        log.exception('navigation greeting failed: %s', detail)
+        if result is not None:
+            result['detail'] += '; ' + detail
+            return result
+        return {'accepted': False, 'detail': detail}
+    finally:
+        _greeting_lock.release()
 
 
 def _worker_loop() -> None:
@@ -410,7 +588,8 @@ def _worker_loop() -> None:
             event = _call_sync(_face_connection, FACE_EVENTS.rsplit("/", 1)[-1], {"wait_ms": _settings.poll_wait_ms}, 8.0)
             if event.get("available"):
                 log.info("face encounter: id=%s name=%s intimacy=%s", event.get("person_id"), event.get("name"), event.get("intimacy_level"))
-                _greet(event)
+                result = _greet(event)
+                log.info("face greeting result: %s", result)
         except Exception as exc:  # noqa: BLE001
             if not _stop.is_set():
                 log.warning("face event polling failed: %s", exc)
@@ -444,6 +623,8 @@ def activate():
         if _worker is not None:
             return Err("skill is already active")
         try:
+            if _settings.navigation_enabled and coordination.enabled():
+                coordination.initialize()
             _store = MessageStore(_settings.message_store_path)
             _face_connection = skill.connect_capability(_find(FACE_EVENTS, _settings.face_provider_id), FACE_EVENTS, Transport.MCP)
             _find(FACE_RESOLVE, _settings.face_provider_id)
@@ -455,13 +636,17 @@ def activate():
             if _scene_connection is None:
                 log.warning("Scene object tracking is unavailable; ordinary face messages remain usable")
             _speech_connection = skill.connect_capability(_find(SPEECH, _settings.speech_provider_id), SPEECH, Transport.MCP)
-            _arm_connection = skill.connect_capability(_find(ARM, _settings.arm_provider_id), ARM, Transport.MCP)
+            if ARM_GREETING_ENABLED:
+                _arm_connection = skill.connect_capability(_find(ARM, _settings.arm_provider_id), ARM, Transport.MCP)
+            else:
+                _arm_connection = None
+                log.info("arm SDK connection disabled for greeting isolation test")
             _last_greet.clear()
             _seen_events.clear()
             _stop.clear()
             _worker = threading.Thread(target=_worker_loop, name="g1-face-greeting", daemon=True)
             _worker.start()
-            log.info("face greeting active in stationary mode")
+            log.info("face greeting active; navigation_enabled=%s", _settings.navigation_enabled)
             return Ok()
         except Exception as exc:  # noqa: BLE001
             deactivate()

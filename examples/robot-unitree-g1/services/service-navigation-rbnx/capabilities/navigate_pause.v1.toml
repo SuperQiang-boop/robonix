@@ -1,0 +1,8 @@
+[contract]
+id = "robonix/service/navigation/navigate/pause"
+version = "1"
+kind = "service"
+idl = "navigation_control/srv/NavigationControl.srv"
+description = "Pause the current navigation run without completing its Executor task. Use the returned run_id for subsequent operations."
+[mode]
+type = "rpc"

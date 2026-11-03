@@ -97,6 +97,7 @@ _ensure_proto_gen()
 import navigation_pb2  # noqa: E402
 import robonix_contracts_pb2_grpc as contracts_grpc  # noqa: E402
 import soma_pb2  # noqa: E402
+from navigation_control_mcp import NavigationControl_Request, NavigationControl_Response
 from navigation_mcp import (  # noqa: E402
     Navigate_Request as McpNavigateRequest,
     Navigate_Response as McpNavigateResponse,
@@ -153,6 +154,16 @@ _nav_diagnostics: deque[str] = deque(maxlen=12)
 # (data, width, height, resolution) of the latest local costmap grid.
 _local_costmap_snapshot: "tuple[list[int], int, int, float] | None" = None
 _last_run_id = ""
+_goal_payloads: dict[str, dict] = {}
+_odom_sample = None
+_stationary_since = None
+_nav_status_active = False
+_odom_topic = "/odom"
+_chassis_health_required = False
+_chassis_health_sample = None
+_chassis_health_level = 3
+_chassis_faulted = False
+_chassis_health_message = "waiting for chassis diagnostics"
 _speed_publisher = None
 _guard_speed_publisher = None
 _speed_lock = threading.Lock()
@@ -757,9 +768,17 @@ def _start_ros2_thread() -> None:
         if settings is None:
             raise RuntimeError("dynamic speed settings are not initialized")
         _nav_action_client = ActionClient(node, _NavigateToPose, "navigate_to_pose")
+        from action_msgs.msg import GoalStatusArray
+        from rclpy.qos import qos_profile_action_status_default
+        node.create_subscription(GoalStatusArray, 'navigate_to_pose/_action/status',
+                                 _observe_nav_status, qos_profile_action_status_default)
         # Latest local costmap snapshot for failure diagnostics. The rolling
         # window is robot-centred, so its centre stands in for the pose.
-        from nav_msgs.msg import OccupancyGrid as _OccupancyGrid
+        from nav_msgs.msg import OccupancyGrid as _OccupancyGrid, Odometry
+        node.create_subscription(Odometry, _odom_topic, _observe_odom, 10)
+        if _chassis_health_required:
+            from diagnostic_msgs.msg import DiagnosticArray
+            node.create_subscription(DiagnosticArray, '/diagnostics', _observe_chassis_health, 10)
 
         def _on_local_costmap(msg):
             global _local_costmap_snapshot
@@ -949,6 +968,7 @@ def _goal_response_cb(fut, gid: str):
         cancel_requested = bool(previous.get("cancel_requested"))
         _goal_handles[gid] = gh
         _goal_states[gid] = {
+            **previous,
             "state": "RUNNING",
             "detail": (
                 "goal accepted; forwarding queued cancel"
@@ -963,7 +983,8 @@ def _goal_response_cb(fut, gid: str):
         _issue_cancel(gh, gid)
 
 
-def _cancel_response_cb(fut, gid: str) -> None:
+def _cancel_response_cb(fut, gid: str, expected_state=None) -> None:
+    """Apply a cancel reply only to the action state that requested it."""
     try:
         response = fut.result()
         accepted = bool(getattr(response, "goals_canceling", []))
@@ -977,19 +998,26 @@ def _cancel_response_cb(fut, gid: str) -> None:
         detail = f"cancel response failed; goal may remain active: {error}"
     with _state_lock:
         state = _goal_states.get(gid)
+        if expected_state is not None and state is not expected_state:
+            return
         if state is not None and state.get("state") == "RUNNING":
             state["detail"] = detail
             state["cancel_requested"] = accepted
+            if not accepted:
+                state["pause_requested"] = False
 
 
 def _issue_cancel(goal_handle, gid: str) -> tuple[bool, str]:
+    """Submit cancellation without letting delayed replies alter a resumed action."""
+    with _state_lock:
+        expected_state = _goal_states.get(gid)
     try:
         future = goal_handle.cancel_goal_async()
-        future.add_done_callback(lambda f, g=gid: _cancel_response_cb(f, g))
+        future.add_done_callback(lambda f, g=gid: _cancel_response_cb(f, g, expected_state))
     except Exception as error:  # noqa: BLE001
         with _state_lock:
             state = _goal_states.get(gid)
-            if state is not None:
+            if state is not None and state is expected_state:
                 state["detail"] = f"cancel request failed; goal may remain active: {error}"
                 state["cancel_requested"] = False
         return False, f"cancel failed: {error}"
@@ -1024,7 +1052,13 @@ def _result_cb(fut, gid: str):
             nav_uuid = bytes(handle.goal_id.uuid).hex() if handle is not None else ""
             failure = read_guard_failure(_guard_trace_dir, nav_uuid)
             state, safety_detail = classify_guard_result(
-                state, bool(previous.get("cancel_requested")), failure)
+                state, bool(previous.get("cancel_requested")) and not previous.get("pause_requested"), failure)
+            if state == "CANCELED" and previous.get("pause_requested") and not failure:
+                _goal_states[gid] = {**previous, "state": "PAUSED",
+                                     "detail": "navigation paused; waiting for stationary odometry",
+                                     "cancel_requested": False}
+                _goal_handles.pop(gid, None)
+                return
             diagnostics = list(_nav_diagnostics) if state == "FAILED" else []
             if state == "FAILED" and _local_costmap_snapshot is not None:
                 blockage = summarize_blockage(*_local_costmap_snapshot)
@@ -1048,17 +1082,24 @@ def _result_cb(fut, gid: str):
 
 
 def _dispatch_goal(node, gid: str, payload: dict):
+    """Dispatch a queued action only while the chassis permits navigation."""
     with _state_lock:
         current = _goal_states.get(gid)
         if current is None:
             return
-        if current.get("state") == "CANCELED" and current.get("cancel_requested"):
+        if current.get("state") in {"CANCELED", "PAUSED"}:
             return
         # Claim the queue entry while holding the same lock used by cancel.
         # A cancel racing after this point is latched and forwarded as soon as
         # Nav2 returns the goal handle; it must not look terminal prematurely.
         current["state"] = "RUNNING"
         current["detail"] = "dispatching goal"
+        chassis_error = _greeting_motion_error() or _chassis_health_error()
+        if chassis_error:
+            current.update(state="FAILED", detail=chassis_error)
+    if chassis_error:
+        _restore_speed_after_run(gid)
+        return
     pose = _make_pose(node, payload["frame_id"], payload["x"], payload["y"], payload["yaw"])
     goal_msg = _NavigateToPose.Goal()
     goal_msg.pose = pose
@@ -1073,11 +1114,11 @@ def _dispatch_goal(node, gid: str, payload: dict):
     send_future = _nav_action_client.send_goal_async(
         goal_msg, feedback_callback=lambda msg, g=gid: _feedback_cb(msg, g)
     )
-    send_future.add_done_callback(lambda f, g=gid: _goal_response_cb(f, g))
     with _state_lock:
         previous = _goal_states.get(gid, {})
         cancel_requested = bool(previous.get("cancel_requested"))
         _goal_states[gid] = {
+            **previous,
             "state": "RUNNING",
             "detail": (
                 "goal sent; cancel queued until acceptance"
@@ -1086,6 +1127,7 @@ def _dispatch_goal(node, gid: str, payload: dict):
             ),
             "cancel_requested": cancel_requested,
         }
+    send_future.add_done_callback(lambda f, g=gid: _goal_response_cb(f, g))
 
 
 # ── lifecycle (Driver CMD_INIT / CMD_SHUTDOWN via robonix_api.Service) ────────
@@ -1143,7 +1185,9 @@ def init(cfg: dict):
             f"(awaiting upstream provider)"
         )
 
-    global _USE_SIM_TIME
+    global _USE_SIM_TIME, _odom_topic, _chassis_health_required
+    _odom_topic = _binding_value(remap_args, "odom")
+    _chassis_health_required = (cfg.get("provider_ids") or {}).get("odom") == "g1_chassis"
     _USE_SIM_TIME = bool(cfg.get("use_sim_time", False))
 
     try:
@@ -1207,15 +1251,148 @@ def _navigate_impl(goal) -> dict:
     frame_id = goal.header.frame_id or "map"
     yaw = _quat_to_yaw(goal.pose.orientation.z, goal.pose.orientation.w)
     with _state_lock:
+        chassis_error = _greeting_motion_error() or _chassis_health_error()
+        if chassis_error:
+            return {"accepted": False, "run_id": "", "detail": chassis_error}
+        if any(st.get("state") == "PAUSED" or st.get("pause_requested") for st in _goal_states.values()):
+            return {"accepted": False, "run_id": "", "detail": "cancel or resume paused navigation before starting another goal"}
+        if os.environ.get("ROBONIX_GREETING_STATE_PATH", "").strip() and any(
+                st.get("state") in {"PENDING", "RUNNING"} for st in _goal_states.values()):
+            return {"accepted": False, "run_id": "", "detail": "previous navigation is not terminal; wait for confirmed cancellation"}
         _last_run_id = run_id
         _goal_states[run_id] = {"state": "PENDING", "detail": "queued"}
-    _nav_queue.put((run_id, {
+    payload = {
         "frame_id": frame_id,
         "x": float(goal.pose.position.x),
         "y": float(goal.pose.position.y),
         "yaw": float(yaw),
-    }))
+    }
+    with _state_lock:
+        _goal_payloads[run_id] = payload
+    _nav_queue.put((run_id, payload))
     return {"accepted": True, "run_id": run_id, "detail": "queued"}
+
+
+def _greeting_motion_error() -> str:
+    """Apply the optional deployment greeting restriction to every navigation entry."""
+    path = os.environ.get("ROBONIX_GREETING_STATE_PATH", "").strip()
+    if not path:
+        return ""
+    try:
+        state = json.loads(Path(path).read_text(encoding="utf-8"))
+        if state.get("movement_allowed") is True:
+            return ""
+        return "greeting inhibits navigation: " + str(state.get("detail", "completion unconfirmed"))
+    except (OSError, ValueError, TypeError) as exc:
+        return "greeting state unavailable; navigation inhibited: " + str(exc)
+
+
+def _observe_chassis_health(msg) -> None:
+    """Keep G1 motion faults separate from truthful odometry used for display."""
+    global _chassis_health_sample, _chassis_health_level, _chassis_faulted
+    global _chassis_health_message, _stationary_since
+    with _state_lock:
+        for status in msg.status:
+            if status.name != "g1_chassis" or status.hardware_id != "g1_chassis":
+                continue
+            _chassis_health_sample = time.monotonic()
+            # Humble exposes ROS `byte` as one-byte bytes; some callers use int.
+            _chassis_health_level = (status.level[0] if isinstance(status.level, (bytes, bytearray))
+                                     else int(status.level))
+            _chassis_health_message = status.message
+            _chassis_faulted = _chassis_faulted or _chassis_health_level == 2
+            if _chassis_health_error():
+                _stationary_since = None
+
+
+def _chassis_health_error() -> str:
+    """Require fresh healthy G1 diagnostics; a latched fault needs a project restart."""
+    if not _chassis_health_required:
+        return ""
+    if _chassis_faulted:
+        return "chassis motion fault is latched; navigation inhibited until restart"
+    if _chassis_health_sample is None or time.monotonic() - _chassis_health_sample > 0.5:
+        return "fresh chassis diagnostics are required for navigation"
+    if _chassis_health_level != 0:
+        return "chassis is unavailable: " + _chassis_health_message
+    return ""
+
+
+def _observe_odom(msg) -> None:
+    """Track fresh measured speed; stale data never confirms stopping."""
+    global _odom_sample, _stationary_since
+    twist = msg.twist.twist
+    values = (twist.linear.x, twist.linear.y, twist.angular.z)
+    now = time.monotonic()
+    with _state_lock:
+        stopped = all(math.isfinite(v) for v in values) and math.hypot(*values[:2]) < 0.02 and abs(values[2]) < 0.03
+        if _chassis_health_error() or not stopped or _odom_sample is None or now - _odom_sample > 0.3:
+            _stationary_since = None
+        elif _stationary_since is None:
+            _stationary_since = now
+        _odom_sample = now
+
+
+def _stationary() -> bool:
+    """Require sustained stopping and fresh odometry, under the state lock."""
+    now = time.monotonic()
+    return (not _chassis_health_error() and _odom_sample is not None and now - _odom_sample < 0.3
+            and _stationary_since is not None and now - _stationary_since >= 0.5)
+
+
+def _observe_nav_status(msg) -> None:
+    """Track all Nav2 clients, including RViz goals absent from the public run table."""
+    global _nav_status_active
+    with _state_lock:
+        _nav_status_active = any(item.status in (1, 2, 3) for item in msg.status_list)
+
+
+def _pause_impl(run_id: str) -> dict:
+    """Stop the action while retaining the public run for Executor."""
+    global _stationary_since
+    with _state_lock:
+        resolved = _resolve_run_id(run_id)
+        state = _goal_states.get(resolved)
+        out = {"accepted": False, "run_id": resolved, "detail": "no active navigation"}
+        if state is None or state.get("state") != "RUNNING":
+            active = any(st.get('state') in {'PENDING', 'RUNNING', 'PAUSED'}
+                         for st in _goal_states.values())
+            if not run_id and not active and _nav_action_ready and not _nav_status_active and _stationary():
+                return {**out, "run_id": "", "detail": "no active navigation; stationary=true"}
+            return out
+        handle = _goal_handles.get(resolved)
+        if handle is None or state.get("cancel_requested") or state.get("pause_requested"):
+            return {**out, "detail": "navigation is not ready for pause"}
+        if any(gid != resolved and st.get("state") in {"PENDING", "RUNNING", "PAUSED"}
+               for gid, st in _goal_states.items()):
+            return {**out, "detail": "multiple navigation runs are active"}
+        _stationary_since = None
+        state.update(pause_requested=True, cancel_requested=True)
+    accepted, detail = _issue_cancel(handle, resolved)
+    if not accepted:
+        with _state_lock:
+            state["pause_requested"] = False
+    return {"accepted": accepted, "run_id": resolved, "detail": detail}
+
+
+def _resume_impl(run_id: str) -> dict:
+    """Resume only the latest explicit paused run; never revive cancellation."""
+    with _state_lock:
+        state = _goal_states.get(run_id)
+        out = {"accepted": False, "run_id": run_id, "detail": "run is not the current paused navigation"}
+        if not run_id or run_id != _last_run_id or state is None or state.get("state") != "PAUSED":
+            return out
+        chassis_error = _greeting_motion_error() or _chassis_health_error()
+        if chassis_error:
+            return {**out, "detail": chassis_error}
+        if not _stationary():
+            return {**out, "detail": "fresh stationary odometry is required"}
+        payload = _goal_payloads.get(run_id)
+        if payload is None:
+            return {**out, "detail": "saved navigation goal unavailable"}
+        state.update(state="PENDING", detail="resume queued", pause_requested=False, cancel_requested=False)
+        _nav_queue.put((run_id, payload))
+    return {"accepted": True, "run_id": run_id, "detail": "resume queued"}
 
 
 def _status_impl(run_id: str) -> dict:
@@ -1223,6 +1400,13 @@ def _status_impl(run_id: str) -> dict:
     with _state_lock:
         resolved = _resolve_run_id(run_id)
         st = _goal_states.get(resolved)
+        if st is not None:
+            st = dict(st)
+            if st.get("state") == "PAUSED":
+                st["detail"] = "navigation paused; stationary=" + str(_stationary()).lower()
+            chassis_error = _chassis_health_error()
+            if chassis_error and st.get("state") in {"PENDING", "RUNNING", "PAUSED"}:
+                st["detail"] = st.get("detail", "") + "; " + chassis_error
     if st is None:
         return {"known": False, "state": "FAILED", "detail": "unknown run_id"}
     return {
@@ -1245,8 +1429,13 @@ def _cancel_impl(run_id: str) -> dict:
                 "accepted": False,
                 "detail": f"run is already {state.get('state', 'terminal').lower()}",
             }
+        state["pause_requested"] = False
         gh = _goal_handles.get(resolved)
-        if gh is None:
+        if state.get("state") == "PAUSED":
+            state.update(state="CANCELED", detail="canceled while paused", cancel_requested=True)
+            detail = state["detail"]
+            restore_speed = True
+        elif gh is None:
             state["cancel_requested"] = True
             if state.get("state") == "PENDING":
                 state["state"] = "CANCELED"
@@ -1469,6 +1658,18 @@ class _GetSpeedLimitServicer(
 
 
 # ── MCP tools ────────────────────────────────────────────────────────────────
+@nav.mcp("robonix/service/navigation/navigate/pause")
+def pause(req: NavigationControl_Request) -> NavigationControl_Response:
+    """Pause navigation without completing its Executor task."""
+    return NavigationControl_Response(**_pause_impl(req.run_id))
+
+
+@nav.mcp("robonix/service/navigation/navigate/resume")
+def resume(req: NavigationControl_Request) -> NavigationControl_Response:
+    """Resume the explicit paused run without reviving cancellation."""
+    return NavigationControl_Response(**_resume_impl(req.run_id))
+
+
 @nav.mcp("robonix/service/navigation/navigate")
 def navigate(req: McpNavigateRequest) -> McpNavigateResponse:
     """Start a Nav2 NavigateToPose run. Returns a run_id for status/cancel."""

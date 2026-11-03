@@ -172,6 +172,22 @@ if [[ -n "${RBNX_INVOCATION_CWD:-}" ]]; then
     )
 fi
 
+# Mount the directory, not the atomically replaced file: a file bind mount
+# would retain the old inode and miss greeting state changes.
+declare -a GREETING_ARGS=()
+if [[ -n "${ROBONIX_GREETING_STATE_PATH:-}" ]]; then
+    if [[ "$ROBONIX_GREETING_STATE_PATH" != /* ]]; then
+        echo "[nav2/start] ROBONIX_GREETING_STATE_PATH must be absolute" >&2
+        exit 2
+    fi
+    GREETING_DIR="$(dirname "$ROBONIX_GREETING_STATE_PATH")"
+    mkdir -p "$GREETING_DIR"
+    GREETING_ARGS=(
+        -e "ROBONIX_GREETING_STATE_PATH=$ROBONIX_GREETING_STATE_PATH"
+        -v "$GREETING_DIR:$GREETING_DIR:ro"
+    )
+fi
+
 # config arrives via Driver(CMD_INIT) over gRPC; the container's bridge
 # binds NAV2_DRIVER_PORT and registers with atlas at ROBONIX_ATLAS.
 exec docker run --rm \
@@ -189,6 +205,7 @@ exec docker run --rm \
     "${FASTRTPS_ARGS[@]}" \
     "${ZENOH_ARGS[@]}" \
     "${VELOCITY_OUTPUT_ARGS[@]}" \
+    "${GREETING_ARGS[@]}" \
     -e NAV2_DRIVER_PORT="${NAV2_DRIVER_PORT:-50235}" \
     -e NAV2_LOG_LEVEL="${NAV2_LOG_LEVEL:-info}" \
     "${DEPLOY_ARGS[@]}" \

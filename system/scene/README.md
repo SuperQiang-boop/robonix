@@ -59,15 +59,20 @@ Periodic cleanup (every 30 ticks) runs concept-graphs's `denoise_objects` + `fil
 
 RGB-D perception removes an object after three fresh, successful detection
 rounds miss its last position while that position remains in camera view.
-Stored surface points must mostly project inside the image and have valid,
-unobstructed depth; nearer depth pauses the count. A same-class detection at
+Stored surface points must mostly project inside the image. At least eight
+distinct depth pixels and 20% of the sampled pixels must have valid depth;
+at least eight pixels and 20% of valid samples must show background farther
+than the old surface, with at most 20% showing nearer depth. This tolerates depth holes
+on reflective floors without treating missing depth as absence. A same-class detection at
 that position also pauses the count if its 3D projection failed. Re-detection
 resets the count, and leaving camera view resets the count without deleting
 the object. Repeated RGB/depth frames, skipped inference, unavailable camera
 geometry, and inference failures do not count. Confirmed removals clear the
 live registry and point cloud; web objects and their relations disappear on
 the next poll. Historical synchronization does not increase observation counts
-or refresh `last_seen`. This applies to the RGB-D ConceptGraphs path.
+or refresh `last_seen`. RGB-D objects retained outside camera view remain
+available to `list_objects`; the observation grace period does not mark them
+`missing`. This applies to the RGB-D ConceptGraphs path.
 
 ## Deployment targets (x86 / Jetson)
 
@@ -199,6 +204,13 @@ contract list in `scene_service/service.py` (`_SCENE_CONTRACTS`), asks Atlas for
 providers that implement those contracts, connects to their ROS 2 `topic_out`
 interfaces, and subscribes only to what the deployment actually exposes.
 
+For deployments with multiple cameras, set `system.scene.sensor_providers` to
+`{rgb: realsense_camera, depth: realsense_camera, intrinsics: realsense_camera,
+camera_extrinsics: realsense_camera}` using your camera provider ID. Scene uses
+these filters during startup and later discovery; it waits for the selected
+provider instead of taking RGB from a different camera. Unspecified kinds
+continue to use automatic discovery. When RBNX_CONFIG_FILE is unset, Scene reads system.scene from the deployment manifest under ROBONIX_DEPLOY_DIR. An explicit config file takes precedence; invalid configuration stops startup. Restart Scene after changing this config.
+
 The default RMW is Zenoh (`RMW_IMPLEMENTATION=rmw_zenoh_cpp`). For single-host
 deployments the default local router/session is used; advanced deployments can
 override it with `ROBONIX_ZENOH_ROUTER`, `ROBONIX_ZENOH_MODE`, and
@@ -288,6 +300,7 @@ Hugging Face mirror endpoint (default `https://hf-mirror.com`); the canonical
 | `SCENE_CG_MAX_MERGE_DIST_M` | `1.5` | hard distance gate |
 | `SCENE_CG_OBJ_MIN_POINTS` | `20` | periodic-cleanup cull gate; raise to drop sparse/thin objects, lower to keep them (thin objects like keyboards backproject to sparse clouds) |
 | `SCENE_CG_MISSING_DETECTIONS` | `3` | consecutive valid RGB-D detection rounds missing an in-view, unobstructed object before removal; positive integer; deployment `system.scene.SCENE_CG_MISSING_DETECTIONS` takes precedence |
+| object observation grace period | `15` seconds | time without a refreshed observation before non-ConceptGraphs objects are marked `missing`; RGB-D ConceptGraphs objects use visibility-aware removal instead |
 | `SCENE_CG_CROSS_CLASS_CENTROID_MAX_M` | `0.5` | per-tick class-gate bypass radius: a detection within this of an existing object may merge despite a different class label (handles YOLO label flicker on one fixture) |
 | `SCENE_CG_CROSS_CLASS_IOU_THRESH` / `SCENE_CG_CROSS_CLASS_OVERLAP_THRESH` | `0.30` / `0.50` | periodic class-agnostic collapse: fold two records when AABB IoU ≥ first **or** one-inside-other overlap ≥ second, regardless of class/visual sim. Lower to be more aggressive on a flickering desk (`chair` vs `table` split) |
 | `SCENE_CG_MERGE_OVERLAP_THRESH` / `SCENE_CG_MERGE_VISUAL_SIM_THRESH` | `0.50` / `0.65` | periodic `merge_overlap` pass: fold pairs with pcd-overlap ≥ first **and** CLIP cosine ≥ second |

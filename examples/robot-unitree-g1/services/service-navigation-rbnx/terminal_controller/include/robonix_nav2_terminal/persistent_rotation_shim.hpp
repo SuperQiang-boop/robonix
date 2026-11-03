@@ -50,7 +50,6 @@ private:
   bool terminal_failed_{false};
   std::string terminal_failure_reason_;
   bool correction_active_{false};
-  bool correction_aligning_{true};
   bool correction_ready_{false};
   unsigned correction_attempts_{0};
   double correction_trigger_{0.28};
@@ -58,9 +57,17 @@ private:
   double correction_max_speed_{0.20};
   double correction_linear_accel_{0.40};
   double correction_max_distance_{0.30};
-  double correction_timeout_{6.0};
+  double correction_timeout_{25.0};
+  double correction_forward_min_speed_{0.20};
+  double correction_max_commanded_distance_{1.50};
+  double correction_startup_grace_{2.0};
+  double correction_no_progress_timeout_{5.0};
+  double correction_progress_distance_{0.02};
+  double correction_progress_reference_{0.0};
+  rclcpp::Time correction_progress_at_{0, 0, RCL_ROS_TIME};
   double correction_commanded_distance_{0.0};
   double correction_last_speed_{0.0};
+  geometry_msgs::msg::Twist correction_last_velocity_;
   double requested_speed_limit_{0.0};
   bool speed_limit_percentage_{false};
   double configured_max_speed_{0.35};

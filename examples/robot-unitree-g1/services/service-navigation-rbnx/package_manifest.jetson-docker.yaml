@@ -25,6 +25,10 @@ capabilities:
   - name: robonix/service/navigation/navigate
   - name: robonix/service/navigation/navigate/status
   - name: robonix/service/navigation/navigate/cancel
+  - name: robonix/service/navigation/navigate/pause
+    path: capabilities/navigate_pause.v1.toml
+  - name: robonix/service/navigation/navigate/resume
+    path: capabilities/navigate_resume.v1.toml
   - name: robonix/service/navigation/adjust_speed
   - name: robonix/service/navigation/set_speed_limit
   - name: robonix/service/navigation/get_speed_limit

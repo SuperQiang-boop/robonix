@@ -22,9 +22,10 @@ Guarded Unitree G1 chassis adapter using the SDK2 LocoClient.
 - **Motion disabled by default** — daemon rejects all velocity commands unless `--allow-motion` is passed at daemon startup, which requires the `G1_PHYSICAL_MOTION_APPROVED` acknowledgement.
 - **300 ms watchdog** — if no valid cmd_vel arrives within 300 ms, the daemon issues StopMove and faults.
 - **Velocity limits** — vx, vy, omega are clamped to configured maximums.
+- **SDK velocity rate** — nonzero requests use the newest command at most every 50 ms (20 Hz), rather than issuing an RPC on every 50 Hz adapter tick. Stops and motion starts bypass this limit; velocity duration and the watchdog remain 300 ms.
 - **Zero-velocity stop** — the first all-zero cmd_vel after a movement command issues `StopMove`; repeated zeros do not flood the SDK.
 - **Adapter disconnect** — if the IPC peer disconnects, the daemon immediately issues StopMove.
-- **Bounded SDK calls** — LocoClient RPC timeout is 100 ms. Locomotion mode is read once before opening the command socket, not during the watchdog-controlled command loop. Velocity commands expire after the watchdog interval (300 ms), rather than requesting day-long motion. A velocity RPC error immediately requests `StopMove` and latches a fault; unconfirmed stops are retried, and later commands cannot automatically re-arm it.
+- **Bounded SDK calls** — LocoClient RPC timeout is 250 ms, below the 300 ms motion watchdog. Locomotion mode is read once before opening the command socket, not during the watchdog-controlled command loop. Velocity commands expire after the watchdog interval (300 ms), rather than requesting day-long motion. A velocity RPC error immediately requests `StopMove` and latches a fault; unconfirmed stops are retried at least 100 ms after the previous call completes, and later commands cannot automatically re-arm it.
 - **No queued motion replay** — each command batch uses only the newest velocity, with an all-zero stop taking priority. A batch that reaches the drain limit stops instead of executing potentially old motion.
 
 ### Diagnosing a navigation stall
@@ -42,11 +43,39 @@ sample. Reception counters and ages describe local DDS delivery, not sensor
 acquisition; RPC success alone does not prove physical movement. Compare these
 wall times with navigation trajectory records before changing TF or motion modes.
 
+For a current, read-only SDK status query (no mode or velocity changes):
+
+```bash
+# From examples/robot-unitree-g1, with the SDK daemon build configured:
+cmake --build packages/g1_chassis/rbnx-build/sdk --target g1_loco_status -j2
+packages/g1_chassis/rbnx-build/sdk/g1_loco_status enp129s0
+```
+
+Use the deployment's actual network interface. Each getter has a 1 s timeout;
+this does not change the motion daemon's 250 ms timeout. Nonzero getter results
+return exit status 1; unavailable values remain -1. SDK 7301 means LocoState is
+unavailable for that getter and does not alone establish an incorrect mode.
+
+The deployment's `scripts/g1_turn_probe.py --check-only` reads the configured
+angular limit and latest daemon log session without publishing. A physical
+probe requires `--omega` (signed rad/s), `--confirm-clear-area`, and no active
+NavigateToPose goal. `--duration` bounds command time (default 1.5 s, maximum
+3 s); `--max-turn` requests a stop after the measured heading changes by that
+angle (default 0.35 rad). Commands cannot exceed the manifest's
+`max_angular_z_rps`; this configured ceiling is not a measured minimum working
+speed. The probe retains the velocity guard, aborts above 0.10 m measured XY
+displacement, and sends zeros after motion. Measurement and stopping delays
+can cause overshoot. It reports matching guard samples and matching successful
+SDK log entries; RPC success without measured turning still fails the probe.
+Run `python3 -m unittest discover -s scripts -p 'test_g1_turn_probe.py' -v` for
+offline checks that do not create ROS nodes or contact the robot.
+
 ### ROS outputs
 
 - `/odom` carries measured SDK x/y and quaternion yaw, projected onto `base_footprint` with z/roll/pitch zero. Body-frame twist is derived from pose differences and filtered with a 0.10 s time constant; raw SDK velocity is not assumed to be body-frame.
 - Odom and TF share the local DDS reception timestamp because robot source stamps are zero on the tested firmware. This does not measure sensor acquisition latency. Default output is 50 Hz, only for new valid samples; stale data is never re-stamped.
 - A separate state-forwarding thread delivers fresh SDK samples even while a motion RPC waits or the motion watchdog is faulted. It owns a duplicate IPC descriptor and is joined before peer teardown; socket backpressure drops intermediate samples instead of blocking or re-stamping them.
+- Valid measured odometry and TF continue after a daemon motion fault. `/diagnostics` separately reports `g1_chassis` (hardware ID `g1_chassis`) at 10 Hz and immediately on a motion fault: OK for fresh valid state without a motion fault, STALE for missing/invalid state, ERROR for a latched daemon or IPC fault. The adapter suppresses further nonzero commands after a fault. Position continuity remains enforced in every case.
 - Missing/invalid state inhibits motion refresh and TF. Reception age above 150 ms stops output; a pose jump above 0.30 m or 0.50 rad latches a fault until restart after checking localization. Pose covariance is a conservative assumption, not firmware-reported uncertainty.
 - Jump diagnostics include the elapsed reception time and previous/current planar poses. Long outages do not bypass the discontinuity protection or automatically reset localization.
 - `/joint_states` carries all 29 movable joint positions at zero so `robot_state_publisher` can connect `base_link` to both legs, both arms, and torso-mounted sensors. This is a visualization placeholder, not measured robot posture. Velocity and effort are omitted because they are unknown. Replace this placeholder publisher when integrating actual SDK joint feedback; do not publish competing positions for the same joints.
@@ -118,3 +147,5 @@ in that mode. SDK private DDS libraries stay scoped to the daemon.
 Before enabling motion, the operator must place the G1 in its intended
 locomotion mode. The chassis adapter preserves that mode; it does not issue
 `Start` or `BalanceStand` when it receives a velocity command.
+
+After a latched daemon motion fault, fresh valid odometry/TF remain visible, but motion stays inhibited. Navigation configured with `provider_ids.odom: g1_chassis` requires healthy chassis diagnostics received within 0.5 s before starting or resuming a task and before confirming stopping for a greeting. Rebuild the SDK daemon and ROS adapter and reload navigation together before the next run. Faults require a project restart after checking the SDK connection; successful stop retries never automatically resume walking. Request rate limiting reduces redundant SDK traffic but does not establish or repair the cause of missing SDK replies.

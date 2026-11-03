@@ -1,9 +1,8 @@
 # g1_face_greeting skill instance configuration.
 #
-# navigation_enabled and turn_to_face_enabled are reserved integration switches.
-# They must remain false until navigation pause/resume and camera geometry are
-# verified on the target robot. With both false, the skill only speaks and runs
-# the intimacy-selected arm action; it never calls navigation or rotates.
+# navigation_enabled coordinates active navigation using pause/resume.
+# Keep disabled until rebuilt packages and greeting timing are verified.
+# turn_to_face_enabled remains false.
 face_provider_id:
   type: string
   default: face_recognition
@@ -19,6 +18,14 @@ arm_provider_id:
 navigation_enabled:
   type: boolean
   default: false
+navigation_provider_id:
+  type: string
+  default: nav2
+greeting_wait_sec:
+  type: number
+  default: 12
+  range: [1, 240]
+  description: Estimated playback wait from greeting start, overlapping SDK calls; not verified playback completion.
 turn_to_face_enabled:
   type: boolean
   default: false

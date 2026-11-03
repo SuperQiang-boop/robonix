@@ -5,6 +5,7 @@ find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(rosidl_default_runtime REQUIRED)
 find_package(std_msgs REQUIRED)
+find_package(diagnostic_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
@@ -18,6 +19,7 @@ target_include_directories(g1_chassis_adapter_node PRIVATE
 ament_target_dependencies(g1_chassis_adapter_node
   rclcpp
   std_msgs
+  diagnostic_msgs
   geometry_msgs
   nav_msgs
   sensor_msgs

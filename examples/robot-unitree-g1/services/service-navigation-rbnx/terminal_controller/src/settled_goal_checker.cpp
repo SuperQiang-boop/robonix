@@ -12,7 +12,7 @@
 
 namespace robonix_nav2_terminal {
 
-/** Configure strict, simultaneous pose and velocity tolerances with a dwell time. */
+/** Configure XY entry/outer bounds, heading tolerance and measured-stop dwell. */
 void SettledGoalChecker::initialize(
     const rclcpp_lifecycle::LifecycleNode::WeakPtr &parent, const std::string &name,
     const std::shared_ptr<nav2_costmap_2d::Costmap2DROS>) {
@@ -30,6 +30,11 @@ void SettledGoalChecker::initialize(
     }
   };
   parameter("xy_goal_tolerance", xy_tolerance_);
+  parameter("terminal_xy_exit_tolerance", xy_exit_tolerance_);
+  parameter("terminal_timeout", terminal_timeout_);
+  if (xy_exit_tolerance_ <= xy_tolerance_) {
+    throw std::runtime_error("Terminal outer XY bound must exceed arrival entry tolerance");
+  }
   parameter("yaw_goal_tolerance", yaw_tolerance_);
   parameter("trans_stopped_velocity", stopped_linear_);
   parameter("rot_stopped_velocity", stopped_angular_);
@@ -44,7 +49,7 @@ void SettledGoalChecker::initialize(
 /** Preserve dwell across replans; isGoalReached resets it on violation or a new goal. */
 void SettledGoalChecker::reset() {}
 
-/** Require XY, yaw and measured stopped speed together for the entire dwell interval. */
+/** Latch XY entry per goal; require heading and stopped dwell within outer/time bounds. */
 bool SettledGoalChecker::isGoalReached(
     const geometry_msgs::msg::Pose &pose, const geometry_msgs::msg::Pose &goal,
     const geometry_msgs::msg::Twist &velocity) {
@@ -56,6 +61,9 @@ bool SettledGoalChecker::isGoalReached(
            tf2::getYaw(previous_goal_->orientation), tf2::getYaw(goal.orientation))) > 0.03);
   if (shouldStartGoal(previous_goal_.has_value(), epoch, seen_goal_epoch_, changed)) {
     settled_since_.reset();
+    entered_xy_ = false;
+    terminal_failed_ = false;
+    entered_at_.reset();
   }
   previous_goal_ = goal;
   if (epoch != 0) {
@@ -66,14 +74,24 @@ bool SettledGoalChecker::isGoalReached(
   const double yaw_error = std::abs(angles::shortest_angular_distance(
       tf2::getYaw(pose.orientation), tf2::getYaw(goal.orientation)));
   const double speed = std::hypot(velocity.linear.x, velocity.linear.y);
+  const auto now = clock_->now();
+  if (std::isfinite(distance) && distance <= xy_tolerance_ && !entered_xy_) {
+    entered_xy_ = true;
+    entered_at_ = now;
+  }
+  if (entered_at_ && (distance > xy_exit_tolerance_ || now < *entered_at_ ||
+      (now - *entered_at_).seconds() > terminal_timeout_)) {
+    terminal_failed_ = true;
+  }
   if (!std::isfinite(distance) || !std::isfinite(yaw_error) ||
       !std::isfinite(speed) || !std::isfinite(velocity.angular.z) ||
-      distance > xy_tolerance_ || yaw_error > yaw_tolerance_ ||
+      terminal_failed_ || !entered_xy_ || distance > xy_exit_tolerance_ || !entered_at_ ||
+      now < *entered_at_ || (now - *entered_at_).seconds() > terminal_timeout_ ||
+      yaw_error > yaw_tolerance_ ||
       speed > stopped_linear_ || std::abs(velocity.angular.z) > stopped_angular_) {
     settled_since_.reset();
     return false;
   }
-  const auto now = clock_->now();
   if (!settled_since_ || now < *settled_since_) {
     settled_since_ = now;
   }

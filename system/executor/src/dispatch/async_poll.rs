@@ -68,6 +68,7 @@ pub async fn run_until_terminal(
     let mut interval = time::interval(POLL_INTERVAL);
     interval.tick().await;
 
+    let mut last_state = RtdlNodeStateEnum::Running as u32;
     loop {
         interval.tick().await;
         if runtime.is_cancelled(&node.plan_id).await {
@@ -118,6 +119,20 @@ pub async fn run_until_terminal(
         runtime
             .record_op_state(&node.plan_id, &node.op_id, state)
             .await;
+        if state != last_state && !rtdl_wire::is_terminal_state(state) {
+            let progress = CapabilityCallResult {
+                call_id: call.call_id.clone(),
+                provider_id: call.provider_id.clone(),
+                contract_id: call.contract_id.clone(),
+                success: true,
+                output: status_out.clone(),
+                error: String::new(),
+            };
+            let _ = tx
+                .send(Ok(rtdl_wire::node_state_from_result(node, progress, state)))
+                .await;
+        }
+        last_state = state;
         if rtdl_wire::is_terminal_state(state) {
             let result = terminal_result(call, state, &detail, &status_out);
             runtime

@@ -18,7 +18,7 @@
 //   RobonixSystemPilot.SubmitTask      → forward each PilotEvent as VoiceEvent { kind=PILOT, … }
 //       │
 //       ▼
-//   (if tts_enabled)  RobonixServiceSpeechTts.Synthesize → RobonixPrimitiveAudioSpeaker.Stream
+//   (if tts_enabled) speech/speak, or speech/tts → audio/speaker when absent
 //       │
 //       ▼
 //   VoiceEvent { kind=SESSION_DONE }
@@ -29,6 +29,7 @@
 
 use anyhow::Result;
 use futures::Stream;
+use rmcp::ServiceExt;
 use robonix_atlas::client::AtlasClient;
 use robonix_atlas::pb as atlas_pb;
 use std::fs;
@@ -413,6 +414,11 @@ async fn run_session(
             anyhow::bail!("access denied for voice user '{user_id}': {reason}");
         }
     };
+
+    // A disconnected capture must not submit a late command after greeting Stop.
+    if tx.is_closed() {
+        anyhow::bail!("voice session closed before task admission");
+    }
 
     // 4. Build Task and stream Pilot events.
     let pilot_endpoint = resolve_endpoint(&atlas, "robonix/system/pilot", "")
@@ -975,6 +981,105 @@ async fn identify_user(
 
 // ── TTS playback ─────────────────────────────────────────────────────────────
 
+/// Prefer the speech service's complete playback capability, including native
+/// robot TTS. Only absence permits PCM playback; a failed call is never retried
+/// through another path because the robot may already have accepted the text.
+async fn speak_text(
+    atlas: &Arc<Mutex<AtlasClient>>,
+    tts_pin: &str,
+    speaker_pin: &str,
+    text: &str,
+) -> Result<Option<String>> {
+    const CONTRACT: &str = "robonix/service/speech/speak";
+    let mut directory = atlas.lock().await;
+    let providers = directory
+        .query_capabilities("", CONTRACT, atlas_pb::Transport::Mcp)
+        .await?;
+    let Some(provider) = providers.iter().find(|provider| {
+        (tts_pin.is_empty() || provider.id == tts_pin || provider.namespace == tts_pin)
+            && provider.capabilities.iter().any(|cap| {
+                cap.contract_id == CONTRACT && cap.transport == atlas_pb::Transport::Mcp as i32
+            })
+    }) else {
+        return Ok(None);
+    };
+    let target = if speaker_pin.is_empty() {
+        String::new()
+    } else {
+        directory
+            .query_capabilities(
+                "",
+                "robonix/primitive/audio/speaker",
+                atlas_pb::Transport::Grpc,
+            )
+            .await?
+            .into_iter()
+            .find(|speaker| speaker.id == speaker_pin || speaker.namespace == speaker_pin)
+            .ok_or_else(|| anyhow::anyhow!("pinned speaker '{speaker_pin}' not in atlas"))?
+            .id
+    };
+    let (channel_id, endpoint, _) = directory
+        .connect_capability("liaison", &provider.id, CONTRACT, atlas_pb::Transport::Mcp)
+        .await?;
+    drop(directory);
+    let result = tokio::time::timeout(Duration::from_secs(120), async {
+        let transport =
+            rmcp::transport::streamable_http_client::StreamableHttpClientTransport::from_uri(
+                localhost_to_ipv4(&endpoint),
+            );
+        let mut client = ().serve(transport).await?;
+        let response = client
+            .call_tool(
+                rmcp::model::CallToolRequestParams::new("speak").with_arguments(
+                    serde_json::json!({"target": target, "text": text})
+                        .as_object()
+                        .expect("literal object")
+                        .clone(),
+                ),
+            )
+            .await;
+        if let Err(error) = client.close().await {
+            warn!("[voice] speech/speak MCP close failed: {error}");
+        }
+        let response = response?;
+        let content = response
+            .content
+            .iter()
+            .filter_map(|content| match &content.raw {
+                rmcp::model::RawContent::Text(text) => Some(text.text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        if response.is_error.unwrap_or(false) {
+            anyhow::bail!("speech/speak failed: {content}");
+        }
+        let payload = match response.structured_content {
+            Some(value) => value,
+            None => serde_json::from_str(&content)?,
+        };
+        if payload.get("ok").and_then(serde_json::Value::as_bool) != Some(true) {
+            anyhow::bail!("speech/speak rejected playback: {payload}");
+        }
+        Ok::<_, anyhow::Error>(
+            payload
+                .get("detail")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("")
+                .to_string(),
+        )
+    })
+    .await
+    .map_err(|_| anyhow::anyhow!("speech/speak timed out; playback acceptance unknown"))
+    .and_then(|result| result);
+    if let Err(error) = atlas.lock().await.disconnect_capability(&channel_id).await {
+        warn!("[voice] speech/speak channel cleanup failed: {error}");
+    }
+    result.map(Some)
+}
+
+/// Play reply text through speech/speak when available, otherwise synthesize
+/// PCM and stream it to the selected speaker. Reports acceptance via events.
 async fn synthesize_and_play(
     atlas: &Arc<Mutex<AtlasClient>>,
     tts_pin: &str,
@@ -984,23 +1089,25 @@ async fn synthesize_and_play(
     session_id: &str,
     tx: &mpsc::Sender<Result<VoiceEvent, Status>>,
 ) -> Result<()> {
+    let _ = tx
+        .send(Ok(event_status(
+            KIND_TTS_STARTED,
+            session_id,
+            "speech playback requested",
+        )))
+        .await;
+    if let Some(detail) = speak_text(atlas, tts_pin, speaker_pin, text).await? {
+        let _ = tx
+            .send(Ok(event_status(KIND_TTS_DONE, session_id, &detail)))
+            .await;
+        return Ok(());
+    }
     let tts_endpoint = resolve_endpoint(atlas, "robonix/service/speech/tts", tts_pin)
         .await
         .ok_or_else(|| anyhow::anyhow!("no RobonixServiceSpeechTts provider"))?;
     let speaker_endpoint = resolve_endpoint(atlas, "robonix/primitive/audio/speaker", speaker_pin)
         .await
         .ok_or_else(|| anyhow::anyhow!("no RobonixPrimitiveAudioSpeaker provider"))?;
-
-    let _ = tx
-        .send(Ok(event_status(
-            KIND_TTS_STARTED,
-            session_id,
-            &format!(
-                "synthesising {} chars via {tts_endpoint}",
-                text.chars().count()
-            ),
-        )))
-        .await;
 
     let mut tts_client = RobonixServiceSpeechTtsClient::connect(tts_endpoint.clone())
         .await
@@ -1289,7 +1396,9 @@ fn pcm_rms_s16le(data: &[u8]) -> f32 {
         return 0.0;
     }
     let sum_sq: f64 = data
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|b| i16::from_le_bytes([b[0], b[1]]) as f64)
         .map(|s| s * s)
         .sum();
@@ -1299,6 +1408,210 @@ fn pcm_rms_s16le(data: &[u8]) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Run a real Atlas gRPC server on an ephemeral port for playback tests.
+    async fn playback_atlas() -> (Arc<Mutex<AtlasClient>>, AbortOnDrop) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let incoming = futures::stream::unfold(listener, |listener| async {
+            Some((listener.accept().await.map(|(socket, _)| socket), listener))
+        });
+        let registry = robonix_atlas::service::AtlasRegistry::with_contracts(Default::default());
+        let server = robonix_atlas::service::AtlasService::new(Arc::new(registry));
+        let task = tokio::spawn(async move {
+            tonic::transport::Server::builder()
+                .add_service(atlas_pb::atlas_server::AtlasServer::new(server))
+                .serve_with_incoming(incoming)
+                .await
+                .unwrap();
+        });
+        let client = AtlasClient::connect(format!("http://{address}"))
+            .await
+            .unwrap();
+        (
+            Arc::new(Mutex::new(client)),
+            AbortOnDrop(task.abort_handle()),
+        )
+    }
+
+    /// Serve MCP initialization and one configurable speak result over HTTP.
+    /// Capture tool requests to verify selected hardware and detect retries.
+    async fn playback_mcp(
+        result: serde_json::Value,
+    ) -> (String, mpsc::Receiver<serde_json::Value>, AbortOnDrop) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!("http://{}/mcp/", listener.local_addr().unwrap());
+        let (calls, received) = mpsc::channel(8);
+        let task = tokio::spawn(async move {
+            loop {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut data = Vec::new();
+                let header_end = loop {
+                    let mut byte = [0];
+                    socket.read_exact(&mut byte).await.unwrap();
+                    data.push(byte[0]);
+                    if data.ends_with(b"\r\n\r\n") {
+                        break data.len();
+                    }
+                };
+                let headers = String::from_utf8_lossy(&data);
+                let length = headers
+                    .lines()
+                    .find_map(|line| {
+                        let (name, value) = line.split_once(':')?;
+                        name.eq_ignore_ascii_case("content-length")
+                            .then(|| value.trim().parse::<usize>().unwrap())
+                    })
+                    .unwrap_or(0);
+                let mut body = vec![0; length];
+                socket.read_exact(&mut body).await.unwrap();
+                let request: serde_json::Value = serde_json::from_slice(&body).unwrap_or_default();
+                let response = match request["method"].as_str() {
+                    Some("initialize") => serde_json::json!({
+                        "jsonrpc": "2.0", "id": request["id"], "result": {
+                            "protocolVersion": request["params"]["protocolVersion"],
+                            "capabilities": {"tools": {}},
+                            "serverInfo": {"name": "speech-test", "version": "1"}
+                        }
+                    }),
+                    Some("tools/call") => {
+                        calls.send(request.clone()).await.unwrap();
+                        serde_json::json!({"jsonrpc": "2.0", "id": request["id"], "result": result})
+                    }
+                    _ => serde_json::Value::Null,
+                };
+                let (status, body) = if response.is_null() {
+                    ("202 Accepted", String::new())
+                } else {
+                    ("200 OK", response.to_string())
+                };
+                let reply = format!(
+                    "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                assert_eq!(header_end, data.len());
+                socket.write_all(reply.as_bytes()).await.unwrap();
+            }
+        });
+        (endpoint, received, AbortOnDrop(task.abort_handle()))
+    }
+
+    /// Exercise Atlas discovery and MCP wire calls without any robot playback.
+    /// Native success needs no PCM capability; rejections must never retry PCM.
+    #[tokio::test]
+    async fn native_playback_uses_selected_speaker_and_reports_failures() {
+        for (response, succeeds) in [
+            (
+                serde_json::json!({"content": [{"type": "text", "text": "{\"ok\":true,\"detail\":\"accepted\"}"}]}),
+                true,
+            ),
+            (
+                serde_json::json!({"content": [], "structuredContent": {"ok": true, "detail": "accepted"}}),
+                true,
+            ),
+            (
+                serde_json::json!({"content": [], "structuredContent": {"ok": false, "detail": "SDK rejected"}}),
+                false,
+            ),
+            (
+                serde_json::json!({"isError": true, "content": [{"type": "text", "text": "SDK failed"}]}),
+                false,
+            ),
+        ] {
+            let (atlas, _atlas_server) = playback_atlas().await;
+            let (endpoint, mut calls, _mcp_server) = playback_mcp(response).await;
+            {
+                let mut directory = atlas.lock().await;
+                directory
+                    .register_service("speech", "robonix/service/speech", "")
+                    .await
+                    .unwrap();
+                directory
+                    .declare_capability(
+                        "speech",
+                        "robonix/service/speech/speak",
+                        atlas_pb::Transport::Mcp,
+                        &endpoint,
+                        robonix_atlas::client::mcp_params("{}"),
+                    )
+                    .await
+                    .unwrap();
+                directory
+                    .register_primitive("g1_audio", "robonix/primitive/audio", "")
+                    .await
+                    .unwrap();
+                directory
+                    .declare_capability(
+                        "g1_audio",
+                        "robonix/primitive/audio/speaker",
+                        atlas_pb::Transport::Grpc,
+                        "127.0.0.1:1",
+                        robonix_atlas::client::grpc_params("", "", ""),
+                    )
+                    .await
+                    .unwrap();
+            }
+            let (tx, mut events) = mpsc::channel(8);
+            let result = tokio::time::timeout(
+                Duration::from_secs(5),
+                synthesize_and_play(
+                    &atlas,
+                    "speech",
+                    "robonix/primitive/audio",
+                    "zh-CN",
+                    "你好",
+                    "test",
+                    &tx,
+                ),
+            )
+            .await
+            .unwrap();
+            assert_eq!(result.is_ok(), succeeds, "{result:?}");
+            if !succeeds {
+                assert!(result.unwrap_err().to_string().contains("speech/speak"));
+            }
+            let call = calls.recv().await.unwrap();
+            assert_eq!(call["params"]["name"], "speak");
+            assert_eq!(
+                call["params"]["arguments"],
+                serde_json::json!({"target": "g1_audio", "text": "你好"})
+            );
+            assert!(calls.try_recv().is_err());
+            assert_eq!(
+                events.recv().await.unwrap().unwrap().event_kind,
+                KIND_TTS_STARTED
+            );
+            if succeeds {
+                assert_eq!(
+                    events.recv().await.unwrap().unwrap().event_kind,
+                    KIND_TTS_DONE
+                );
+            }
+            assert!(events.try_recv().is_err());
+        }
+    }
+
+    /// Preserve the PCM branch only when the selected service lacks speak.
+    #[tokio::test]
+    async fn absent_speak_capability_preserves_pcm_path() {
+        let (atlas, _server) = playback_atlas().await;
+        assert_eq!(
+            speak_text(&atlas, "missing", "g1_audio", "你好")
+                .await
+                .unwrap(),
+            None
+        );
+        let (tx, _events) = mpsc::channel(8);
+        let error = synthesize_and_play(&atlas, "missing", "g1_audio", "", "你好", "test", &tx)
+            .await
+            .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("no RobonixServiceSpeechTts provider")
+        );
+    }
 
     #[test]
     fn fallback_user_id_normalises_hint() {

@@ -14,6 +14,7 @@ import time
 
 import rclpy
 from geometry_msgs.msg import Twist
+from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus
 from nav_msgs.msg import Odometry
 from rclpy.node import Node
 from tf2_msgs.msg import TFMessage
@@ -29,9 +30,11 @@ def main():
     odometry = []
     transforms = []
     commands = []
+    diagnostics = []
     subscriptions = [
         node.create_subscription(Odometry, "/g1_test/odom", odometry.append, 100),
         node.create_subscription(TFMessage, "/tf", transforms.append, 100),
+        node.create_subscription(DiagnosticArray, "/diagnostics", diagnostics.append, 10),
     ]
     publisher = node.create_publisher(Twist, "/g1_test/cmd", 10)
     process = None
@@ -125,13 +128,32 @@ def main():
                         assert len(odometry) > count, f"recovery failed after {mode}"
                     connection.send(b"malformed")
                     pump(0.1, "valid", True)
+
+                    # A latched command fault stops motion while truthful
+                    # position and TF continue to reach RViz and mapping.
+                    connection.send(struct.pack("<BBB9sBB2s", 2, 0, 5, bytes(9), 0, 1, bytes(2)))
+                    pump(0.3, "valid", True)
+                    count = len(odometry)
+                    tf_count = len(transforms)
+                    command_start = len(commands)
+                    pump(0.3, "valid", True)
+                    assert len(odometry) > count and len(transforms) > tf_count, "motion fault hid valid position"
+                    assert not any(command[2] for _, command in commands[command_start:]), "motion after SDK fault"
+                    status = [status for msg in diagnostics for status in msg.status
+                              if status.name == "g1_chassis"]
+                    if not status or status[-1].level != DiagnosticStatus.ERROR:
+                        log.seek(0)
+                        raise AssertionError(f"chassis fault not reported: {status[-3:]}\n{log.read()}")
+                    connection.send(struct.pack("<BBB9sBB2s", 2, 0, 0, bytes(9), 1, 0, bytes(2)))
+                    pump(0.2, "valid", True)
+                    assert not any(command[2] for _, command in commands[command_start:]), "healthy reply cleared fault latch"
                     pump(0.25, "jump", True)
                     count = len(odometry)
                     command_start = len(commands)
                     pump(0.3, "valid", True)
                     assert len(odometry) == count, "pose jump fault did not latch"
                     assert not any(command[2] for _, command in commands[command_start:])
-                    print(f"PASS: {rate:.1f} Hz real-state odom/TF, duplicate/stale/error guards, jump latch")
+                    print(f"PASS: {rate:.1f} Hz odom/TF, stale/jump guards, motion fault diagnostics and display continuity")
     finally:
         if connection is not None:
             connection.close()

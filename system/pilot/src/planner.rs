@@ -17,6 +17,7 @@ use crate::pb::pilot::{
 };
 use crate::service::{self, PilotStreamBody, SessionState};
 use crate::state_context;
+use crate::task_control::{TaskControl, greeting_blocks, greeting_state};
 use crate::vlm::{Message, VlmClient, VlmStreamItem};
 use anyhow::{Context, Result};
 use futures_util::StreamExt;
@@ -191,6 +192,10 @@ pub(crate) struct TaskState {
     /// handler: when the last in-flight tree completes and `pending_done`
     /// is true, the task is marked done instead of replanning.
     pending_done: bool,
+    /// Harness-owned interruption records survive steering and history compaction.
+    control: TaskControl,
+    /// True only when the model explicitly verified successful completion.
+    verified: bool,
 }
 
 const DEFAULT_SUCCESS_CRITERION: &str =
@@ -210,7 +215,7 @@ impl TaskState {
             "\n\n## Current user interaction\n- instruction: {}\n\
              - success_criterion: {}\n- status: {}\n",
             self.goal, self.success_criterion, self.status
-        )
+        ) + &self.control.prompt()
     }
 }
 
@@ -351,6 +356,12 @@ async fn drive_plan(
                 if event.event_kind == RtdlEventEnum::NodeState as u32
                     && let Some(ns) = event.node_state
                 {
+                    if is_terminal_executor_state(ns.state)
+                        || ns.state == RtdlNodeStateEnum::Paused as u32
+                        || ns.state == RtdlNodeStateEnum::Running as u32
+                    {
+                        forest_revision.fetch_add(1, Ordering::Release);
+                    }
                     // Forward every node state for live viz.
                     let _ = events_tx
                         .send(ForestEvent::NodeState {
@@ -362,7 +373,6 @@ async fn drive_plan(
                     // a terminal state (leaf and non-leaf). A non-success
                     // terminal state marks the round as failed.
                     if is_terminal_executor_state(ns.state) {
-                        forest_revision.fetch_add(1, Ordering::Release);
                         if ns.state == RtdlNodeStateEnum::Canceled as u32 {
                             // Cancellation is not a failure to recover from — it
                             // is the model's own stop request taking effect. Flag
@@ -445,6 +455,7 @@ enum MetaPlanOp {
     Cancel {
         plan_id: String,
         wait_ms: u64,
+        resume_after: bool,
     },
     CancelAll {
         wait_ms: u64,
@@ -494,10 +505,18 @@ fn parse_meta_plan_op(rtdl: &serde_json::Value) -> Result<Option<MetaPlanOp>> {
             .unwrap_or(5_000)
             .min(30_000)
     };
+    if op != "cancel_plan" && obj.contains_key("resume_after") {
+        anyhow::bail!("resume_after is supported only by cancel_plan");
+    }
     let parsed = match op {
         "cancel_plan" => MetaPlanOp::Cancel {
             plan_id: string("plan_id")?,
             wait_ms: wait_ms(),
+            resume_after: match obj.get("resume_after") {
+                None => false,
+                Some(serde_json::Value::Bool(value)) => *value,
+                Some(_) => anyhow::bail!("cancel_plan.resume_after must be a boolean"),
+            },
         },
         "cancel_all" => MetaPlanOp::CancelAll { wait_ms: wait_ms() },
         "stop_plan_at" => {
@@ -522,7 +541,9 @@ fn parse_meta_plan_op(rtdl: &serde_json::Value) -> Result<Option<MetaPlanOp>> {
 
 async fn execute_meta_plan_op(executor: &mut ExecutorConn, op: &MetaPlanOp) -> Result<String> {
     let request = match op {
-        MetaPlanOp::Cancel { plan_id, wait_ms } => ControlPlanRequest {
+        MetaPlanOp::Cancel {
+            plan_id, wait_ms, ..
+        } => ControlPlanRequest {
             action: "cancel".to_string(),
             plan_id: plan_id.clone(),
             op_id: String::new(),
@@ -751,11 +772,18 @@ fn append_steer(
     }
     info!("[pilot/steer] mid-task input: {text}");
     history.push(Message::user(text));
+    let mut control = current_task
+        .take()
+        .map(|state| state.control)
+        .unwrap_or_default();
+    control.new_input();
     *current_task = Some(TaskState {
         goal: text.to_string(),
         success_criterion: DEFAULT_SUCCESS_CRITERION.to_string(),
         status: "in_progress".to_string(),
         pending_done: false,
+        control,
+        verified: false,
     });
     true
 }
@@ -780,11 +808,18 @@ fn start_or_resume_task(current_task: &mut Option<TaskState>, user_text: &str) {
     if text.is_empty() {
         return;
     }
+    let mut control = current_task
+        .take()
+        .map(|state| state.control)
+        .unwrap_or_default();
+    control.new_input();
     *current_task = Some(TaskState {
         goal: text.to_string(),
         success_criterion: DEFAULT_SUCCESS_CRITERION.to_string(),
         status: "in_progress".to_string(),
         pending_done: false,
+        control,
+        verified: false,
     });
 }
 
@@ -819,13 +854,16 @@ fn apply_task_update(
     }
     if update.status == "done" && can_finish {
         state.status = "done".to_string();
+        state.verified = update.verified;
         state.pending_done = false;
     } else if update.status == "done" && !can_finish {
+        state.verified = false;
         // LLM requested done but a tree is still being dispatched.
         // Remember the intent so PlanDone can finalize later.
         state.pending_done = true;
         state.status = "in_progress".to_string();
     } else {
+        state.verified = false;
         state.pending_done = false;
         state.status = "in_progress".to_string();
     };
@@ -989,6 +1027,11 @@ pub async fn run_turn(
 
     macro_rules! return_interrupted {
         ($forest:expr) => {{
+            if let Some(state) = standing_task.as_mut() {
+                state.control.clear();
+                state.pending_done = false;
+                state.status = "done".into();
+            }
             cancel_forest_plans(executor, $forest, &session_id).await;
             let _ = tx
                 .send(Ok(service::pack(
@@ -1151,6 +1194,8 @@ pub async fn run_turn(
     let mut cancel_requested: HashSet<String> = HashSet::new();
     let forest_revision = Arc::new(AtomicU64::new(0));
     let mut should_plan = true;
+    let mut greeting_seen = greeting_state();
+    let mut greeting_tick = tokio::time::interval(Duration::from_millis(500));
     let mut capability_prompt_cache = CapabilityPromptCache::default();
     let mut scene_navigation_goals = SceneNavigationGoals::default();
     // Last user-facing narration; surfaced as FinalText when the turn ends.
@@ -1187,6 +1232,13 @@ pub async fn run_turn(
                     _ = cancel_rx.changed() => {
                         return_interrupted!(&forest);
                     }
+                    _ = greeting_tick.tick() => {
+                        let latest = greeting_state();
+                        if latest != greeting_seen {
+                            greeting_seen = latest;
+                            should_plan = true;
+                        }
+                    }
                     steer = steer_rx.recv() => {
                         match steer {
                             Some(task) => {
@@ -1209,6 +1261,13 @@ pub async fn run_turn(
                 _ = cancel_rx.changed() => {
                     return_interrupted!(&forest);
                 }
+                _ = greeting_tick.tick() => {
+                    let latest = greeting_state();
+                    if latest != greeting_seen {
+                        greeting_seen = latest;
+                        should_plan = true;
+                    }
+                }
                 steer = steer_rx.recv() => {
                     if let Some(task) = steer
                         && append_steer(task, history, standing_task)
@@ -1228,6 +1287,12 @@ pub async fn run_turn(
                             // this too, but be explicit so the live view always
                             // correlates with the Plan already sent).
                             ns.plan_id = plan_id.clone();
+                            if let Some(state) = standing_task.as_mut() {
+                                state.control.observe(&plan_id, &ns);
+                            }
+                            if ns.state == RtdlNodeStateEnum::Paused as u32 {
+                                should_plan = true;
+                            }
                             // Feed every node's result into context the moment it
                             // reaches a terminal state, using names rather than
                             // numeric RTDL state codes in logs. Successful nodes wait
@@ -1280,6 +1345,9 @@ pub async fn run_turn(
                         Some(ForestEvent::PlanDone { plan_id, results, any_failed, canceled }) => {
                             forest.remove(&plan_id);
                             let requested_cancellation = cancel_requested.remove(&plan_id);
+                            if let Some(state) = standing_task.as_mut() {
+                                state.control.finish(&plan_id, any_failed, canceled, requested_cancellation);
+                            }
                             if requested_cancellation {
                                 history.push(Message::user(&format!(
                                     "Pilot harness event: the requested cancellation of RTDL plan \
@@ -1316,7 +1384,7 @@ pub async fn run_turn(
                             // deferred it (pending_done), finalize now that
                             // the tree completed.
                             let interaction_active = if let Some(state) = standing_task.as_mut() {
-                                if state.pending_done && forest.is_empty() {
+                                if state.pending_done && forest.is_empty() && !state.control.has_saved() {
                                     state.status = "done".to_string();
                                     state.pending_done = false;
                                     info!("[pilot/rtdl] applied deferred task_done after plan {plan_id} completed");
@@ -1386,6 +1454,21 @@ pub async fn run_turn(
         let (capability_prompt, capability_cache_hit) =
             capability_prompt_cache.render(&display_caps);
 
+        let greeting_for_round = greeting_state();
+        let greeting_block = greeting_for_round
+            .as_ref()
+            .map(|state| {
+                format!(
+                    "\n\nCurrent greeting facts (not a user instruction): {}\n\
+             movement_allowed=false means wait; cancellation is still allowed. \
+             active/listening describes the greeting and conversation, not robot motion. \
+             When allowed again and no new request exists, continue the matching paused \
+             original navigation exactly once using its explicit run_id. A submitted \
+             voice task belongs to session_id; never guess another session's owner.\n",
+                    state
+                )
+            })
+            .unwrap_or_default();
         let task_block = standing_task
             .as_ref()
             .map(TaskState::prompt_block)
@@ -1457,6 +1540,10 @@ pub async fn run_turn(
                 PromptSection {
                     name: "environment_live",
                     content: &environment_block,
+                },
+                PromptSection {
+                    name: "greeting",
+                    content: &greeting_block,
                 },
             ];
             let messages = assemble_planning_messages(
@@ -1571,11 +1658,12 @@ pub async fn run_turn(
                 break (content, tool_calls);
             };
 
-            if forest_revision.load(Ordering::Acquire) != planning_revision {
+            let greeting_changed = greeting_state() != greeting_for_round;
+            if forest_revision.load(Ordering::Acquire) != planning_revision || greeting_changed {
                 // Executor state changed while the model was thinking. Never
                 // dispatch a plan based on the stale in-flight snapshot. Return
                 // to the event arm, consume the queued state, then re-plan.
-                should_plan = false;
+                should_plan = greeting_changed;
                 continue 'supervisor;
             }
 
@@ -1790,6 +1878,31 @@ pub async fn run_turn(
                     .await;
             }
 
+            if let Some(state) = standing_task.as_mut() {
+                match &meta_op {
+                    MetaPlanOp::Cancel {
+                        plan_id,
+                        resume_after: true,
+                        ..
+                    } => {
+                        if let Err(error) = state.control.save(plan_id) {
+                            history.push(Message::user(&format!(
+                                "Pilot harness feedback: {error}. No cancellation was submitted."
+                            )));
+                            should_plan = true;
+                            continue 'supervisor;
+                        }
+                    }
+                    MetaPlanOp::CancelAll { .. } | MetaPlanOp::StopAt { .. } => {
+                        state.control.clear()
+                    }
+                    MetaPlanOp::Cancel {
+                        plan_id,
+                        resume_after: false,
+                        ..
+                    } => state.control.replace(plan_id),
+                }
+            }
             cancel_requested.extend(targets.iter().cloned());
             let result = execute_meta_plan_op(executor, &meta_op).await;
             round += 1;
@@ -1816,6 +1929,9 @@ pub async fn run_turn(
                 }
                 Err(error) => {
                     warn!("[pilot/control] meta operation failed: {error:#}");
+                    if let Some(state) = standing_task.as_mut() {
+                        state.control.block();
+                    }
                     for target in &targets {
                         cancel_requested.remove(target);
                     }
@@ -1862,6 +1978,32 @@ pub async fn run_turn(
             continue 'supervisor;
         }
 
+        if calls > 0
+            && !cancel_requested.is_empty()
+            && standing_task
+                .as_ref()
+                .is_some_and(|state| state.control.has_saved())
+        {
+            should_plan = false;
+            continue 'supervisor;
+        }
+        if calls > 0 && greeting_blocks(&greeting_state()) {
+            history.push(Message::user("Pilot harness feedback: greeting/conversation is still holding movement, or its completion is unconfirmed. No new tree was dispatched. Keep the request pending and wait for the greeting state to change; do not retry, resume, or bypass the restriction."));
+            history::trim(history, MAX_HISTORY);
+            should_plan = false;
+            continue 'supervisor;
+        }
+        if calls > 0
+            && standing_task.as_ref().is_some_and(|state| {
+                state.control.blocks_actions() || state.control.repeats_completed(&call_signatures)
+            })
+        {
+            history.push(Message::user("Pilot harness feedback: retained work is blocked by a failure, or this would repeat a completed step. No action was dispatched. Explain the blocker and wait for a new user decision."));
+            history::trim(history, MAX_HISTORY);
+            should_plan = false;
+            continue 'supervisor;
+        }
+
         // Apply progress only after the harness knows whether this response can
         // safely finish. A model cannot mark a task done while it is also
         // dispatching work or while an older tree remains in flight.
@@ -1870,7 +2012,15 @@ pub async fn run_turn(
                 "[pilot/rtdl] task_update goal='{}' status='{}'",
                 updated.goal, updated.status
             );
-            let changed = apply_task_update(standing_task, updated, calls == 0);
+            let changed = apply_task_update(
+                standing_task,
+                updated,
+                calls == 0
+                    && (forest.is_empty()
+                        || !standing_task
+                            .as_ref()
+                            .is_some_and(|state| state.control.has_saved())),
+            );
             if changed && let Some(state) = standing_task.as_ref() {
                 let _ = tx
                     .send(Ok(service::pack(
@@ -1883,6 +2033,37 @@ pub async fn run_turn(
                     )))
                     .await;
             }
+        }
+
+        if calls == 0
+            && forest.is_empty()
+            && standing_task.as_ref().is_some_and(TaskState::is_done)
+            && let Some(state) = standing_task.as_mut()
+            && let Some(saved) = state.control.resume(state.verified)
+        {
+            state.goal = saved["goal"].as_str().unwrap_or_default().into();
+            state.success_criterion = saved["success_criterion"]
+                .as_str()
+                .unwrap_or(DEFAULT_SUCCESS_CRITERION)
+                .into();
+            state.status = "in_progress".into();
+            state.verified = false;
+            state.pending_done = false;
+            let _ = tx
+                .send(Ok(service::pack(
+                    &session_id,
+                    PilotStreamBody::TaskState(TaskStateEvent {
+                        goal: state.goal.clone(),
+                        success_criterion: state.success_criterion.clone(),
+                        status: state.status.clone(),
+                    }),
+                )))
+                .await;
+            history.push(Message::user(&format!("Pilot harness event: temporary work succeeded and was verified. Continue only unfinished steps of this retained original request, rechecking current capability-specific preconditions. Never replay successful steps: {saved}")));
+            history::trim(history, MAX_HISTORY);
+            scene_navigation_goals.clear();
+            should_plan = true;
+            continue 'supervisor;
         }
 
         log_plan_start(&graph, &rtdl_description, round, calls);
@@ -1979,6 +2160,11 @@ pub async fn run_turn(
             .await;
         cancel_requested.extend(cancel_targets);
         record_dispatched_plan(history, &graph, &rtdl_description);
+        if let Some(state) = standing_task.as_mut() {
+            state
+                .control
+                .dispatch(&graph, &state.goal, &state.success_criterion);
+        }
         scene_navigation_goals.track_plan(&graph);
         forest.insert(
             plan_id.clone(),
@@ -2072,9 +2258,11 @@ Nodes are exactly one of:
 - {"op":"sequence","op_id":0,"description":"...","children":[...]}
 - {"op":"parallel","op_id":0,"description":"...","children":[...]}
 - {"op":"do","op_id":0,"description":"...","cap":"<exact capability_name>","args":{...}}
-Write op_id=0; Pilot assigns the real ID. Do not add node fields. Compose every currently-known dependent step into one sequence and every independent step into one parallel tree; do not drip one known call per round. With no new call, return an empty sequence.
+Write op_id=0; Pilot assigns IDs. Add no node fields. Batch known ordered steps in sequence, independent steps in parallel. With no new call, return an empty sequence.
 
-Plan control is the entire rtdl value, never a nested node or capability: cancel_plan, cancel_all, or stop_plan_at using an exact listed plan_id/op_id. Never repeat a completed/cancelled control operation and never cancel an unrelated tree after another tree fails.
+Temporary work: cancel_plan with resume_after=true; default false replaces/stops. Wait for cancellation and greeting clearance. Return requires task_update.verified=true after actual success; failure/blockers use false.
+
+Root-only plan control: cancel_plan, cancel_all, stop_plan_at with exact listed plan_id/op_id. Never repeat control or cancel unrelated work after failure.
 
 Resolve a named room through current Scene regions before navigation; never use a remembered grasp or observation pose as a room goal. A navigation SUCCEEDED result proves only the resolved requested destination; a zero-distance result does not prove that the robot moved. Never call a skill's cancel capability; Executor propagates RTDL cancellation.
 
@@ -2247,16 +2435,20 @@ fn parse_rtdl_assistant_response(raw: &str) -> Result<RtdlEnvelope> {
 
 /// Parse a non-null `task_update` object into a [`TaskState`].
 ///
-/// Requires exactly `goal`, `success_criterion`, and `status` (all strings),
+/// Requires `goal`, `success_criterion`, and `status` (all strings), and optional boolean `verified`,
 /// with `status` constrained to `"in_progress"` or `"done"`.
 fn parse_task_update(v: &serde_json::Value) -> Result<TaskState> {
     let obj = v
         .as_object()
         .ok_or_else(|| anyhow::anyhow!("`task_update` must be null or an object"))?;
     const KEYS: [&str; 3] = ["goal", "success_criterion", "status"];
-    if obj.len() != KEYS.len() || !KEYS.iter().all(|k| obj.contains_key(*k)) {
+    if !KEYS.iter().all(|k| obj.contains_key(*k))
+        || obj
+            .keys()
+            .any(|key| !KEYS.contains(&key.as_str()) && key != "verified")
+    {
         anyhow::bail!(
-            "`task_update` object must contain exactly `goal`, `success_criterion`, and `status`"
+            "`task_update` must contain exactly the required `goal`, `success_criterion`, `status`, plus optional boolean `verified`"
         );
     }
     let get = |key: &str| -> Result<String> {
@@ -2274,6 +2466,12 @@ fn parse_task_update(v: &serde_json::Value) -> Result<TaskState> {
         success_criterion: get("success_criterion")?,
         status,
         pending_done: false,
+        control: TaskControl::default(),
+        verified: match obj.get("verified") {
+            None => false,
+            Some(serde_json::Value::Bool(value)) => *value,
+            Some(_) => anyhow::bail!("task_update.verified must be a boolean"),
+        },
     })
 }
 
@@ -2993,6 +3191,34 @@ by planning capability calls available to you.
   Use `on_complete` for 'after step X' and `on_enter` for 'before step X'.
   Bind X itself; never substitute X's predecessor or successor.
 - Do not execute a later physical step unless its required earlier steps have succeeded.
+- Interpret new instructions by meaning: a temporary request ('先去B，然后继续A',
+  or '先去B' during an unfinished trip) retains unfinished original work; explicit
+  replacement ('不去A，改去B') discards it; '全部停止' discards all return work.
+  If that distinction is ambiguous, clarify before changing physical execution.
+- For temporary work, issue one root cancel_plan with resume_after=true for the
+  exact interrupted plan. The harness saves its original goal and actual steps.
+  Wait for cancellation completion before successor work. Never use cancel_all
+  for a temporary insertion, never cancel a skill directly, and never put
+  cancellation and successor work in the same tree. For replacement use the
+  ordinary cancel_plan (resume_after=false); for stopping all use cancel_all.
+- During greeting or listening, read the current greeting facts. PAUSED is not
+  moving; RUNNING is not measured velocity. Do not infer greeting progress from
+  provider ACTIVE or from face detection. movement_allowed=false prohibits new
+  physical work and navigation resume; accept the instruction but wait. Never
+  bypass this restriction by cancelling the paused run or calling chassis/arm.
+- A greeting does not replace the original objective. When greeting/conversation
+  ends without a new request, continue its matching paused navigation once.
+  If a temporary request was submitted, cancel the old execution and perform the
+  temporary request first. After verified success, mark that interaction done;
+  the harness restores the original intent for fresh planning of remaining steps.
+  Set task_update.verified=true only after evidence proves successful completion;
+  use false for failure, cancellation, blockers, or unclear results. done alone
+  can close a failed interaction but must never trigger return to retained work.
+  Never invent a return action from memory, replay completed speech/handoffs,
+  restart after failure/Stop, or claim completion from mere request acceptance.
+- Some skills cannot safely be interrupted or restarted. Verify their actual
+  cancellation and continuation constraints; ask before interrupting irreversible
+  work. Resolve a retained navigation destination again against current Scene.
 - For semantic navigation, resolve names through Scene before calling navigation:
   - call Scene `list_regions` first to discover the stable ID for a named room
     or region, and call `list_objects` for a physical object; pass that exact
@@ -3088,6 +3314,7 @@ mod tests {
         task_is_session_end,
     };
     use crate::pb::pilot::{CapabilityCall, CapabilityCallResult, Plan, RtdlNode, Task};
+    use crate::task_control::TaskControl;
     use robonix_atlas::pb as atlas_pb;
     use serde_json::json;
     use std::collections::{HashMap, HashSet};
@@ -3283,6 +3510,7 @@ mod tests {
             Some(MetaPlanOp::Cancel {
                 plan_id: "7".into(),
                 wait_ms: 5_000,
+                resume_after: false,
             })
         );
         assert_eq!(
@@ -3352,6 +3580,8 @@ mod tests {
                 success_criterion: "room was actually inspected".into(),
                 status: "done".into(),
                 pending_done: false,
+                control: TaskControl::default(),
+                verified: false,
             },
             false,
         ));
@@ -3367,6 +3597,8 @@ mod tests {
                 success_criterion: "room was actually inspected".into(),
                 status: "done".into(),
                 pending_done: false,
+                control: TaskControl::default(),
+                verified: false,
             },
             true,
         ));
@@ -3798,6 +4030,8 @@ mod tests {
                 success_criterion: "cup by user".into(),
                 status: "in_progress".into(),
                 pending_done: false,
+                control: TaskControl::default(),
+                verified: false,
             })
         );
     }
@@ -3839,6 +4073,19 @@ mod tests {
         }))
         .unwrap_err();
         assert!(err.to_string().contains("status"));
+    }
+
+    /// Default completion must not count as verified temporary success.
+    #[test]
+    fn temporary_completion_requires_explicit_boolean_verification() {
+        let base = json!({"goal": "B", "success_criterion": "arrived", "status": "done"});
+        assert!(!parse_task_update(&base).unwrap().verified);
+        let mut verified = base;
+        verified["verified"] = json!(true);
+        assert!(parse_task_update(&verified).unwrap().verified);
+        verified["verified"] = json!("true");
+        assert!(parse_task_update(&verified).is_err());
+        assert!(parse_meta_plan_op(&json!({"op": "cancel_all", "resume_after": true})).is_err());
     }
 
     #[test]

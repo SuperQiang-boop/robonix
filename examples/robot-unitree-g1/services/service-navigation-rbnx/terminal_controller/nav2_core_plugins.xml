@@ -10,6 +10,18 @@
     <description>Strict simultaneous XY/yaw and stopped-speed dwell.</description>
   </class>
 </library>
+<library path="robonix_nav2_python_final_approach">
+  <class name="robonix_nav2_terminal::PythonFinalApproachController"
+         type="robonix_nav2_terminal::PythonFinalApproachController"
+         base_class_type="nav2_core::Controller">
+    <description>Independent Python G1 body-frame terminal approach with MPPI transit.</description>
+  </class>
+  <class name="robonix_nav2_terminal::PythonFinalApproachGoalChecker"
+         type="robonix_nav2_terminal::PythonFinalApproachGoalChecker"
+         base_class_type="nav2_core::GoalChecker">
+    <description>Use the Python controller's pose dwell completion.</description>
+  </class>
+</library>
 <library path="robonix_nav2_rotation_shim">
   <class name="robonix_nav2_terminal::PersistentRotationShim"
          type="robonix_nav2_terminal::PersistentRotationShim"

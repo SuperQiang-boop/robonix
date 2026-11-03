@@ -76,7 +76,7 @@ class ControllerCheck:
         odom.twist.twist.linear.x = self.measured_linear
         self.odom.publish(odom)
 
-    def publish_collision_map(self, blocked=True):
+    def publish_collision_map(self, blocked=True, offset_x=0):
         """Seed only an isolated static layer with an obstacle intersecting the footprint."""
         grid = OccupancyGrid()
         grid.header.frame_id = "odom"
@@ -86,7 +86,7 @@ class ControllerCheck:
         grid.info.origin.position.x = grid.info.origin.position.y = -2.0
         grid.info.origin.orientation.w = 1.0
         grid.data = [0] * 6400
-        for column in range(43, 47):
+        for column in range(43 + offset_x, 47 + offset_x):
             for row in range(41, 45):
                 grid.data[row * 80 + column] = 100 if blocked else 0
         self.map_pub.publish(grid)
@@ -112,7 +112,9 @@ class ControllerCheck:
         request.transition.id = transition_id
         future = self.lifecycle.call_async(request)
         self.wait(future.done)
-        assert future.result().success
+        if not future.result().success:
+            self.log.seek(0)
+            raise RuntimeError(f"controller lifecycle transition failed:\n{self.log.read()}")
 
     def goal(self, position_x, yaw, replan=False):
         """Submit a synthetic path to FollowPath, not to the physical robot's navigator."""
@@ -177,115 +179,118 @@ class ControllerCheck:
         assert abs(self.commands[-1].linear.x) < 1e-6
         assert abs(self.commands[-1].angular.z) < 1e-6
 
-    def check_correction(self, repeat_drift=False, budget_arrival=False):
-        """Allow one bounded correction across replans, then succeed or reject a second drift."""
-        self.yaw = 0.0
-        self.position_x = 0.0
-        self.position_y = 0.0
-        self.spin_for(0.15)
-        self.commands.clear()
-        self.reports.clear()
-        handle = self.goal(0.1, 1.0)
-        self.wait(lambda: any(command.angular.z > 0.1 for command in self.commands))
-        self.position_x = -0.20
-        self.measured_angular = 0.15
-        self.wait(lambda: any("bounded terminal" in report.message for report in self.reports))
-        self.commands.clear()
-        handle = self.goal(0.1, 1.0, replan=True)
-        self.spin_for(0.5)
-        assert self.commands
-        assert all(abs(command.linear.x) < 1e-6 and abs(command.angular.z) < 1e-6
-                   for command in self.commands), "correction did not wait for measured braking"
-        self.measured_angular = 0.0
-        self.speed_pub.publish(SpeedLimit(speed_limit=0.12, percentage=False))
-        self.commands.clear()
-        self.wait(lambda: any(command.linear.x > 0.08 for command in self.commands))
-        assert all(0.0 <= command.linear.x <= 0.1201 and abs(command.linear.y) < 1e-6
-                   for command in self.commands), "correction ignored speed cap or moved laterally"
-        self.speed_pub.publish(SpeedLimit(speed_limit=50.0, percentage=True))
-        self.spin_for(0.3)
-        self.commands.clear()
-        self.spin_for(0.3)
-        assert any(command.linear.x > 0.12 for command in self.commands)
-        assert all(command.linear.x <= 0.1751 for command in self.commands)
-        self.position_x = -0.08 if budget_arrival else 0.04
-        self.commands.clear()
-        self.wait(lambda: any("correction finished" in report.message for report in self.reports))
-        if budget_arrival:
-            assert any("arrival XY window at budget" in report.message for report in self.reports)
-        self.wait(lambda: any(command.angular.z > 0.1 for command in self.commands))
-        result = handle.get_result_async()
-        assert not result.done(), "position correction must not skip the final heading"
-        self.yaw = 1.0
-        if repeat_drift:
-            self.position_x = -0.14
-            self.wait(lambda: any("after one correction" in report.message for report in self.reports))
-            handle = self.goal(0.1, 1.0, replan=True)
-            self.commands.clear()
-            self.spin_for(0.5)
-            assert all(abs(command.linear.x) < 1e-6 and abs(command.angular.z) < 1e-6
-                       for command in self.commands), "same-goal replan reset a failed correction"
-            previous_uuid = self.navigation_uuid
-            next_status = GoalStatus()
-            self.navigation_uuid = uuid.uuid4().hex
-            next_status.goal_info.goal_id.uuid = list(bytes.fromhex(self.navigation_uuid))
-            next_status.goal_info.stamp = self.node.get_clock().now().to_msg()
-            next_status.status = GoalStatus.STATUS_EXECUTING
-            self.status_pub.publish(GoalStatusArray(status_list=[next_status]))
-            self.reports.clear()
-            self.spin_for(0.6)
-            assert any(report.hardware_id == previous_uuid and report.level >= DiagnosticStatus.ERROR
-                       for report in self.reports), "did not exercise the old controller's repeat report"
-            assert all(report.hardware_id != self.navigation_uuid for report in self.reports
-                       if report.level >= DiagnosticStatus.ERROR), \
-                "old correction failure was relabeled with a new navigation UUID"
-            assert previous_uuid != self.navigation_uuid
-            future = handle.cancel_goal_async()
-            self.wait(future.done)
-        else:
-            self.wait(result.done)
-            assert result.result().status == GoalStatus.STATUS_SUCCEEDED
-        self.speed_pub.publish(SpeedLimit(speed_limit=0.0))
-        self.position_x = 0.0
-        self.spin_for(0.2)
-
-    def check_correction_budget(self, distance_budget=False):
-        """A stationary synthetic robot exhausts travel or alignment time without any fallback."""
+    def check_no_xy_chase(self):
+        """Body-frame correction translates while retaining the requested final heading."""
         self.position_x = self.position_y = self.yaw = 0.0
         self.spin_for(0.2)
         self.commands.clear()
         self.reports.clear()
         handle = self.goal(0.1, 1.0)
         self.wait(lambda: any(command.angular.z > 0.1 for command in self.commands))
-        if distance_budget:
-            self.position_x = -0.20
-        else:
-            self.position_y = 0.23
-            self.yaw = 1.0
-        self.wait(lambda: any("bounded terminal" in report.message for report in self.reports))
-        started = time.monotonic()
-        for _ in range(3):
-            handle = self.goal(0.1, 1.0, replan=True)
-            self.spin_for(0.25)
-        self.wait(lambda: any(report.level >= DiagnosticStatus.ERROR and
-                              "budget exhausted outside arrival" in report.message for report in self.reports))
-        assert time.monotonic() - started < 6.8, "replan reset the correction deadline"
-        if distance_budget:
-            assert any(command.linear.x >= 0.19 for command in self.commands)
-        else:
-            assert all(abs(command.linear.x) < 1e-6 for command in self.commands)
-        assert all(command.linear.x <= 0.2001 and abs(command.linear.y) < 1e-6
-                   for command in self.commands)
+        self.position_x = -0.45
         self.commands.clear()
-        self.spin_for(0.5)
-        assert all(abs(command.linear.x) < 1e-6 and abs(command.angular.z) < 1e-6
-                   for command in self.commands), "exhausted correction did not latch zero"
+        handle = self.goal(0.1, 1.0, replan=True)
+        self.spin_for(1.0)
+        assert self.commands and any(command.angular.z > 0.1 for command in self.commands)
+        assert all(command.angular.z >= -1e-6 for command in self.commands)
+        assert any(command.linear.x > 0.05 for command in self.commands)
+        assert all(math.hypot(command.linear.x, command.linear.y) <= 0.2001
+                   for command in self.commands)
         result = handle.get_result_async()
-        assert not result.done(), "an exhausted correction must not report success"
+        assert not result.done(), "out-of-tolerance XY became success"
+        self.position_x = 0.0
+        self.yaw = 1.0
+        self.wait(result.done)
+        assert result.result().status == GoalStatus.STATUS_SUCCEEDED
+        self.position_x = self.position_y = self.yaw = 0.0
+        self.spin_for(0.2)
+
+    def check_lateral_reverse(self):
+        """Correct side/rear XY error without rotating toward the point or false success."""
+        for reverse in (False, True):
+            self.position_x = self.position_y = self.yaw = 0.0
+            self.spin_for(0.2)
+
+            self.commands.clear()
+            handle = self.goal(0.1, 1.0)
+            self.wait(lambda: any(c.angular.z > 0.1 for c in self.commands))
+            self.position_x = 0.65 if reverse else 0.1
+            self.position_y = 0.0 if reverse else -0.55
+            self.commands.clear()
+            self.wait(lambda: any(abs(c.linear.x if reverse else c.linear.y) > 0.05
+                                  for c in self.commands))
+            assert all(c.angular.z >= -1e-6 for c in self.commands)
+            assert all(math.hypot(c.linear.x, c.linear.y) <= 0.2001 for c in self.commands)
+            if reverse:
+                assert any(c.linear.x < -0.05 for c in self.commands)
+            else:
+                assert any(c.linear.y > 0.05 for c in self.commands)
+            result = handle.get_result_async()
+            assert not result.done()
+            self.position_x = 0.2
+            self.position_y = 0.0 if reverse else -0.10
+            self.yaw = 1.0
+            self.wait(result.done)
+            assert result.result().status == GoalStatus.STATUS_SUCCEEDED
+            self.spin_for(0.2)
+
+    def check_startup_progress(self):
+        """Check forward boost, reduced external caps, startup grace and no-progress latch."""
+        self.position_x = self.position_y = self.yaw = 0.0
+        self.spin_for(0.2)
+        self.commands.clear()
+        self.reports.clear()
+        handle = self.goal(0.1, 1.0)
+        self.wait(lambda: any(c.angular.z > 0.1 for c in self.commands))
+        # Heading settles with a forward correction vector, matching the failed run.
+        self.yaw = 1.0
+        # Keep goal approximately in front at the settled yaw.
+        self.position_x = 0.1 - 0.46 * math.cos(1.0)
+        self.position_y = -0.46 * math.sin(1.0)
+        self.wait(lambda: any("bounded terminal" in r.message for r in self.reports))
+        self.commands.clear()
+        self.wait(lambda: any(math.hypot(c.linear.x, c.linear.y) > 0.195 for c in self.commands))
+        self.spin_for(3.0)
+        assert not any(r.level >= DiagnosticStatus.ERROR for r in self.reports), "old 0.5m command budget still ends startup"
+        self.speed_pub.publish(SpeedLimit(speed_limit=0.12, percentage=False))
+        self.spin_for(0.3)
+        self.commands.clear()
+        self.spin_for(0.4)
+        assert self.commands and all(math.hypot(c.linear.x, c.linear.y) <= 0.1201 for c in self.commands)
+        handle = self.goal(0.1, 1.0, replan=True)
+        self.wait(lambda: any(r.level >= DiagnosticStatus.ERROR and "no XY progress" in r.message
+                             for r in self.reports), seconds=8.0)
+        self.commands.clear()
+        self.spin_for(0.4)
+        assert self.commands and all(math.hypot(c.linear.x, c.linear.y) < 1e-6 and
+                                     abs(c.angular.z) < 1e-6 for c in self.commands)
+        result = handle.get_result_async()
+        assert not result.done(), "no progress became arrival success"
         future = handle.cancel_goal_async()
         self.wait(future.done)
         self.wait(result.done)
+        self.speed_pub.publish(SpeedLimit(speed_limit=0.0))
         self.position_x = self.position_y = self.yaw = 0.0
+        self.spin_for(0.2)
+
+    def check_forward_after_heading(self):
+        """A front goal permits bounded correction only after the final heading settles."""
+        self.position_x = self.position_y = self.yaw = 0.0
+        self.spin_for(0.2)
+        self.commands.clear()
+        self.reports.clear()
+        handle = self.goal(0.1, 0.4)
+        self.wait(lambda: any(command.angular.z > 0.03 for command in self.commands))
+        self.position_x = -0.30
+        self.position_y = -0.4 * math.tan(0.4)
+        self.yaw = 0.4
+        self.wait(lambda: any(command.linear.x > 0.08 for command in self.commands))
+        assert all(command.linear.x >= 0.0
+                   for command in self.commands)
+        self.position_x = self.position_y = 0.0
+        result = handle.get_result_async()
+        self.wait(result.done)
+        assert result.result().status == GoalStatus.STATUS_SUCCEEDED
         self.spin_for(0.2)
 
     def check_stopped_arrival(self):
@@ -312,7 +317,7 @@ class ControllerCheck:
         self.reports.clear()
         handle = self.goal(0.1, 1.0)
         self.wait(lambda: any(command.angular.z > 0.1 for command in self.commands))
-        self.position_x = -0.20
+        self.position_x = -0.45
         self.wait(lambda: any("bounded terminal" in report.message for report in self.reports))
         self.position_x = 0.11
         self.wait(lambda: any(report.level >= DiagnosticStatus.ERROR and
@@ -375,9 +380,9 @@ class ControllerCheck:
         self.reports.clear()
         handle = self.goal(0.1, 1.0)
         self.wait(lambda: any(command.angular.z > 0.1 for command in self.commands))
-        self.position_x = -0.20
+        self.position_x = -0.45
         self.wait(lambda: any(command.linear.x > 0.1 for command in self.commands))
-        self.publish_collision_map()
+        self.publish_collision_map(offset_x=-9)
         self.wait(lambda: any(report.level >= DiagnosticStatus.ERROR and
                               "correction blocked" in report.message for report in self.reports))
         self.commands.clear()
@@ -415,10 +420,13 @@ def main():
     parser.add_argument("params_file")
     parser.add_argument("--collision", action="store_true")
     parser.add_argument("--correction-collision", action="store_true")
+    parser.add_argument("--no-xy-chase", action="store_true")
     args = parser.parse_args()
     params = yaml.safe_load(Path(args.params_file).read_text())
     params["controller_server"]["ros__parameters"]["odom_topic"] = "/g1_terminal_test/odom"
     costmap = params["local_costmap"]["local_costmap"]["ros__parameters"]
+    if costmap.get("footprint") == "__ROBONIX_FOOTPRINT__":
+        costmap["footprint"] = "[[0.20,0.08],[0.20,-0.08],[-0.20,-0.08],[-0.20,0.08]]"
     costmap["plugins"] = ["obstacle_layer"]
     costmap["obstacle_layer"]["enabled"] = False
     costmap["obstacle_layer"]["observation_sources"] = ""
@@ -446,7 +454,16 @@ def main():
                     check.publish_collision_map(blocked=args.collision)
                 check.transition(1)
                 check.transition(3)
-                if args.correction_collision:
+                if args.no_xy_chase:
+                    check.check_no_xy_chase()
+                    check.check_lateral_reverse()
+                    check.check_forward_after_heading()
+                    check.check_heading(1.0, replan=True)
+                    check.check_heading(-1.0)
+                    check.check_stopped_arrival()
+                    check.check_startup_progress()
+                    print("PASS: forward/lateral/reverse correction, forward startup boost, external cap, no-progress latch, replans and stopped arrival; no chassis/SDK")
+                elif args.correction_collision:
                     check.check_correction_collision()
                     print("PASS: obstacle blocks bounded forward correction; no chassis/SDK")
                 elif args.collision:
@@ -455,21 +472,16 @@ def main():
                 else:
                     check.check_heading(1.0, replan=True)
                     check.check_heading(-1.0)
-                    check.check_correction()
-                    check.check_correction(budget_arrival=True)
-                    check.check_correction(repeat_drift=True)
-                    check.check_correction_budget()
-                    check.check_correction_budget(distance_budget=True)
+                    check.check_no_xy_chase()
+                    check.check_lateral_reverse()
+                    check.check_forward_after_heading()
+                    check.check_startup_progress()
                     check.check_measured_correction_limit()
                     check.check_braking_before_turn()
                     check.check_stopped_arrival()
                     check.check_transit()
-                    print("PASS: pure terminal rotation in both directions, replan persistence, "
-                          "one bounded correction, arrival-window handoff at command budget, "
-                          "speed caps, time/travel limits, measured displacement hard stop, "
-                          "no second correction, measured braking dwell, "
-                          "strict stopped arrival, goal success, MPPI transit and zero on stop; "
-                          "no chassis/SDK")
+                    print("PASS: terminal XY/yaw control, startup speed, external cap, no-progress stop, "
+                          "measured displacement limit, replans, braking dwell, stopped arrival and MPPI transit; no chassis/SDK")
             finally:
                 process.terminate()
                 try:

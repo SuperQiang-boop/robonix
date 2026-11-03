@@ -6,6 +6,7 @@ from __future__ import annotations
 import logging
 import os
 import subprocess
+import threading
 from pathlib import Path
 
 from robonix_api import Err, Ok, Primitive
@@ -62,6 +63,7 @@ _network_interface = ""
 _allow_actions = False
 _acknowledgement = ""
 _timeout_s = 15.0
+_action_lock = threading.Lock()
 
 
 def _as_bool(value: object, default: bool = False) -> bool:
@@ -126,6 +128,12 @@ def init(config: dict):
 
 @arm.grpc("robonix/primitive/arm/action")
 def run_arm_action(req: "g1_arm_pb2.RunArmAction_Request"):
+    """Serialize presets and release so timed-out callers cannot reorder actions."""
+    with _action_lock:
+        return _execute_arm_action(req)
+
+
+def _execute_arm_action(req: "g1_arm_pb2.RunArmAction_Request"):
     """Execute one allowlisted SDK2 preset action through the helper."""
     action = str(req.action or "").strip()
     if action not in ALLOWED_ACTIONS:

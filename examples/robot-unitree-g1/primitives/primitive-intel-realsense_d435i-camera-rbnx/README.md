@@ -52,6 +52,15 @@ realsense_camera_rbnx/
 
 `rgb_topic` / `depth_topic` can be overridden directly if your launch uses a non-default namespace.
 
+The extrinsics publisher looks up `extrinsics_base_frame` (default `base_link`)
+to `extrinsics_camera_frame` (default `camera_color_optical_frame`) in TF.
+It retries every 0.5 seconds until successful or shutdown, logging the specific
+TF error immediately and then every ten seconds while unavailable. RGB, depth,
+and snapshots continue independently. Once available, the transform is published
+once on `extrinsics_topic` (default `/camera/extrinsics`) with latched QoS for
+late subscribers. This assumes the camera is fixed relative to the robot; it
+does not create or calibrate the underlying TF transform.
+
 ## Build / run standalone
 
 ```bash
@@ -60,6 +69,12 @@ bash scripts/start.sh        # registers driver iface, waits for INIT
 ```
 
 To drive Init manually (without rbnx boot): from any robonix gRPC client, call `PrimitiveCameraDriver.Driver` with `command=0` and `config_json='{}'` against `127.0.0.1:50232`.
+
+## Tests
+
+Run the hardware-independent retry smoke tests from this package directory:
+`python3 -m unittest discover -s tests -v`. They cover TF recovery after the old
+60-second deadline, error throttling, and cancellation on shutdown.
 
 ## License
 

@@ -9,6 +9,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <thread>
 
 #include <fcntl.h>
 #include <poll.h>
@@ -291,6 +292,7 @@ int Run(const Options &options, g1_chassis::ILocoClient &client,
     for (int attempt = 0;
          attempt < kShutdownStopRetries && core.stop_unconfirmed();
          ++attempt) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(110));
       (void)core.CheckWatchdog(MonotonicNowNs());
     }
     if (core.stop_unconfirmed()) {

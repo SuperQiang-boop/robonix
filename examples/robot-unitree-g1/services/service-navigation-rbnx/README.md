@@ -4,6 +4,15 @@ Robonix wrapper around a system-installed ROS 2 Nav2 stack. The service
 discovers map, odometry, and lidar inputs through Atlas and exposes
 `robonix/service/navigation/*` over gRPC and MCP.
 
+When `ROBONIX_GREETING_STATE_PATH` is set, navigation admission, queued dispatch
+and resume require `movement_allowed: true` in that local greeting snapshot.
+Missing/malformed state rejects movement. Cancelling a paused run cannot bypass
+the restriction; cancel and status remain available. New G1 goals also wait for
+any previous navigation to become terminal, rather than treating cancellation
+acceptance as completion. Unset the variable in other deployments to retain
+their existing behavior. Rebuild/reload navigation together with the G1 greeting
+skill, Pilot, Executor and Liaison when enabling this mode.
+
 For Fast DDS on a host with multiple network interfaces, export
 `RMW_IMPLEMENTATION=rmw_fastrtps_cpp` and `FASTRTPS_DEFAULT_PROFILES_FILE`
 before boot. The Docker launcher mounts that readable XML file read-only and
@@ -95,31 +104,30 @@ window, or exceeding the deadline, latches zero output and requests cancellation
 of the active goal. This is a failure stop, never an arrival-success shortcut;
 only a new goal UUID resets the latch. Stationary-rotation limits still apply.
 
-The G1 profile additionally uses `PersistentRotationShim` and
-`SettledGoalChecker` from `terminal_controller/`. The shim holds zero until
-measured speed remains below 0.04 m/s and 0.06 rad/s for 0.40 s, then owns
-collision-checked zero-linear terminal turning across same-goal replans,
-including when position drifts outside the 0.20 m arrival radius. It never
-falls back to MPPI during terminal rotation. It aims for 0.12 rad before
-commanding a stop; the arrival checker independently requires current XY/yaw
-within 0.20 m/0.25 rad and continuously stopped measurements for 0.40 s.
-If position remains outside arrival tolerance after the turn settles, or exceeds
-0.28 m while turning, it admits one position correction per navigation UUID:
-measured stop, face the goal bearing, measured stop, then collision-checked
-forward steering toward an inner 0.10 m window. Limits are 0.20 m/s (also honoring
-external speed caps), 0.40 m/s², 0.30 m commanded travel/net displacement and
-6 seconds including alignment/stops. It stops again before the final heading.
-Same-goal replans do not reset this attempt or budget. A second correction,
-collision or divergent bearing latches zero. The original
-0.40 m outer boundary, 15-second overall deadline and strict arrival tolerances
-remain unchanged; no infinite correction loop or false success is introduced.
-If command travel/time is exhausted but current XY is already within the
-original arrival radius, stop correction and resume final heading rather than
-requiring the preferred inner 0.10 m window. The strict goal checker must still
-observe simultaneous XY/yaw/standstill tolerance for the full dwell; drifting
-out again does not grant a second correction. Measured displacement exhaustion
-and budget exhaustion outside the arrival radius still fail closed. Failure
-reports distinguish time, commanded travel and measured displacement limits.
+The G1 profile uses `PersistentRotationShim` and `SettledGoalChecker` from
+`terminal_controller/`. Turning waits for measured standstill and retains
+ownership across replans. After XY entry it preserves the requested final yaw
+without starting position correction. Outer XY, time and
+collision limits remain active.
+
+An independent Python terminal algorithm based on the supplied
+`final_approach_g1.py` is selectable through `config/nav2_params_g1_python.yaml`.
+See [its adaptation and switching instructions](terminal_controller/python/README.md).
+The default profile continues to select the first controller.
+
+The G1 deployment latches entry within 0.60 m of the Scene approach pose for
+one navigation goal. It then commands rotation only, preserving the requested
+final yaw, without chasing the approach point. G1 gait motion during turning
+may still cause physical translation. Arrival requires yaw error within
+40 degrees and measured standstill for 0.40 s; re-entry into 0.60 m is not required.
+The 0.70 m outer XY limit, 60 s deadline and rotation footprint checks remain
+active. The goal checker latches outer/deadline failures until a new goal.
+Replans preserve entry and budgets. These tolerances also apply to RViz goals.
+Legacy correction helpers/parameters remain in source but are not invoked by
+this terminal control path. Inflation radius remains 0.25 m. The velocity guard
+enters its terminal window at 0.60 m; the controller enforces the stricter
+0.70 m outer limit. Success details explain that feedback distance need not be
+zero and last_pose is the endpoint, not the starting pose.
 
 The controller publishes UUID-scoped phase/failure diagnostics on
 `/robonix/navigation/terminal`. The velocity guard pauses only final-goal-yaw
@@ -183,3 +191,11 @@ python3 -m unittest -v \
 Jetson native builds require ROS 2 Humble and Nav2 packages compatible with the
 host JetPack image. Docker manifests remain available for simulator and CI
 deployments.
+
+### Pause and resume
+
+When `provider_ids.odom` is `g1_chassis`, navigation also requires a healthy `g1_chassis` status (hardware ID `g1_chassis`) on `/diagnostics`, received within 0.5 s. Missing, stale or faulted diagnostics prevent new goals, queued goal dispatch, idle greeting authorization and resume, even if fresh measured odometry continues for display. A reported motion fault remains latched until the project is restarted. Update the chassis adapter and reload navigation together; an older adapter without these diagnostics cannot authorize G1 navigation.
+
+MCP `navigate/pause` cancels the underlying action while keeping the public run ID PAUSED. Status reports `stationary=true` in detail after fresh measured motion remains below 0.02 m/s and 0.03 rad/s for 0.5 seconds. Resume requires an explicit current paused run ID and fresh stationary odometry, and queues the original destination. Executor already supports PAUSED. User cancellation prevents resume; new goals are rejected while pausing or paused. These MCP-only capabilities use package-local contracts and IDL; regenerate with `rbnx codegen -p . --mcp`. Run offline checks with `python3 -m unittest test_pause_resume test_guard_failure`.
+
+With an empty run ID and no pending, running or paused public runs, `pause` still returns `accepted=false` (nothing was paused). Its detail is `no active navigation; stationary=true` only when Nav2 is ready, fresh odometry confirms sustained stopping, and the Nav2 action status subscription reports no active goal, including goals from RViz. The greeting skill uses this detail to allow idle greetings without a resume request. Other rejections do not authorize greeting. This check is not a reservation against later external goals; avoid sending manual motion or external goals during greetings.

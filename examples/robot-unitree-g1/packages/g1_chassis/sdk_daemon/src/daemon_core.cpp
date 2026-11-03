@@ -13,6 +13,11 @@
 
 namespace g1_chassis {
 
+namespace {
+constexpr uint64_t kVelocityIntervalNs = 50'000'000ULL;
+constexpr uint64_t kStopRetryIntervalNs = 100'000'000ULL;
+}
+
 // ---- Deployment eligibility helper ----
 
 bool MotionWatchdogDeploymentEligible(bool allow_motion, uint64_t watchdog_ms) {
@@ -25,7 +30,7 @@ DaemonCore::DaemonCore(const DaemonConfig &config, ILocoClient &client)
     : config_(config), client_(client) {}
 
 // Send a single SDK stop request and remember whether its reply was confirmed.
-int32_t DaemonCore::IssueStop(const char *reason) {
+int32_t DaemonCore::IssueStop(const char *reason, uint64_t now_ns) {
   stop_pending_ = true;
   const auto started = std::chrono::steady_clock::now();
   int32_t result = client_.StopMove();
@@ -40,6 +45,10 @@ int32_t DaemonCore::IssueStop(const char *reason) {
           << " velocity_calls=" << velocity_calls_ << "\n";
   std::cerr << message.str();
   stop_pending_ = result != 0;
+  const auto elapsed_ns = static_cast<uint64_t>(
+      std::chrono::duration_cast<std::chrono::nanoseconds>(
+          std::chrono::steady_clock::now() - started).count());
+  next_stop_retry_ns_ = now_ns + elapsed_ns + kStopRetryIntervalNs;
   return result;
 }
 
@@ -126,7 +135,7 @@ ReplyPacket DaemonCore::Handle(const CommandPacket &cmd, uint64_t now_ns) {
     // Stop promptly on the first zero command after motion. Nav2 commonly
     // publishes zero commands at a high rate, so suppress duplicate RPCs.
     if (is_zero) {
-      if (moving_ && IssueStop("zero_command") != 0) {
+      if (moving_ && IssueStop("zero_command", now_ns) != 0) {
         faulted_ = true;
         armed_ = false;
         sequence_ = (sequence_ + 1) & 0xFF;
@@ -138,12 +147,24 @@ ReplyPacket DaemonCore::Handle(const CommandPacket &cmd, uint64_t now_ns) {
       return MakeReply(cmd.sequence, ReplyCode::kOk, armed_, faulted_);
     }
 
+    // Use the newest incoming velocity at most 20 Hz, matching Nav2's control
+    // rate instead of issuing synchronous SDK RPCs on every 50 Hz ROS tick.
+    // Stops and the first command after a stop always bypass this limit.
+    if (moving_ && now_ns >= last_velocity_time_ns_ &&
+        now_ns - last_velocity_time_ns_ < kVelocityIntervalNs) {
+      return MakeReply(cmd.sequence, ReplyCode::kOk, armed_, faulted_);
+    }
+
     // Non-zero command: issue velocity.
+    const auto velocity_started = std::chrono::steady_clock::now();
     if (IssueVelocity(static_cast<float>(vx), static_cast<float>(vy),
                       static_cast<float>(omega), cmd.sequence, now_ns) != 0) {
       faulted_ = true;
       armed_ = false;
-      IssueStop("velocity_rpc_error");
+      const auto elapsed_ns = static_cast<uint64_t>(
+          std::chrono::duration_cast<std::chrono::nanoseconds>(
+              std::chrono::steady_clock::now() - velocity_started).count());
+      IssueStop("velocity_rpc_error", now_ns + elapsed_ns);
       moving_ = false;
       sequence_ = (sequence_ + 1) & 0xFF;
       return MakeReply(cmd.sequence, ReplyCode::kSdkError, armed_, faulted_);
@@ -160,7 +181,8 @@ bool DaemonCore::CheckWatchdog(uint64_t now_ns) {
   std::lock_guard<std::mutex> lock(mutex_);
 
   if (stop_pending_) {
-    IssueStop("retry_unconfirmed");
+    if (now_ns < next_stop_retry_ns_) return false;
+    IssueStop("retry_unconfirmed", now_ns);
     return true;
   }
   if (!armed_ || faulted_ || !moving_) return false;
@@ -174,7 +196,7 @@ bool DaemonCore::CheckWatchdog(uint64_t now_ns) {
       std::cerr << "[g1-daemon] WATCHDOG EXPIRED — issuing StopMove\n";
       faulted_ = true;
       armed_ = false;
-      IssueStop("watchdog_expired");
+      IssueStop("watchdog_expired", now_ns);
       moving_ = false;
       return true;
     }
@@ -186,7 +208,10 @@ void DaemonCore::OnDisconnect() {
   std::lock_guard<std::mutex> lock(mutex_);
   if (config_.allow_motion && (armed_ || moving_ || stop_pending_)) {
     std::cerr << "[g1-daemon] ADAPTER DISCONNECTED — issuing StopMove\n";
-    IssueStop("adapter_disconnect");
+    const auto now_ns = static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count());
+    IssueStop("adapter_disconnect", now_ns);
     moving_ = false;
     faulted_ = true;
   }

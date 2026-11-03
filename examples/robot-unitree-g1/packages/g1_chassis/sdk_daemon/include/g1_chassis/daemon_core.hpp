@@ -48,7 +48,7 @@ class DaemonCore {
   bool faulted() const { return faulted_; }
 
  private:
-  int32_t IssueStop(const char *reason);
+  int32_t IssueStop(const char *reason, uint64_t now_ns);
   int32_t IssueVelocity(float vx, float vy, float omega,
                         uint8_t command_sequence, uint64_t now_ns);
 
@@ -60,6 +60,7 @@ class DaemonCore {
   bool faulted_{false};
   bool stop_pending_{false};
   bool moving_{false};
+  uint64_t next_stop_retry_ns_{0};
 
   // Last time a valid command was successfully processed.
   uint64_t last_arm_time_ns_{0};

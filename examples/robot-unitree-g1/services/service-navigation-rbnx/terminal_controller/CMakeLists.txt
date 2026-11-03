@@ -2,6 +2,7 @@ cmake_minimum_required(VERSION 3.8)
 project(robonix_nav2_terminal)
 
 find_package(ament_cmake REQUIRED)
+find_package(ament_index_cpp REQUIRED)
 find_package(action_msgs REQUIRED)
 find_package(angles REQUIRED)
 find_package(diagnostic_msgs REQUIRED)
@@ -41,6 +42,15 @@ ament_target_dependencies(robonix_nav2_rotation_shim
   action_msgs angles diagnostic_msgs geometry_msgs nav_msgs nav2_core nav2_costmap_2d
   nav2_rotation_shim_controller nav2_util pluginlib rclcpp rclcpp_lifecycle tf2 tf2_ros)
 
+add_library(robonix_nav2_python_final_approach SHARED src/python_final_approach.cpp)
+target_compile_features(robonix_nav2_python_final_approach PUBLIC cxx_std_17)
+target_include_directories(robonix_nav2_python_final_approach PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>)
+ament_target_dependencies(robonix_nav2_python_final_approach
+  ament_index_cpp action_msgs angles geometry_msgs nav_msgs nav2_core nav2_costmap_2d
+  nav2_util pluginlib rclcpp rclcpp_lifecycle tf2 tf2_ros)
+
 add_library(robonix_nav2_dwb_critic SHARED
   src/persistent_rotate_to_goal_critic.cpp)
 target_compile_features(robonix_nav2_dwb_critic PUBLIC cxx_std_17)
@@ -69,11 +79,12 @@ pluginlib_export_plugin_description_file(nav2_core nav2_core_plugins.xml)
 pluginlib_export_plugin_description_file(dwb_core dwb_core_plugins.xml)
 
 install(TARGETS robonix_nav2_goal_checker robonix_nav2_dwb_critic
-  robonix_nav2_goal_aware_planner robonix_nav2_rotation_shim
+  robonix_nav2_goal_aware_planner robonix_nav2_rotation_shim robonix_nav2_python_final_approach
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION bin)
 install(DIRECTORY include/ DESTINATION include)
+install(FILES python/final_approach_g1.py DESTINATION share/${PROJECT_NAME}/python)
 install(FILES nav2_core_plugins.xml dwb_core_plugins.xml
   DESTINATION share/${PROJECT_NAME})
 
@@ -104,6 +115,6 @@ endif()
 
 ament_export_include_directories(include)
 ament_export_libraries(robonix_nav2_goal_checker robonix_nav2_dwb_critic
-  robonix_nav2_goal_aware_planner robonix_nav2_rotation_shim)
+  robonix_nav2_goal_aware_planner robonix_nav2_rotation_shim robonix_nav2_python_final_approach)
 ament_export_dependencies(diagnostic_msgs nav2_core dwb_core nav2_navfn_planner nav2_rotation_shim_controller)
 ament_package()

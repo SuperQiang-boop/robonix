@@ -5,8 +5,15 @@
 #include <map>
 #include <stdexcept>
 #include <string>
+#include <chrono>
+#include <condition_variable>
+#include <memory>
+#include <mutex>
 
+#include <unitree/common/json/jsonize.hpp>
+#include <unitree/idl/ros2/String_.hpp>
 #include <unitree/robot/channel/channel_factory.hpp>
+#include <unitree/robot/channel/channel_subscriber.hpp>
 #include <unitree/robot/g1/arm/g1_arm_action_client.hpp>
 
 namespace {
@@ -127,11 +134,109 @@ int Main(int argc, char **argv) {
   client.Init();
   client.SetTimeout(10.0F);
 
+  // Receive before issuing release: the controller can publish its new state
+  // before ExecuteAction returns. Pre-request samples cannot confirm release.
+  std::mutex state_mutex;
+  std::condition_variable state_changed;
+  bool release_requested = false;
+  bool released = false;
+  std::chrono::steady_clock::time_point release_started;
+  std::chrono::steady_clock::time_point idle_started;
+  std::chrono::steady_clock::time_point last_received;
+  size_t idle_samples = 0;
+  int32_t confirmed_id = -1;
+  size_t received = 0;
+  size_t invalid = 0;
+  std::string last_state = "<none>";
+  std::string last_error = "<none>";
+  using StateMessage = std_msgs::msg::dds_::String_;
+  std::unique_ptr<unitree::robot::ChannelSubscriber<StateMessage>> subscriber;
+  if (options.action == "release_arm") {
+    subscriber = std::make_unique<unitree::robot::ChannelSubscriber<StateMessage>>(
+        "rt/arm/action/state");
+    subscriber->InitChannel([&](const void *message) {
+      const auto received_at = std::chrono::steady_clock::now();
+      std::lock_guard<std::mutex> lock(state_mutex);
+      const bool after_request = release_requested && received_at >= release_started;
+      try {
+        unitree::common::JsonMap data;
+        unitree::common::FromJsonString(
+            static_cast<const StateMessage *>(message)->data(), data);
+        int32_t id = -1;
+        bool holding = true;
+        unitree::common::FromJson(data.at("id"), id);
+        unitree::common::FromJson(data.at("holding"), holding);
+        std::string name;
+        if (id == 0) unitree::common::FromJson(data.at("name"), name);
+        if (after_request) {
+          ++received;
+          const std::string state = "id=" + std::to_string(id) +
+              " holding=" + (holding ? "true" : "false") +
+              (id == 0 ? " name=" + name : "");
+          if (state != last_state) {
+            std::cerr << "Arm action feedback after release request: " << state << "\n";
+          }
+          last_state = state;
+          // This G1 reports id=0/name="" while no preset is active. Require
+          // repeated fresh samples after a successful release request, rather
+          // than treating holding=false for any action as proof of release.
+          if (id == 0 && !holding && name.empty()) {
+            if (idle_samples == 0 || received_at - last_received > std::chrono::milliseconds(300)) {
+              idle_started = received_at;
+              idle_samples = 0;
+            }
+            ++idle_samples;
+          } else {
+            idle_samples = 0;
+          }
+          last_received = received_at;
+          released = !holding && (id == 99 ||
+              (idle_samples >= 3 && received_at - idle_started >= std::chrono::milliseconds(200)));
+          confirmed_id = released ? id : -1;
+          state_changed.notify_all();
+        }
+      } catch (const std::exception &error) {
+        if (after_request) {
+          ++received;
+          ++invalid;
+          released = false;
+          idle_samples = 0;
+          last_error = error.what();
+          state_changed.notify_all();
+        }
+        std::cerr << "Invalid arm action state: " << error.what() << "; data="
+                  << static_cast<const StateMessage *>(message)->data().substr(0, 256) << "\n";
+      }
+    });
+  }
+  if (subscriber) {
+    std::lock_guard<std::mutex> lock(state_mutex);
+    release_started = std::chrono::steady_clock::now();
+    release_requested = true;
+  }
   const int32_t result = RunAction(client, options.action);
   if (result != 0) {
     std::cerr << "SDK2 action " << options.action << " returned " << result
               << "\n";
     return 3;
+  }
+  if (subscriber) {
+    std::unique_lock<std::mutex> lock(state_mutex);
+    // Preserve feedback received during ExecuteAction; SDK success is also
+    // required. Later non-release/invalid samples invalidate earlier success.
+    if (!state_changed.wait_for(lock, std::chrono::seconds(2), [&] {
+          return released && (confirmed_id == 99 ||
+              std::chrono::steady_clock::now() - last_received < std::chrono::milliseconds(300));
+        })) {
+      std::cerr << "release_arm accepted but release feedback not confirmed within 2s"
+                << "; topic=rt/arm/action/state; received_after_request=" << received
+                << "; invalid=" << invalid << "; last_valid_state=" << last_state
+                << "; last_error=" << last_error << "\n";
+      return 4;
+    }
+    std::cout << "release_arm confirmed by action state: id=" << confirmed_id
+              << " holding=false" << (confirmed_id == 0 ? " name=\"\"; idle confirmed for >=0.2s" : "")
+              << "\n";
   }
   std::cout << "SDK2 action accepted: " << options.action << "\n";
   return 0;

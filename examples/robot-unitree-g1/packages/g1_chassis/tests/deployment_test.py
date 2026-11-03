@@ -77,8 +77,8 @@ class DeploymentTest(unittest.TestCase):
         self.assertLess(follow_path["angular_disengage_threshold"],
                         follow_path["angular_dist_threshold"])
         checker = controller["general_goal_checker"]
-        self.assertEqual(checker["xy_goal_tolerance"], 0.20)
-        self.assertEqual(checker["yaw_goal_tolerance"], 0.25)
+        self.assertEqual(checker["xy_goal_tolerance"], 0.60)
+        self.assertAlmostEqual(checker["yaw_goal_tolerance"], math.radians(40.0))
         self.assertEqual(checker["plugin"], "robonix_nav2_terminal::SettledGoalChecker")
         self.assertEqual(checker["settle_time"], follow_path["terminal_settle_time"])
         self.assertEqual(checker["trans_stopped_velocity"],
@@ -87,8 +87,10 @@ class DeploymentTest(unittest.TestCase):
                          follow_path["terminal_stopped_angular_velocity"])
         self.assertEqual(follow_path["terminal_timeout"],
                          self.configs["nav2"]["guard_terminal_timeout_s"])
-        self.assertEqual(follow_path["terminal_xy_exit_tolerance"],
-                         2 * checker["xy_goal_tolerance"])
+        self.assertGreater(follow_path["terminal_xy_exit_tolerance"],
+                           checker["xy_goal_tolerance"])
+        self.assertEqual(checker["terminal_xy_exit_tolerance"], follow_path["terminal_xy_exit_tolerance"])
+        self.assertEqual(checker["terminal_timeout"], follow_path["terminal_timeout"])
         self.assertLess(follow_path["terminal_correction_xy_tolerance"], checker["xy_goal_tolerance"])
         self.assertGreater(follow_path["terminal_correction_trigger"], checker["xy_goal_tolerance"])
         self.assertLess(follow_path["terminal_correction_trigger"], follow_path["terminal_xy_exit_tolerance"])
@@ -111,7 +113,7 @@ class DeploymentTest(unittest.TestCase):
         self.assertIn("ConstraintCritic", mppi["critics"])
         self.assertIn("CostCritic", mppi["critics"])
         self.assertTrue(mppi["CostCritic"]["consider_footprint"])
-        self.assertEqual(controller["general_goal_checker"]["xy_goal_tolerance"], 0.20)
+        self.assertEqual(controller["general_goal_checker"]["xy_goal_tolerance"], 0.60)
         self.assertEqual(controller["progress_checker"]["movement_time_allowance"], 30.0)
 
     def test_provider_config_rejects_invalid_inputs(self):

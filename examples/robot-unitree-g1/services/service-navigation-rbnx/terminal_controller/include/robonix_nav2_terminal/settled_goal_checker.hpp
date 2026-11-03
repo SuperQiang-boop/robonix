@@ -27,6 +27,11 @@ private:
   std::optional<geometry_msgs::msg::Pose> previous_goal_;
   std::optional<rclcpp::Time> settled_since_;
   double xy_tolerance_{0.20};
+  bool entered_xy_{false};
+  bool terminal_failed_{false};
+  std::optional<rclcpp::Time> entered_at_;
+  double xy_exit_tolerance_{0.70};
+  double terminal_timeout_{60.0};
   double yaw_tolerance_{0.25};
   double stopped_linear_{0.04};
   double stopped_angular_{0.06};

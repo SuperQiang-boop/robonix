@@ -1,7 +1,28 @@
 # G1 Arm Action Primitive
 
 Guarded Robonix primitive for Unitree G1 preset upper-arm actions backed by
-SDK2 `g1::LocoClient`.
+SDK2 `g1::G1ArmActionClient`.
+
+`release_arm` requires SDK acceptance plus new feedback on
+`rt/arm/action/state` received after the release request starts: `id=99` and
+`holding=false`. The deployed G1 firmware also reports no active preset as
+`id=0`, `holding=false`, `name=""` (observed on this robot). This form requires
+at least three consecutive samples spanning 0.2 seconds, no inter-sample gap
+over 0.3 seconds, and the latest sample less than 0.3 seconds old when confirmed.
+Other action IDs, holding states, missing/nonempty idle names and stale samples
+do not confirm release. The successful result reports the actual observed ID.
+Feedback arriving while the SDK call is still in progress is
+retained; samples received before the request are ignored. SDK failure still
+returns failure even if a release state was received. A later holding, unrelated
+action, or invalid state prevents confirmation. The helper waits up to 2 seconds
+after the RPC reply for confirmation and reports the number of received/invalid
+samples, latest valid state and parsing error when it times out. This separates
+missing feedback from a controller that reports an unexpected state. Greeting cannot
+resume navigation using acceptance alone. This confirms the controller has
+released its preset; it does not measure the physical joint position. Other
+presets retain their acceptance response. Calls are serialized in the primitive
+so release cannot overtake an earlier helper that is still running after a
+caller times out. Rebuild the helper and reload the primitive after updating.
 
 ## Capabilities
 
@@ -46,6 +67,12 @@ SDK2 `g1::LocoClient`.
 ```bash
 export UNITREE_SDK2_DIR=/path/to/unitree_sdk2
 bash scripts/build.sh
+```
+
+Offline regression (C++ compiler and SDK2 checkout required; no robot connection):
+
+```bash
+python3 -m unittest discover -s tests -v
 ```
 
 ## Runtime

@@ -1,7 +1,9 @@
 #include <catch2/catch.hpp>
+#include <chrono>
 #include <iostream>
 #include <sstream>
 #include <type_traits>
+#include <thread>
 #include "g1_chassis/daemon_core.hpp"
 #include "g1_chassis/loco_client_interface.hpp"
 #include "g1_chassis/protocol.hpp"
@@ -42,6 +44,7 @@ class FakeLocoClient final : public ILocoClient {
   }
   // Record the exact velocity passed by the daemon without contacting hardware.
   int32_t SetVelocity(float vx, float vy, float omega, float duration) override {
+    std::this_thread::sleep_for(std::chrono::milliseconds(velocity_delay_ms));
     ++velocity_calls;
     last_vx = vx;
     last_vy = vy;
@@ -70,6 +73,7 @@ class FakeLocoClient final : public ILocoClient {
 
   int32_t prepare_result{0};
   int32_t velocity_result{0};
+  int velocity_delay_ms{0};
   int32_t stop_result{0};
   int32_t stop_failure_code{3104};
   int stop_failures_remaining{0};
@@ -184,12 +188,12 @@ TEST_CASE("successful SDK command diagnostics are bounded and report actual velo
   REQUIRE(initial.find("SetVelocity calls=1 cmd_seq=255 rpc=0") != std::string::npos);
   REQUIRE(initial.find("vx=0.100000") != std::string::npos);
   REQUIRE(initial.find("duration=0.300000") != std::string::npos);
-  core.Handle(command, 1'020'000'000ULL);
+  core.Handle(command, 1'060'000'000ULL);
   REQUIRE(captured.text() == initial);
   command.sequence = 0;
   core.Handle(command, 2'000'000'000ULL);
   REQUIRE(captured.text().find("SetVelocity calls=3 cmd_seq=0 rpc=0") != std::string::npos);
-  REQUIRE(captured.text().find("gap_ms=980.000000") != std::string::npos);
+  REQUIRE(captured.text().find("gap_ms=940.000000") != std::string::npos);
   REQUIRE(std::cerr.flags() == original_flags);
   REQUIRE(client.fsm_id_calls == 0);
 }
@@ -200,7 +204,7 @@ TEST_CASE("SDK errors and stop causes are logged without waiting for the summary
   CaptureDaemonLog captured;
   core.Handle(VelocityCommand(0.2F, 0.0F, 0.0F), 1);
   client.velocity_result = 3104;
-  core.Handle(VelocityCommand(0.2F, 0.0F, 0.0F), 2);
+  core.Handle(VelocityCommand(0.2F, 0.0F, 0.0F), 60'000'001ULL);
   REQUIRE(captured.text().find("SetVelocity calls=2 cmd_seq=") != std::string::npos);
   REQUIRE(captured.text().find("rpc=3104") != std::string::npos);
   REQUIRE(captured.text().find("StopMove reason=velocity_rpc_error rpc=0") != std::string::npos);
@@ -263,9 +267,59 @@ TEST_CASE("watchdog retries an unconfirmed StopMove", "[daemon]") {
   core.Handle(VelocityCommand(0.2F, 0.0F, 0.0F), 1);
   REQUIRE(core.CheckWatchdog(400'000'002ULL));
   REQUIRE(core.stop_unconfirmed());
-  REQUIRE(core.CheckWatchdog(410'000'002ULL));
+  REQUIRE_FALSE(core.CheckWatchdog(410'000'002ULL));
+  REQUIRE(client.stop_calls == 1);
+  REQUIRE(core.CheckWatchdog(600'000'002ULL));
   REQUIRE_FALSE(core.stop_unconfirmed());
   REQUIRE(client.stop_calls == 2);
   REQUIRE(core.faulted());
   REQUIRE_FALSE(core.armed());
+}
+
+TEST_CASE("frequent velocities use the latest command without delaying stops", "[daemon]") {
+  FakeLocoClient client;
+  DaemonCore core(MotionConfig(), client);
+  core.Handle(VelocityCommand(0.1F, 0, 0), 1'000'000'000ULL);
+  core.Handle(VelocityCommand(0.2F, 0, 0), 1'020'000'000ULL);
+  core.Handle(VelocityCommand(0.3F, 0, 0), 1'040'000'000ULL);
+  REQUIRE(client.velocity_calls == 1);
+  core.Handle(VelocityCommand(0.4F, 0, 0), 1'060'000'000ULL);
+  REQUIRE(client.velocity_calls == 2);
+  REQUIRE(client.last_vx == Approx(0.4F));
+  core.Handle(VelocityCommand(0, 0, 0), 1'065'000'000ULL);
+  REQUIRE(client.stop_calls == 1);
+  core.Handle(VelocityCommand(0.2F, 0, 0), 1'070'000'000ULL);
+  REQUIRE(client.velocity_calls == 3);
+  REQUIRE(client.last_vx == Approx(0.2F));
+}
+
+TEST_CASE("unconfirmed stops are rate limited and cannot rearm motion", "[daemon]") {
+  FakeLocoClient client;
+  client.stop_result = 3104;
+  DaemonCore core(MotionConfig(), client);
+  core.Handle(VelocityCommand(0.2F, 0, 0), 1);
+  REQUIRE(core.CheckWatchdog(400'000'001ULL));
+  for (uint64_t now = 410'000'001ULL; now < 500'000'001ULL; now += 10'000'000ULL) {
+    REQUIRE_FALSE(core.CheckWatchdog(now));
+  }
+  REQUIRE(client.stop_calls == 1);
+  REQUIRE(core.CheckWatchdog(600'000'001ULL));
+  client.stop_result = 0;
+  REQUIRE(core.CheckWatchdog(800'000'001ULL));
+  REQUIRE_FALSE(core.stop_unconfirmed());
+  REQUIRE(core.Handle(VelocityCommand(0.2F, 0, 0), 900'000'001ULL).faulted == 1);
+  REQUIRE(client.velocity_calls == 1);
+}
+
+TEST_CASE("stop retry spacing includes time spent waiting for velocity failure", "[daemon]") {
+  FakeLocoClient client;
+  client.velocity_result = client.stop_result = 3104;
+  client.velocity_delay_ms = 50;
+  DaemonCore core(MotionConfig(), client);
+  core.Handle(VelocityCommand(0.2F, 0, 0), 1'000'000'000ULL);
+  REQUIRE(client.stop_calls == 1);
+  REQUIRE_FALSE(core.CheckWatchdog(1'120'000'000ULL));
+  REQUIRE(client.stop_calls == 1);
+  REQUIRE(core.CheckWatchdog(1'400'000'000ULL));
+  REQUIRE(client.stop_calls == 2);
 }

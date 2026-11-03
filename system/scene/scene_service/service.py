@@ -68,7 +68,7 @@ log = logging.getLogger("scene-service")
 
 
 def _load_config() -> dict:
-    """Read RBNX_CONFIG_FILE if set; otherwise return an empty config.
+    """Read explicit Scene config, or system.scene from the deployment manifest.
 
     An explicitly requested config is safety-relevant input. Unreadable,
     malformed, empty, or non-mapping content must stop startup instead of
@@ -80,8 +80,13 @@ def _load_config() -> dict:
     `observations[]` to override / disable a kind for a deployment.
     """
     path = os.environ.get("RBNX_CONFIG_FILE")
+    deployment = False
     if not path:
-        return {}
+        deploy_dir = os.environ.get("ROBONIX_DEPLOY_DIR")
+        if not deploy_dir:
+            return {}
+        path = str(Path(deploy_dir) / "robonix_manifest.yaml")
+        deployment = True
     try:
         text = Path(path).read_text()
     except OSError as exc:
@@ -99,6 +104,13 @@ def _load_config() -> dict:
             ) from exc
     if not isinstance(cfg, dict):
         raise ValueError(f"explicit Scene config root must be a mapping: {path}")
+    if deployment:
+        system = cfg.get("system", {})
+        if not isinstance(system, dict):
+            raise ValueError(f"deployment system must be a mapping: {path}")
+        cfg = system.get("scene", {})
+        if not isinstance(cfg, dict):
+            raise ValueError(f"deployment system.scene must be a mapping: {path}")
     return cfg
 
 
@@ -166,7 +178,8 @@ _LAST_RESOLVED: dict[tuple, tuple] = {}
 
 
 def _build_topic_specs(
-    observations: list[dict], atlas_stub, transport: str
+    observations: list[dict], atlas_stub, transport: str,
+    sensor_providers: Optional[dict[str, str]] = None,
 ) -> list[TopicSpec]:
     """Two paths:
 
@@ -182,15 +195,19 @@ def _build_topic_specs(
          contract is one scene already knows.
 
     `transport` is `"ros2"` (today's wired ingest) or `"grpc"` (future).
+    `sensor_providers` restricts each configured kind to one provider ID;
+    a missing selected provider is never replaced by another camera.
     Errors at any step skip that one entry but never fail bring-up.
     """
     pb_t = _resolve_pb_transport(transport)
     if observations:
-        return _resolve_explicit(observations, atlas_stub, pb_t)
-    return _resolve_auto(atlas_stub, pb_t)
+        return _resolve_explicit(observations, atlas_stub, pb_t, sensor_providers)
+    return _resolve_auto(atlas_stub, pb_t, sensor_providers)
 
 
-def _resolve_auto(_unused, pb_transport: int) -> list[TopicSpec]:
+def _resolve_auto(
+    _unused, pb_transport: int, sensor_providers: Optional[dict[str, str]] = None,
+) -> list[TopicSpec]:
     """Walk `_SCENE_CONTRACTS` and use `ATLAS.find_capability` + `connect_capability`
     to resolve each contract. atlas hands out the endpoint via
     ConnectCapability; the cap framework also tracks the channel for
@@ -207,7 +224,10 @@ def _resolve_auto(_unused, pb_transport: int) -> list[TopicSpec]:
     for kind, contract_id, msg_type in _SCENE_CONTRACTS:
         if kind in _DEFAULT_DISABLED_KINDS:
             continue
-        spec = _resolve_one_contract(transport, kind, contract_id, msg_type)
+        spec = _resolve_one_contract(
+            transport, kind, contract_id, msg_type,
+            provider_id=(sensor_providers or {}).get(kind, ""),
+        )
         if spec is not None:
             out.append(spec)
     return out
@@ -218,10 +238,13 @@ def _resolve_one_contract(
     kind: str,
     contract_id: str,
     msg_type: str,
+    provider_id: str = "",
 ) -> Optional[TopicSpec]:
     """ATLAS.find_capability(contract) → connect_capability → endpoint. Returns None when no
     cap currently advertises the contract over this transport."""
-    caps = ATLAS.find_capability(contract_id=contract_id, transport=transport)
+    caps = ATLAS.find_capability(
+        contract_id=contract_id, transport=transport, provider_id=provider_id,
+    )
     if not caps:
         return None
     cap_view = caps[0]
@@ -300,7 +323,8 @@ def _discover_map_binding(wait_s: float) -> Optional[dict]:
 
 
 def _resolve_explicit(
-    observations: list[dict], atlas_stub, pb_transport: int
+    observations: list[dict], atlas_stub, pb_transport: int,
+    sensor_providers: Optional[dict[str, str]] = None,
 ) -> list[TopicSpec]:
     """Manifest-driven override path. Each entry pairs a logical kind
     with a contract id; we go through the same single-contract resolver
@@ -327,7 +351,10 @@ def _resolve_explicit(
                 "or to _SCENE_CONTRACTS in service.py", entry
             )
             continue
-        spec = _resolve_one_contract(Transport(pb_transport), kind, contract, msg_type)
+        spec = _resolve_one_contract(
+            Transport(pb_transport), kind, contract, msg_type,
+            provider_id=(sensor_providers or {}).get(kind, ""),
+        )
         if spec is not None:
             out.append(spec)
     return out
@@ -423,7 +450,8 @@ async def _stale_tick(registry: ObjectRegistry, *, period_s: float = 1.0) -> Non
 
 
 async def _auto_discover_loop(
-    *, atlas_stub, hub, transport: str, explicit: list[dict], period_s: float = 5.0
+    *, atlas_stub, hub, transport: str, explicit: list[dict], period_s: float = 5.0,
+    sensor_providers: Optional[dict[str, str]] = None,
 ) -> None:
     """Background reconciler. Re-runs discovery every `period_s` and
     dynamically adds new (kind, topic) subscriptions as they appear.
@@ -436,7 +464,7 @@ async def _auto_discover_loop(
         try:
             await asyncio.sleep(period_s)
             current = hub.has_kinds()
-            specs = _build_topic_specs(explicit, atlas_stub, transport)
+            specs = _build_topic_specs(explicit, atlas_stub, transport, sensor_providers)
             for spec in specs:
                 if spec.kind not in current:
                     hub.add_spec(spec)
@@ -478,14 +506,15 @@ async def _start_ros_ingest(
     # Explicit `observations:` in the manifest skips both phases —
     # those references are static and authoritative.
     explicit = config.get("observations") or []
+    sensor_providers = config.get("sensor_providers") or {}
     transport = str(config.get("transport") or "ros2")
-    specs = _build_topic_specs(explicit, atlas_stub, transport)
+    specs = _build_topic_specs(explicit, atlas_stub, transport, sensor_providers)
     if not specs and not explicit:
         attempt = 0
         while not specs:
             attempt += 1
             await asyncio.sleep(2.0)
-            specs = _build_topic_specs(explicit, atlas_stub, transport)
+            specs = _build_topic_specs(explicit, atlas_stub, transport, sensor_providers)
             if specs:
                 log.info(
                     "[scene] auto-discover: found %d topic(s) on attempt %d",
@@ -546,7 +575,7 @@ async def _start_ros_ingest(
     deadline = time.time() + perception_wait_s
     while time.time() < deadline and not (hub.has("rgb") and hub.has("depth")):
         # Pull fresh specs from atlas and add anything new.
-        new_specs = _build_topic_specs(explicit, atlas_stub, transport)
+        new_specs = _build_topic_specs(explicit, atlas_stub, transport, sensor_providers)
         for spec in new_specs:
             if spec.kind not in hub.has_kinds():
                 hub.add_spec(spec)
@@ -1465,7 +1494,10 @@ async def _run() -> None:
     scene.use_mcp_app(mcp_tools.mcp)
 
     # Wire state.
-    registry = ObjectRegistry(grace_period_s=5.0)
+    # Detection runs are intentionally throttled and can take longer than a
+    # single camera frame interval. Keep a short observation gap from being
+    # reported as object absence while the next inference is in flight.
+    registry = ObjectRegistry(grace_period_s=15.0)
     robot_geometry = RobotGeometryState()
     self_tracker = _SelfTracker(registry, robot_geometry)
 
@@ -1745,6 +1777,7 @@ async def _run() -> None:
                 hub=hub,
                 transport=str(config.get("transport") or "ros2"),
                 explicit=(config.get("observations") or []),
+                sensor_providers=config.get("sensor_providers") or {},
             ),
             name="scene-auto-discover",
         ),

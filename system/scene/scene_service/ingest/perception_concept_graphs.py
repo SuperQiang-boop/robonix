@@ -104,7 +104,7 @@ _IGNORED_CLASSES = frozenset({"person"})
 def _resolved_classes() -> list[str]:
     raw = os.environ.get("SCENE_OPEN_VOCAB_CLASSES", "").strip()
     if not raw:
-        return list(_SDSYS_OPEN_VOCAB)
+        return list(_DEFAULT_OPEN_VOCAB)
     return [s.strip() for s in raw.split(",") if s.strip()]
 
 
@@ -1339,12 +1339,21 @@ class ConceptGraphsDetector:
             if detected_cls == cls and np.mean(covered) >= 0.5:
                 return False
         dh, dw = depth.shape[:2]
-        measured = depth[(v * dh / height).astype(int), (u * dw / width).astype(int)]
+        pixels = np.column_stack(((v * dh / height).astype(int), (u * dw / width).astype(int)))
+        # Count distinct depth pixels, not repeated projections of a dense cloud.
+        _, indices = np.unique(pixels, axis=0, return_index=True)
+        pixels, z = pixels[indices], z[indices]
+        measured = depth[pixels[:, 0], pixels[:, 1]]
         valid = np.isfinite(measured) & (measured > 0)
-        if np.mean(valid) < 0.8:
+        # Reflective floors can leave holes after an object is taken away.
+        # Require enough independent measurements, plus positive evidence that
+        # the background is farther away; missing depth alone proves nothing.
+        if np.count_nonzero(valid) < 8 or np.mean(valid) < 0.2:
             return False
         tolerance = np.maximum(0.10, z[valid] * 0.05)
-        return bool(np.mean(measured[valid] < z[valid] - tolerance) <= 0.2)
+        nearer = np.mean(measured[valid] < z[valid] - tolerance)
+        farther = measured[valid] > z[valid] + tolerance
+        return bool(nearer <= 0.2 and np.count_nonzero(farther) >= 8 and np.mean(farther) >= 0.2)
 
     def _finish_detection(
         self, K: _CamIntrinsics, trans_pose: np.ndarray,

@@ -121,7 +121,20 @@ fn subscribe_turn_events(
     events: &broadcast::Sender<Result<PilotEvent, String>>,
     reply_generation: &Arc<AtomicU64>,
 ) -> ReceiverStream<Result<PilotEvent, Status>> {
-    let generation = reply_generation.fetch_add(1, Ordering::AcqRel) + 1;
+    view_turn_events(events, reply_generation, true)
+}
+
+/// Greeting voice observes the live turn without detaching the frontend's view.
+fn view_turn_events(
+    events: &broadcast::Sender<Result<PilotEvent, String>>,
+    reply_generation: &Arc<AtomicU64>,
+    take_reply: bool,
+) -> ReceiverStream<Result<PilotEvent, Status>> {
+    let generation = if take_reply {
+        reply_generation.fetch_add(1, Ordering::AcqRel) + 1
+    } else {
+        reply_generation.load(Ordering::Acquire)
+    };
     let reply_generation = Arc::clone(reply_generation);
     let mut subscriber = events.subscribe();
     let (tx, rx) = mpsc::channel(64);
@@ -296,6 +309,11 @@ impl RobonixSystemPilot for PilotServiceImpl {
         request: Request<Task>,
     ) -> Result<Response<Self::SubmitTaskStream>, Status> {
         let mut task = request.into_inner();
+        if !crate::task_control::greeting_task_allowed(&task) {
+            return Err(Status::cancelled(
+                "greeting voice request is stale or was stopped",
+            ));
+        }
 
         if task.session_id.is_empty() {
             task.session_id = Uuid::new_v4().to_string();
@@ -318,6 +336,9 @@ impl RobonixSystemPilot for PilotServiceImpl {
 
         if task_is_abort_turn(&task) {
             let id = task.session_id.clone();
+            if let Err(error) = crate::task_control::stop_greeting(&id) {
+                robonix_scribe::warn!("could not record greeting Stop for {id}: {error}");
+            }
             let turn_signaled = if let Some(tx) = self.cancels.lock().await.get(&id) {
                 tx.send_if_modified(|interrupted| {
                     if *interrupted {
@@ -403,7 +424,13 @@ impl RobonixSystemPilot for PilotServiceImpl {
             // the response produced for its input instead of receiving an empty
             // stream and being forced to stop the background plan.
             let id = task.session_id.clone();
-            let rx = subscribe_turn_events(&existing.events, &existing.reply_generation);
+            let greeting_voice =
+                task_context(&task).is_some_and(|context| context["greeting_event_id"].is_string());
+            let rx = if greeting_voice {
+                view_turn_events(&existing.events, &existing.reply_generation, false)
+            } else {
+                subscribe_turn_events(&existing.events, &existing.reply_generation)
+            };
             let ok = existing.tx.send(task).await.is_ok();
             debug!("[pilot] steer task for session {id} (queued={ok})");
             if !ok {
@@ -664,6 +691,27 @@ mod tests {
         assert_eq!(final_event.event_kind, EVT_FINAL_TEXT);
         assert_eq!(final_event.final_text, "still running");
         assert!(stream.next().await.is_none());
+    }
+
+    /// Autonomous greeting input must not hide ongoing work from its frontend.
+    #[tokio::test]
+    async fn greeting_voice_keeps_frontend_status_stream_alive() {
+        let (events, _) = tokio::sync::broadcast::channel(8);
+        let generation = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let mut frontend = subscribe_turn_events(&events, &generation);
+        let mut voice = super::view_turn_events(&events, &generation, false);
+        events
+            .send(Ok(PilotEvent {
+                event_kind: EVT_FINAL_TEXT,
+                final_text: "finished".into(),
+                ..Default::default()
+            }))
+            .unwrap();
+        assert_eq!(
+            frontend.next().await.unwrap().unwrap().final_text,
+            "finished"
+        );
+        assert_eq!(voice.next().await.unwrap().unwrap().final_text, "finished");
     }
 
     #[tokio::test]

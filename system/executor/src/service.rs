@@ -176,9 +176,7 @@ fn execute_node(
                                         .get("goal_near")
                                         .or_else(|| step_results.get("goal_room"));
                                     match source {
-                                        Some(output) => {
-                                            patch_navigate_args(c, output)
-                                        }
+                                        Some(output) => patch_navigate_args(c, output),
                                         None => None,
                                     }
                                 }
@@ -419,10 +417,7 @@ fn leaf_terminal_state(success: bool, cancelled: bool) -> u32 {
 /// call's goal pose to use the returned x, y, yaw.
 ///
 /// Returns `Some(patched_call)` if patching succeeded, `None` otherwise.
-fn patch_navigate_args(
-    original: &CapabilityCall,
-    scene_output: &str,
-) -> Option<CapabilityCall> {
+fn patch_navigate_args(original: &CapabilityCall, scene_output: &str) -> Option<CapabilityCall> {
     // Parse goal_near/goal_room output: expect JSON with x, y, yaw fields.
     let val: serde_json::Value = serde_json::from_str(scene_output).ok()?;
     let x = val.get("x")?.as_f64()?;
@@ -430,9 +425,7 @@ fn patch_navigate_args(
     let yaw = val.get("yaw")?.as_f64()?;
     let reachable = val.get("reachable")?.as_bool().unwrap_or(false);
     if !reachable {
-        info!(
-            "[executor/patch] goal_near returned reachable=false, skipping navigate patch"
-        );
+        info!("[executor/patch] goal_near returned reachable=false, skipping navigate patch");
         return None;
     }
 
@@ -516,10 +509,16 @@ async fn query_scene_approach(
     let _ = atlas_mut.disconnect_capability(&channel_id).await;
 
     if !result.success || result.output.is_empty() {
-        warn!("[executor/patch] scene goal_near call failed: {}", result.error);
+        warn!(
+            "[executor/patch] scene goal_near call failed: {}",
+            result.error
+        );
         return None;
     }
-    info!("[executor/patch] queried scene goal_near: {}", &result.output[..result.output.len().min(256)]);
+    info!(
+        "[executor/patch] queried scene goal_near: {}",
+        &result.output[..result.output.len().min(256)]
+    );
     Some(result.output)
 }
 

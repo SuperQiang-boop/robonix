@@ -107,3 +107,9 @@ An empty sequence means the model is done for the turn:
 ```json
 { "content": "Done.", "rtdl": { "op": "sequence", "children": [] } }
 ```
+
+### Temporary requests and greeting state
+
+A root `cancel_plan` can opt into `resume_after: true`. Pilot retains the interrupted user goal and dispatched step/results in its session state, independently of model history, waits for cancellation, and restores only unfinished intent after successful temporary work and explicit `task_update.verified: true`. `done` with false or omitted verification does not trigger return, and structured capability errors inhibit it even when transport succeeds. A replacement discards the targeted task while preserving unrelated retained parents; a global stop clears automatic return; failure or uncertain cancellation blocks it. Records are in memory: process restart never automatically restarts physical work. Nonrestartable actions still require capability-specific decisions.
+
+`ROBONIX_GREETING_STATE_PATH` optionally reads a local atomic JSON snapshot produced by the G1 greeting skill. Pilot refreshes it before planning and dispatch and watches transitions every 500 ms; it waits to dispatch new business trees while greeting/conversation inhibits movement. Cancellation remains available. Stop invalidates late voice requests for the matching session and encounter. Greeting voice observes the existing status stream without taking it away from the frontend; restoring the original goal emits its in-progress task state. Without this variable, greeting coordination is disabled. The snapshot is local deployment coordination, not a new capability contract. Run `cargo test -p robonix-pilot task_control` and the fake-VLM interruption smoke test before deployment.

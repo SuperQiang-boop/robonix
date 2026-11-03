@@ -79,6 +79,7 @@ class RuntimeIntegrationTest(unittest.TestCase):
                     "RBNX_PACKAGE_ROOT": str(package),
                     "RBNX_INVOCATION_CWD": str(deploy),
                     "ROBONIX_NAV2_FORCE": "docker",
+                    "ROBONIX_GREETING_STATE_PATH": str(deploy / "data" / "greeting.json"),
                 }
             )
             subprocess.run(
@@ -91,6 +92,9 @@ class RuntimeIntegrationTest(unittest.TestCase):
             args = docker_args.read_text(encoding="utf-8").splitlines()
             self.assertIn(f"RBNX_INVOCATION_CWD={deploy}", args)
             self.assertIn(f"{deploy}:{deploy}:ro", args)
+            self.assertIn(f"ROBONIX_GREETING_STATE_PATH={deploy}/data/greeting.json", args)
+            self.assertIn(f"{deploy}/data:{deploy}/data:ro", args)
+            self.assertNotIn(f"{deploy}/data/greeting.json:{deploy}/data/greeting.json:ro", args)
             self.assertIn(
                 f"{package}/rbnx-build/codegen/nav2_proto_gen:"
                 "/nav2/rbnx-build/codegen/proto_gen:ro",

@@ -14,24 +14,25 @@ robot:
   family: humanoid_robot
   root_part: base
 
-  # Approximate G1 dimensions (1.2 m tall with arms lowered)
+  # Unitree's standing envelope is approximately 1.32 m high. The navigation
+  # footprint remains the original Nav2 envelope and must be validated against
+  # gait, arms, and payload.
   dimensions:
     length_m: 0.40
-    width_m: 0.25
-    height_m: 1.20
+    width_m: 0.16
+    height_m: 1.32
   mass_kg: 30.0
   passable_door_width_m: 0.70
 
-  # G1 narrow foot-based footprint — two feet on a line.
-  # Nav2 inflation covers the narrow base; actual collision envelope
-  # is defined by the URDF.
+  # Shared planar navigation envelope. Nav2 may add its configured padding;
+  # Scene uses this polygon for object-goal placement and map clearance.
   footprint:
     base_frame: base_footprint
     points:
-      - [0.15, 0.08]
-      - [0.15, -0.08]
-      - [-0.15, -0.08]
-      - [-0.15, 0.08]
+      - [0.20, 0.08]
+      - [0.20, -0.08]
+      - [-0.20, -0.08]
+      - [-0.20, 0.08]
 
   # ============================================================
   # Robot-level capability exports

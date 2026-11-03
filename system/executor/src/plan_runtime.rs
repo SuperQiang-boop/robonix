@@ -28,6 +28,7 @@ pub struct RunningAsyncCall {
 }
 
 struct PlanRun {
+    session_id: String,
     cancelled: bool,
     running_async: HashMap<String, RunningAsyncCall>,
     /// op_id → when to cancel the whole plan once execution reaches that op.
@@ -48,6 +49,7 @@ struct PlanRun {
 /// One op's static identity, snapshotted from the plan arena at register time.
 #[derive(Clone)]
 struct OpMeta {
+    call_id: String,
     op_id: String,
     description: String,
     node_kind: u32,
@@ -111,6 +113,7 @@ impl PlanRuntime {
         plans.insert(
             plan_id.to_string(),
             PlanRun {
+                session_id: String::new(),
                 cancelled: false,
                 running_async: HashMap::new(),
                 stop_points: HashMap::new(),
@@ -129,6 +132,11 @@ impl PlanRuntime {
             .nodes
             .iter()
             .map(|n| OpMeta {
+                call_id: n
+                    .call
+                    .as_ref()
+                    .map(|call| call.call_id.clone())
+                    .unwrap_or_default(),
                 op_id: n.op_id.clone(),
                 description: n.description.clone(),
                 node_kind: n.node_kind,
@@ -150,6 +158,7 @@ impl PlanRuntime {
             .map(|n| n.description.clone())
             .unwrap_or_default();
         if let Some(run) = self.inner.lock().await.get_mut(&plan.plan_id) {
+            run.session_id = plan.session_id.clone();
             run.ops = ops;
             run.description = description;
         }
@@ -244,12 +253,14 @@ impl PlanRuntime {
             .map(|(id, run)| {
                 serde_json::json!({
                     "plan_id": id,
+                    "session_id": run.session_id,
                     "description": run.description,
                     "op_count": run.ops.len(),
                     "cancelled": run.cancelled,
                     "stop_points": run.stop_points.len(),
                     "ops": run.ops.iter().map(|op| serde_json::json!({
                         "op_id": op.op_id,
+                        "run_id": run.running_async.get(&op.call_id).map(|call| &call.run_id),
                         "kind": kind_label(op.node_kind),
                         "description": op.description,
                         "provider_id": op.provider_id,

@@ -1,0 +1,6 @@
+# Empty run_id selects the latest run. Resume requires an explicit run_id.
+string run_id
+---
+bool accepted
+string run_id
+string detail

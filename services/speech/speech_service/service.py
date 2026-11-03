@@ -928,7 +928,13 @@ class SpeechTtsServicer(SpeechTtsBase):
         self._cache_lock = threading.Lock()
 
     def configure_backend(self, tts_backend) -> None:
+        """Replace synthesis state and release an old backend's owned resources."""
         with self._cache_lock:
+            previous = self.tts_backend
+            if previous is not tts_backend:
+                close = getattr(previous, "close", None)
+                if callable(close):
+                    close()
             self.tts_backend = tts_backend
             self._cache.clear()
 
@@ -1253,6 +1259,11 @@ def speak(req: Speak_Request) -> Speak_Response:
             _speak_tts = EdgeTTSBackend()
         if tts_backend is None:
             tts_backend = _speak_tts
+        native_speak = getattr(tts_backend, "speak_native", None)
+        if callable(native_speak):
+            detail = native_speak(text, cap.provider_id)
+            log.info("speech/speak native playback on %s: %s", cap.provider_id, detail)
+            return Speak_Response(ok=True, detail=detail)
         # MCP handlers run inside FastMCP's event loop, so asyncio.run() here
         # would error ("loop already running"). Synthesize on a worker thread
         # that owns its own loop.
@@ -1405,6 +1416,16 @@ def init(cfg):
         asr_stream_label = "FunASR streaming ASR"
         tts_label = "Edge TTS"
 
+    # A configured TTS override applies independently of the ASR selection.
+    # An unavailable explicit backend must fail initialization, never use Edge.
+    override_name = os.environ.get("SPEECH_TTS_BACKEND_CLASS", "").strip()
+    if override_name and backend_name != "custom" and not MOCK_MODE:
+        try:
+            tts = _load_backend_class("SPEECH_TTS_BACKEND_CLASS")()
+        except Exception as exc:
+            return Err(f"configured TTS backend {override_name} failed: {exc}")
+        tts_label = override_name
+
     _asr_servicer.asr_backend = asr
     _asr_stream_servicer.stream_asr_backend = asr_stream
     try:
@@ -1442,7 +1463,7 @@ def init(cfg):
         log.exception("wake-word backend unavailable: %s", exc)
     _tts_servicer.configure_backend(tts)
     _tts_stream_servicer.tts_backend = tts
-    if tts is not None:
+    if tts is not None and not callable(getattr(tts, "speak_native", None)):
         warm_phrases = _configured_strings(
             cfg.get("tts_warm_phrases"),
             "SPEECH_TTS_WARM_PHRASES",
@@ -1464,6 +1485,18 @@ def init(cfg):
             "model / network issues (see backend errors above)"
         )
     return Ok()
+
+
+@speech.on_shutdown
+def shutdown():
+    """Release persistent TTS resources; repeated lifecycle cleanup is safe."""
+    try:
+        _tts_servicer.configure_backend(None)
+        _tts_stream_servicer.tts_backend = None
+        return Ok()
+    except Exception as exc:
+        log.exception("TTS shutdown failed")
+        return Err(f"TTS shutdown failed: {exc}")
 
 
 def main() -> int:

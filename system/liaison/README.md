@@ -35,8 +35,8 @@ User
         ├─ voice access gate before Pilot/TTS/action
         ├─ build pilot::Task with text + context_json.user_id/access
         ├─ Pilot SubmitTask
-        ├─ optional robonix/service/speech/tts
-        ├─ optional speaker playback
+        ├─ optional robonix/service/speech/speak
+        ├─ speech/tts + speaker playback when speak is absent
         │
         ▼
       VoiceEvent stream
@@ -50,6 +50,13 @@ User
   `VoiceEvent` state, ASR, voiceprint, Pilot, and TTS progress.
 
 Both contracts are registered by the `liaison` provider id.
+
+Voice replies and prompts prefer `robonix/service/speech/speak` over MCP,
+using the selected TTS provider and speaker target. This supports G1's built-in
+text playback without exporting PCM. When that capability is absent, Liaison
+uses `speech/tts` followed by the speaker stream. Playback failures are reported
+without retrying another path; native success confirms acceptance, not audible
+completion. ASR and microphone selection are independent of reply playback.
 
 ## Identity and access
 
@@ -124,3 +131,5 @@ robonix-liaison
 | 8 | TTS_DONE | TTS finished |
 | 9 | SESSION_DONE | Session ended normally |
 | 10 | ERROR | Error |
+
+Voice capture checks that its consumer is still connected before submitting recognized speech to Pilot. Greeting requests reuse the original task session and existing voice authorization; a face match alone does not authorize a speaker. This prevents a closed greeting capture from silently submitting a later command.

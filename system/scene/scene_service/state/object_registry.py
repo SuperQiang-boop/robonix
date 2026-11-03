@@ -137,7 +137,7 @@ class ObjectRegistry:
 
     Stable id allocation is a per-class monotonic counter."""
 
-    def __init__(self, *, grace_period_s: float = 5.0) -> None:
+    def __init__(self, *, grace_period_s: float = 15.0) -> None:
         self._lock = asyncio.Lock()
         self._objects: dict[str, SceneObject] = {}
         self._surfaces: dict[str, SceneSurface] = {}
@@ -278,12 +278,17 @@ class ObjectRegistry:
     def mark_stale(self, now: float) -> int:
         """Set `missing=True` on objects past the grace period. Returns
         how many transitioned this tick (0 most of the time). Never
-        deletes — Pilot may still ask about missing objects.
+        deletes — Pilot may still ask about missing objects. RGB-D objects
+        are exempt: ConceptGraphs owns their visibility-aware removal, and
+        elapsed time alone cannot establish that an out-of-view object is gone.
+        Restored records retain their existing missing state until re-observed.
 
         Caller must hold the lock."""
         flipped = 0
         for obj in self._objects.values():
             if obj.missing or obj.attributes.get("is_robot"):
+                continue
+            if obj.attributes.get("source") == "concept_graphs":
                 continue
             if (now - obj.last_seen) > self.grace_period_s:
                 obj.missing = True

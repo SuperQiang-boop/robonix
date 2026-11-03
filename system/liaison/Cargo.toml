@@ -34,6 +34,7 @@ serde_json.workspace = true
 robonix-scribe.workspace = true
 uuid.workspace = true
 futures = "0.3"
+rmcp = { workspace = true, features = ["client", "transport-streamable-http-client-reqwest"] }
 whoami = "1.5"
 robonix-atlas = { path = "../atlas" }
 

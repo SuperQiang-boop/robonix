@@ -3175,6 +3175,7 @@ dependencies = [
  "futures",
  "prost",
  "protoc-bin-vendored",
+ "rmcp",
  "robonix-atlas",
  "robonix-codegen",
  "robonix-scribe",

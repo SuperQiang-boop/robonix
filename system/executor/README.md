@@ -130,3 +130,5 @@ Executor declares builtin MCP capabilities under
   right after the op's call finishes. `op_id`s are the per-node identifiers
   surfaced in `RtdlNodeState` events. Setting a stop point on a plan that is no
   longer active is a success no-op; an `op_id` that never executes never fires.
+
+Async provider transitions between running and paused are streamed once per state change, as well as reflected in the authoritative active-plan snapshot. That snapshot also includes each plan's `session_id` and an async operation's `run_id` when available, allowing a greeting to bind to the task it interrupted without guessing the latest conversation. Existing snapshot fields and execution RPCs are unchanged.

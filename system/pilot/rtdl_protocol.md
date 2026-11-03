@@ -21,29 +21,33 @@ Do not output markdown fences, headings, explanations, or any text outside the J
 
 ### Task state (`task_update`)
 
-The harness owns one persistent overall task per conversation. It creates a
-chronological instruction history from user input and appends every
-steer/follow-up verbatim. Interpret it oldest to newest: the latest instruction
-overrides any conflicting older instruction, while unrelated unfinished work
-remains active. `task_update` reports progress; it is not a set-current-goal
-command:
+The harness owns the latest instruction shown in "Current user interaction".
+In-flight work and retained unfinished tasks are recorded separately. Interpret
+new instructions in context; a temporary insertion preserves its original task,
+while explicit replacement/Stop discards automatic return. `task_update` reports
+progress and never changes user intent:
 
 - `null` — keep the current criterion and status exactly as they are.
-- object with these keys (all required when the value is an object):
-  - `goal`: copy the instruction history EXACTLY from the "Current overall
-    task" block. Never summarize, shorten, or rewrite it. The harness ignores
-    attempted replacements; precedence is determined by instruction order.
+- object with these required keys and optional `verified`:
+  - `goal`: copy the instruction EXACTLY from "Current user interaction".
+    Never summarize, shorten or rewrite it; the harness rejects stale updates.
   - `success_criterion`: how to know the goal is done — concrete and checkable,
     e.g. `"the water cup is next to the user AND music is audibly playing"`.
     You may refine the harness default once; do not later weaken or erase it.
   - `status`: `"in_progress"` or `"done"`.
+  - `verified` (optional boolean, default false): true only when evidence proves
+    successful completion. A failed/cancelled/blocked interaction may end with
+    done and verified=false. Automatic return to retained work requires true,
+    successful execution and no failure; done alone never proves success.
 
 `status: "done"` is the ONE authoritative completion signal. The turn ends only
 when the overall task is `done`, every dispatched tree has finished, and there
 is no pending user input — NOT merely because you emitted an empty `rtdl`. An
 empty `rtdl` only means "I am dispatching no new tree this round" (e.g. you are
 waiting for an in-flight tree to finish). Do not mark `done` until the
-`success_criterion` actually holds — verify with an observation first.
+`success_criterion` actually holds — verify with an observation first. If the
+interaction instead ends with a reported failure or blocker, use done with
+verified=false; that must not resume retained work.
 
 Do NOT set `status: "done"` while any tree in the "In-flight trees" list is
 still running — even one you just asked to cancel. Cancelling a tree does not
@@ -67,6 +71,13 @@ When one is needed, the entire `rtdl` value MUST be exactly one root meta op:
 
 - Stop one plan now:
   `{"op":"cancel_plan","plan_id":"<listed plan id>","wait_ms":5000}`
+- Temporarily interrupt one plan and retain its unfinished task:
+  `{"op":"cancel_plan","plan_id":"<listed plan id>","wait_ms":5000,"resume_after":true}`.
+  Use only when the latest user requests temporary work before returning to that
+  task. The default false means replacement/stop. The harness retains actual
+  dispatched steps and results, waits for cancellation, and restores original
+  intent after successful, verified temporary work. It never replays a stored
+  physical plan automatically. Failure or Stop prevents automatic return.
 - Stop all running plans now:
   `{"op":"cancel_all","wait_ms":5000}`
 - Stop one plan at an explicit semantic boundary:

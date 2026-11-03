@@ -130,3 +130,30 @@ Streaming ASR yields event dictionaries; one-shot ASR returns a dictionary with
 
 The backend may call any implementation internally: a local model, a cloud API,
 or an existing gRPC stub. Do not change Liaison for algorithm swaps.
+
+## G1 built-in speech
+
+Set `speech_tts_backend_class: speech_service.unitree_tts:UnitreeTTSBackend`
+in the speech service config to send `speech/speak` text to G1's built-in
+Chinese `TtsMaker(text, 0)` through the SDK helper. It overrides only TTS;
+ASR keeps the selected `speech_backend`. No Edge or paid cloud synthesis is
+called for speech playback. Build the deployment's `primitives/g1_audio`
+first. `ROBONIX_DEPLOY_DIR` locates its `rbnx-build/bin/g1_audio_tts_helper`;
+`G1_NETWORK_INTERFACE` selects the robot network. Only target `g1_audio`
+is supported. The helper inherits the current process environment.
+
+Speech starts one persistent helper on the first playback request and retains
+its SDK `AudioClient` between phrases. `TtsMaker` returns before playback has
+finished; destroying the client immediately afterward can interrupt speech.
+Backend replacement and service shutdown close and reap the helper. IPC errors
+and timeouts are reported without replaying possibly accepted text; the next
+independent request can reconnect. Rebuild `g1_audio` and restart Speech after
+updating this helper protocol. No new Liaison build is needed for this fix.
+
+A successful response confirms SDK acceptance, not audible completion.
+The backend cannot export PCM through `tts` / `tts_stream`; those requests
+fail explicitly. Verify a Chinese phrase audibly on the deployed firmware.
+
+Offline lifecycle and routing checks (using the Speech runtime environment):
+`python -m unittest discover -s services/speech/tests -p test_unitree_tts.py`.
+These use a fake helper and do not verify firmware playback.

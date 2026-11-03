@@ -46,13 +46,13 @@ TEST_F(SettledCheck, RequiresDwellAndKeepsItAcrossReplans) {
   EXPECT_TRUE(checker.isGoalReached(pose(0.1), pose(0.0), velocity));
 }
 
-TEST_F(SettledCheck, PositionAndHeadingMustBeValidAtTheSameTime) {
+TEST_F(SettledCheck, XYEntrySurvivesHeadingAdjustmentAndReplans) {
   EXPECT_FALSE(checker.isGoalReached(pose(0.1, 0.8), pose(0.0), velocity));
   advance(2.0);
   checker.reset();
   EXPECT_FALSE(checker.isGoalReached(pose(0.21), pose(0.0), velocity));
   advance(3.0);
-  EXPECT_FALSE(checker.isGoalReached(pose(0.1), pose(0.0), velocity));
+  EXPECT_TRUE(checker.isGoalReached(pose(0.21), pose(0.0), velocity));
   advance(3.41);
   EXPECT_TRUE(checker.isGoalReached(pose(0.1), pose(0.0), velocity));
 }
@@ -78,7 +78,26 @@ TEST_F(SettledCheck, NewGoalAndClockRewindResetDwell) {
   advance(1.0);
   EXPECT_FALSE(checker.isGoalReached(pose(0.1), pose(0.1), velocity));
   advance(1.41);
-  EXPECT_TRUE(checker.isGoalReached(pose(0.1), pose(0.1), velocity));
+  EXPECT_FALSE(checker.isGoalReached(pose(0.1), pose(0.1), velocity));
+}
+
+TEST_F(SettledCheck, CannotSucceedWithoutEntryOrAfterOuterLimitViolation) {
+  EXPECT_FALSE(checker.isGoalReached(pose(0.3), pose(0.0), velocity));
+  advance(2.0);
+  EXPECT_FALSE(checker.isGoalReached(pose(0.3), pose(0.0), velocity));
+  EXPECT_FALSE(checker.isGoalReached(pose(0.1, 0.8), pose(0.0), velocity));
+  EXPECT_FALSE(checker.isGoalReached(pose(0.71), pose(0.0), velocity));
+  advance(3.0);
+  EXPECT_FALSE(checker.isGoalReached(pose(0.1), pose(0.0), velocity));
+}
+
+TEST_F(SettledCheck, DeadlineSurvivesReplans) {
+  EXPECT_FALSE(checker.isGoalReached(pose(0.1, 0.8), pose(0.0), velocity));
+  advance(62.0);
+  checker.reset();
+  EXPECT_FALSE(checker.isGoalReached(pose(0.1), pose(0.0), velocity));
+  advance(63.0);
+  EXPECT_FALSE(checker.isGoalReached(pose(0.1), pose(0.0), velocity));
 }
 
 TEST_F(SettledCheck, RejectsInvalidMeasurementsAndPreservesArrivalBounds) {

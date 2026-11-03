@@ -33,7 +33,8 @@ def detector(monkeypatch):
         cfg_overrides={"detection_interval_ticks": 1},
     )
     pts = np.array([
-        [x, y, z] for x in (-0.08, 0.08) for y in (-0.08, 0.08) for z in (1.9, 2.0)
+        [x, y, z] for x in np.linspace(-0.08, 0.08, 4)
+        for y in np.linspace(-0.08, 0.08, 4) for z in (1.9, 2.0)
     ])
     det._map_objects = [{
         "id": "cup-uuid", "class_name": "cup", "image_idx": [0],
@@ -100,7 +101,9 @@ def test_outside_view_resets_misses_and_survives_ttl(detector):
         """Use an expired timestamp to prove retained map objects bypass TTL."""
         obj = await _seed(detector)
         detector._frame_observed_at[0] = obj.last_seen = time.time() - 100
-        detector._registry.mark_stale(time.time())
+        seen = obj.last_seen
+        assert detector._registry.mark_stale(time.time()) == 0
+        assert not obj.missing
         await _finish(detector)
         await _finish(detector)
         transform = np.eye(4)
@@ -109,12 +112,33 @@ def test_outside_view_resets_misses_and_survives_ttl(detector):
             await _finish(detector, transform=transform)
         assert detector._missed_detections == {}
         assert detector._registry.get_object(obj.object_id) is obj
-        assert obj.missing
+        assert detector._registry.mark_stale(time.time()) == 0
+        assert not obj.missing
+        assert obj.last_seen == seen
         assert obj.observation_count == 1
         await _finish(detector)
         assert detector._missed_detections == {"cup-uuid": 1}
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("source", ["perception", "vlm", "concept_graphs"])
+def test_stale_tick_respects_perception_source(source):
+    """Only RGB-D records defer absence decisions to visibility-aware removal."""
+    from scene_service.state.object_registry import BBox3D, Pose3D
+
+    registry = ObjectRegistry(grace_period_s=15)
+    obj = registry.insert_object(
+        cls="box", pose=Pose3D(1, 0, 0), bbox=BBox3D(),
+        confidence=0.9, now=100, source=source,
+    )
+    expected_missing = source != "concept_graphs"
+    assert registry.mark_stale(200) == int(expected_missing)
+    assert obj.missing is expected_missing
+    assert obj.last_seen == 100
+    registry.soft_evict(obj)
+    assert registry.mark_stale(201) == 0
+    assert obj.missing
 
 
 @pytest.mark.parametrize("depth_value", [0.0, float("nan"), float("inf"), 0.8])
@@ -133,6 +157,40 @@ def test_occlusion_and_invalid_depth_pause_misses(detector, depth_value):
         assert detector._map_objects == []
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("background", [3.0, 2.0, 0.8, 0.0])
+def test_sparse_depth_requires_background_evidence(detector, background):
+    """Depth holes allow removal only with independent farther measurements."""
+    pts = np.array([
+        [x, y, 2.0] for x in np.linspace(-0.2, 0.2, 8)
+        for y in np.linspace(-0.2, 0.2, 8)
+    ])
+    detector._map_objects[0]["pcd"].points = pts
+    depth = np.zeros((100, 100))
+    for point in pts[:20]:
+        u, v = (100 * point[:2] / point[2] + 50).astype(int)
+        depth[v, u] = background
+
+    async def scenario():
+        """Three fresh rounds remove only the object with visible background."""
+        obj = await _seed(detector)
+        for _ in range(2):
+            await _finish(detector, depth=depth)
+            assert detector._registry.get_object(obj.object_id) is obj
+        await _finish(detector, depth=depth)
+        assert (detector._registry.get_object(obj.object_id) is None) == (background == 3.0)
+
+    asyncio.run(scenario())
+
+
+def test_repeated_depth_pixel_cannot_prove_absence(detector):
+    """A cloud projecting onto one valid pixel cannot meet the evidence count."""
+    detector._map_objects[0]["pcd"].points = np.tile([0.0, 0.0, 2.0], (64, 1))
+    assert not detector._absence_check(
+        detector._map_objects[0], _intrinsics(), np.eye(4), (100, 100),
+        np.full((100, 100), 3.0), [],
+    )
 
 
 def test_redetection_resets_misses_and_increments_count_once(detector):

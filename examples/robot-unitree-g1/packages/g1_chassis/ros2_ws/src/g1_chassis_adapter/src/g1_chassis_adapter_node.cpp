@@ -14,6 +14,7 @@
 #include <unistd.h>
 
 #include "geometry_msgs/msg/transform_stamped.hpp"
+#include "diagnostic_msgs/msg/diagnostic_array.hpp"
 #include "geometry_msgs/msg/twist.hpp"
 #include "nav_msgs/msg/odometry.hpp"
 #include "sensor_msgs/msg/joint_state.hpp"
@@ -108,6 +109,7 @@ class AdapterNode : public rclcpp::Node {
         });
 
     odom_pub_ = create_publisher<nav_msgs::msg::Odometry>(odom_topic_, 10);
+    diagnostics_pub_ = create_publisher<diagnostic_msgs::msg::DiagnosticArray>("/diagnostics", 10);
     joint_state_pub_ =
         create_publisher<sensor_msgs::msg::JointState>(joint_state_topic_, 10);
 
@@ -138,6 +140,7 @@ class AdapterNode : public rclcpp::Node {
   }
 
   void OnTwist(const geometry_msgs::msg::Twist::SharedPtr msg) {
+    if (daemon_faulted_) return;
     last_twist_ = TwistToPacket(*msg);
     last_twist_received_ = true;
     stale_stop_sent_ = false;
@@ -165,6 +168,7 @@ class AdapterNode : public rclcpp::Node {
       if (odometry_valid_) PublishOdometry();
       else RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), 2000, "SDK odometry rejected: %s", reason.c_str());
     }
+    PublishDiagnostics(fresh, now_ns);
     if (!fresh || !odometry_valid_) {
       RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 2000, "No fresh valid G1 odometry; TF publication and motion refresh inhibited");
     }
@@ -174,7 +178,7 @@ class AdapterNode : public rclcpp::Node {
     // faults safely when the navigation publisher actually disappears.
     const auto command_age =
         std::chrono::steady_clock::now() - last_twist_time_;
-    if (fresh && odometry_valid_ && last_twist_received_ &&
+    if (!daemon_faulted_ && fresh && odometry_valid_ && last_twist_received_ &&
         command_age < std::chrono::milliseconds(250)) {
       send_command(last_twist_);
     } else if (last_twist_received_ && !stale_stop_sent_) {
@@ -187,6 +191,31 @@ class AdapterNode : public rclcpp::Node {
       stale_stop_sent_ = true;
     }
 
+  }
+
+  /** Report motion permission independently of fresh measured odometry and TF. */
+  void PublishDiagnostics(bool fresh, uint64_t now_ns) {
+    if (now_ns - last_diagnostics_ns_ < 100'000'000ULL &&
+        last_reported_fault_ == daemon_faulted_) return;
+    diagnostic_msgs::msg::DiagnosticArray message;
+    message.header.stamp = get_clock()->now();
+    diagnostic_msgs::msg::DiagnosticStatus status;
+    status.name = status.hardware_id = "g1_chassis";
+    if (daemon_faulted_) {
+      status.level = diagnostic_msgs::msg::DiagnosticStatus::ERROR;
+      status.message = "daemon motion fault is latched; motion inhibited until chassis restart";
+      RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), 2000, "%s", status.message.c_str());
+    } else if (!fresh || !odometry_valid_) {
+      status.level = diagnostic_msgs::msg::DiagnosticStatus::STALE;
+      status.message = "no fresh valid G1 odometry; motion inhibited";
+    } else {
+      status.level = diagnostic_msgs::msg::DiagnosticStatus::OK;
+      status.message = "fresh G1 odometry; no latched daemon motion fault";
+    }
+    message.status.push_back(std::move(status));
+    diagnostics_pub_->publish(message);
+    last_diagnostics_ns_ = now_ns;
+    last_reported_fault_ = daemon_faulted_;
   }
 
   /** Publish planar ground-projected pose; velocity comes from pose differences in the child frame. */
@@ -285,11 +314,15 @@ class AdapterNode : public rclcpp::Node {
       if (received < 0) {
         if (errno == EAGAIN || errno == EWOULDBLOCK) return;
         if (errno != EINTR) {
+          daemon_faulted_ = true;
           RCLCPP_WARN(this->get_logger(), "recv() error: %s", strerror(errno));
         }
         continue;
       }
-      if (received == 0) return;
+      if (received == 0) {
+        daemon_faulted_ = true;
+        return;
+      }
       if (received == static_cast<ssize_t>(sizeof(g1_chassis::StatePacket)) &&
           packet[0] == static_cast<uint8_t>(PacketType::kState)) {
         g1_chassis::StatePacket state;
@@ -307,6 +340,9 @@ class AdapterNode : public rclcpp::Node {
         continue;
       }
       std::memcpy(&reply, packet, sizeof(reply));
+      // Keep truthful odometry/TF available; diagnostics separately prevents
+      // navigation from mistaking a motion fault for permission to resume.
+      daemon_faulted_ = daemon_faulted_ || reply.faulted != 0;
       if (reply.code !=
                  static_cast<uint8_t>(g1_chassis::ReplyCode::kOk)) {
         RCLCPP_ERROR(this->get_logger(),
@@ -330,11 +366,15 @@ class AdapterNode : public rclcpp::Node {
   double state_timeout_s_{0.15};
   bool state_received_{false};
   bool odometry_valid_{false};
+  bool daemon_faulted_{false};
+  bool last_reported_fault_{false};
+  uint64_t last_diagnostics_ns_{0};
   uint64_t processed_sequence_{0};
   uint64_t last_stamp_ns_{0};
 
   rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr twist_sub_;
   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr odom_pub_;
+  rclcpp::Publisher<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr diagnostics_pub_;
   rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr joint_state_pub_;
   std::unique_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
   rclcpp::TimerBase::SharedPtr timer_;

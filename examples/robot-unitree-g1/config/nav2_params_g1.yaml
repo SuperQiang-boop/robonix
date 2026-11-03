@@ -1,6 +1,7 @@
 # G1 Nav2 configuration.
-# Unitree G1 humanoid: ~1.2 m tall, narrow foot-based footprint (~0.25 x 0.20 m).
-# BotBrain-style SmacPlanner2D + MPPI DiffDrive: navigation does not side-step.
+# Unitree G1 humanoid: the planar navigation footprint is the original
+# rectangular Nav2 envelope (0.40 m x 0.16 m).
+# SmacPlanner2D + MPPI DiffDrive transit; terminal correction can side-step.
 # This profile starts with a conservative
 # max_linear_x of 0.35 m/s and max_angular of 0.60 rad/s.
 
@@ -38,9 +39,11 @@ controller_server:
 
     general_goal_checker:
       plugin: "robonix_nav2_terminal::SettledGoalChecker"
-      # G1 step length ~0.3 m; generous terminal tolerance for bipedal arrival.
-      xy_goal_tolerance: 0.20
-      yaw_goal_tolerance: 0.25
+      # Latch 0.60 m entry, then accept 40 degrees and measured stop within outer bound.
+      xy_goal_tolerance: 0.60
+      terminal_xy_exit_tolerance: 0.70
+      terminal_timeout: 60.0
+      yaw_goal_tolerance: 0.6981317008
       trans_stopped_velocity: 0.04
       rot_stopped_velocity: 0.06
       settle_time: 0.40
@@ -52,22 +55,33 @@ controller_server:
       angular_dist_threshold: 0.60
       angular_disengage_threshold: 0.25
       forward_sampling_distance: 0.40
+      # Preserve the current turn speed; allow stepping through terminal XY budgets.
       rotate_to_heading_angular_vel: 0.30
-      max_angular_accel: 0.60
+      max_angular_accel: 0.30
       simulate_ahead_time: 1.0
       closed_loop: false
       terminal_settle_time: 0.40
       terminal_stopped_linear_velocity: 0.04
       terminal_stopped_angular_velocity: 0.06
-      terminal_yaw_target_tolerance: 0.12
-      terminal_xy_exit_tolerance: 0.40
-      terminal_timeout: 15.0
-      terminal_correction_trigger: 0.28
-      terminal_correction_xy_tolerance: 0.10
+      terminal_yaw_target_tolerance: 0.6981317008
+      # Wider than success tolerance, but inside the velocity-guard trip range.
+      terminal_xy_exit_tolerance: 0.70
+      terminal_timeout: 60.0
+      # Legacy correction settings; terminal control now only turns after XY entry.
+      terminal_correction_trigger: 0.65
+      terminal_correction_xy_tolerance: 0.20
       terminal_correction_max_speed: 0.20
+      # Boost only predominantly forward corrections; obey external speed limits.
+      terminal_correction_forward_min_speed: 0.20
       terminal_correction_linear_accel: 0.40
-      terminal_correction_max_distance: 0.30
-      terminal_correction_timeout: 6.0
+      terminal_correction_max_distance: 0.50
+      # Command integration is a separate fallback, not measured displacement.
+      terminal_correction_max_commanded_distance: 1.50
+      terminal_correction_startup_grace: 2.0
+      terminal_correction_no_progress_timeout: 5.0
+      terminal_correction_progress_distance: 0.02
+      # Includes measured stops and omnidirectional correction.
+      terminal_correction_timeout: 25.0
       time_steps: 56
       model_dt: 0.05
       batch_size: 1000
@@ -172,8 +186,8 @@ local_costmap:
       width: 5
       height: 5
       resolution: 0.05
-      # Nominal support polygon; Nav2 requires at least three vertices.
-      footprint: "[[0.20, 0.08], [0.20, -0.08], [-0.20, -0.08], [-0.20, 0.08]]"
+      # Shared Soma planar envelope; padding adds 0.05 m on every side.
+      footprint: "__ROBONIX_FOOTPRINT__"
       footprint_padding: 0.05
 
       plugins: ["obstacle_layer", "inflation_layer"]
@@ -198,7 +212,7 @@ local_costmap:
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         enabled: true
-        inflation_radius: 0.30
+        inflation_radius: 0.25
         cost_scaling_factor: 5.0
 
 global_costmap:
@@ -207,7 +221,8 @@ global_costmap:
       use_sim_time: false
       global_frame: map
       robot_base_frame: base_footprint
-      footprint: "[[0.20, 0.08], [0.20, -0.08], [-0.20, -0.08], [-0.20, 0.08]]"
+      # Keep the global footprint identical to local_costmap and Soma.
+      footprint: "__ROBONIX_FOOTPRINT__"
       footprint_padding: 0.05
       update_frequency: 5.0
       publish_frequency: 2.0
@@ -243,8 +258,22 @@ global_costmap:
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         enabled: true
-        inflation_radius: 0.30
+        inflation_radius: 0.25
         cost_scaling_factor: 5.0
+
+velocity_smoother:
+  ros__parameters:
+    use_sim_time: false
+    smoothing_frequency: 20.0
+    feedback: "OPEN_LOOP"
+    scale_velocities: true
+    max_velocity: [0.35, 0.20, 0.60]
+    min_velocity: [-0.20, -0.20, -0.60]
+    max_accel: [0.40, 0.40, 0.30]
+    max_decel: [-0.40, -0.40, -0.30]
+    odom_topic: "__ROBONIX_ODOM_TOPIC__"
+    deadband_velocity: [0.0, 0.0, 0.0]
+    velocity_timeout: 0.25
 
 lifecycle_manager:
   ros__parameters:
