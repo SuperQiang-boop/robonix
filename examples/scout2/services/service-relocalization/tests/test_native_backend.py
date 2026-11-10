@@ -1,4 +1,4 @@
-"""Verify startup rejects unusable or unrelated native modules before Atlas."""
+"""Verify startup rejects unusable or unrelated native modules before Src."""
 from pathlib import Path
 from types import SimpleNamespace
 import tempfile

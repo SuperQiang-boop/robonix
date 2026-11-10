@@ -31,10 +31,10 @@ if [[ "$MODE" == "docker" ]]; then
     exit 0
 fi
 
-pkill -TERM -f "${PKG}.*nav2_wrapper.atlas_bridge" 2>/dev/null || true
+pkill -TERM -f "${PKG}.*nav2_wrapper.src_bridge" 2>/dev/null || true
 pkill -TERM -f "robonix_pointcloud_to_laserscan|pointcloud_to_laserscan_node|nav2_wrapper.scan_filter|nav2_wrapper.velocity_guard" 2>/dev/null || true
 pkill -TERM -f "nav2_bringup|controller_server|planner_server|bt_navigator|behavior_server|waypoint_follower|velocity_smoother" 2>/dev/null || true
 sleep 1
-pkill -KILL -f "${PKG}.*nav2_wrapper.atlas_bridge" 2>/dev/null || true
+pkill -KILL -f "${PKG}.*nav2_wrapper.src_bridge" 2>/dev/null || true
 pkill -KILL -f "robonix_pointcloud_to_laserscan|pointcloud_to_laserscan_node|nav2_wrapper.scan_filter|nav2_wrapper.velocity_guard" 2>/dev/null || true
 pkill -KILL -f "nav2_bringup|controller_server|planner_server|bt_navigator|behavior_server|waypoint_follower|velocity_smoother" 2>/dev/null || true

@@ -219,7 +219,7 @@ class Pipeline:
             terminate(self.server)
 
     def close(self):
-        """Join the worker before destroying ROS resources and close the Atlas channel."""
+        """Join the worker before destroying ROS resources and close the Src channel."""
         self.ready = False
         self.stop.set()
         if self.thread is not None:

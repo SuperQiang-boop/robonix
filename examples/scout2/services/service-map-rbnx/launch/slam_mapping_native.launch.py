@@ -1,5 +1,5 @@
-"""Native mapping launch. Uses /tmp/lio_resolved.yaml (written by atlas_bridge
-after Atlas-discovered primitives) if present, else installed default."""
+"""Native mapping launch. Uses /tmp/lio_resolved.yaml (written by src_bridge
+after Src-discovered primitives) if present, else installed default."""
 import os
 from launch import LaunchDescription, LaunchContext
 from launch_ros.actions import Node

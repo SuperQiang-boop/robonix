@@ -72,7 +72,7 @@ actual = {package: version(package) for package in expected}
 if actual != expected:
     raise RuntimeError(f"Explore protobuf environment mismatch: {actual} != {expected}")
 
-import atlas_pb2_grpc  # noqa: F401, E402
+import src_pb2_grpc  # noqa: F401, E402
 import explore_pb2  # noqa: F401, E402
 import explore_mcp  # noqa: F401, E402
 import robonix_contracts_pb2_grpc  # noqa: F401, E402

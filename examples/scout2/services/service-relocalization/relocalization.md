@@ -55,7 +55,7 @@
 
 ## 手动调用示例
 
-以下示例展示调用顺序。`relocalize_by_map` 和 `get_status` 是通过 Atlas 发现并连接对应 contract 后得到的 RPC 方法；其中 `pb` 是该服务生成的 protobuf 模块。
+以下示例展示调用顺序。`relocalize_by_map` 和 `get_status` 是通过 Src 发现并连接对应 contract 后得到的 RPC 方法；其中 `pb` 是该服务生成的 protobuf 模块。
 
 ```python
 import time
@@ -108,7 +108,7 @@ Scene 从 mapping 的 lifecycle 读取地图身份，不再静态绑定 `scout2_
 
 ## 当前验证与后续验收
 
-2026-10-28：已通过配置与运行时回归，以及隔离 Atlas/ROS 生产入口联调：
+2026-10-28：已通过配置与运行时回归，以及隔离 Src/ROS 生产入口联调：
 无地图的 mapping 等待、有地图自动定位、同图重载后重新定位、关闭自动后手动请求和资源回收。
 本轮未启动实车；构建与测试详情见 [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md)。
 

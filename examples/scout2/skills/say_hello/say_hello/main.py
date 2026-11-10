@@ -1,4 +1,4 @@
-from robonix_api import ATLAS, Skill, Ok, Err
+from robonix_api import SRC, Skill, Ok, Err
 from say_hello_mcp import SayHello_Request, SayHello_Response
 from fastmcp import Client
 import asyncio
@@ -14,11 +14,11 @@ _speak_endpoint: str = ""
 
 
 def resolve_speak_endpoint(deadline_s: float = 30.0) -> str:
-    """通过 Atlas 发现 speech/speak MCP 端点"""
+    """通过 Src 发现 speech/speak MCP 端点"""
     deadline = time.time() + deadline_s
     while time.time() < deadline:
         try:
-            cap = ATLAS.find_unique_capability(
+            cap = SRC.find_unique_capability(
                 contract_id="robonix/service/speech/speak",
                 transport="mcp",
             )
@@ -34,7 +34,7 @@ def resolve_speak_endpoint(deadline_s: float = 30.0) -> str:
             pass
         time.sleep(2.0)
     raise RuntimeError(
-        "say_hello: could not find robonix/service/speech/speak on Atlas. "
+        "say_hello: could not find robonix/service/speech/speak on Src. "
         "Is the speech service running?"
     )
 

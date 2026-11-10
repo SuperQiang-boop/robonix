@@ -1,7 +1,7 @@
 # service-navigation-rbnx
 
 Robonix wrapper around a system-installed ROS 2 Nav2 stack. The service
-discovers map, odometry, and lidar inputs through Atlas and exposes
+discovers map, odometry, and lidar inputs through Src and exposes
 `robonix/service/navigation/*` over gRPC and MCP.
 
 ## Scout2 verified localization
@@ -103,7 +103,7 @@ goal, or resubmit it.
 
 At `Driver(CMD_INIT)`, the wrapper:
 
-1. resolves the selected Atlas providers;
+1. resolves the selected Src providers;
 2. resolves and materializes the deployment-owned Nav2 YAML;
 3. starts an optional PointCloud2-to-LaserScan adapter;
 4. starts Nav2 and waits for the `navigate_to_pose` action server;
@@ -115,7 +115,7 @@ failure returns `error` and tears down every child process.
 
 ## Build and tests
 
-Navigation generates only its Atlas MCP bindings on every deployment target.
+Navigation generates only its Src MCP bindings on every deployment target.
 It deliberately does not generate, build, or source a Robonix ROS 2 IDL
 overlay: the provider talks to Nav2 through the ROS 2 interfaces supplied by
 the selected Humble installation, while its own public capability transport is

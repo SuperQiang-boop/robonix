@@ -1,4 +1,4 @@
-"""Atlas/lifecycle bridge for the external VSIS face recognition executable."""
+"""Src/lifecycle bridge for the external VSIS face recognition executable."""
 from __future__ import annotations
 
 import json

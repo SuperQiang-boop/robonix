@@ -1,4 +1,4 @@
-"""Use Atlas-resolved mapping endpoints for pose injection and fresh feedback."""
+"""Use Src-resolved mapping endpoints for pose injection and fresh feedback."""
 from __future__ import annotations
 
 from collections import deque
@@ -16,7 +16,7 @@ from .observations import rotation, stamp_ns
 class MappingIO:
     """Own only a mapping pose subscription and its pose_estimate gRPC channel.
 
-    Caller owns/spins the ROS node and owns Atlas connections. Endpoints must
+    Caller owns/spins the ROS node and owns Src connections. Endpoints must
     come from the configured mapping provider; no topic names are inferred.
     Pose feedback is not proof of localization without independent scan checks.
     """
@@ -29,9 +29,9 @@ class MappingIO:
         from geometry_msgs.msg import PoseWithCovarianceStamped
         from rclpy.qos import qos_profile_sensor_data
         if not isinstance(pose_endpoint, str) or not pose_endpoint.startswith('/'):
-            raise ValueError('absolute Atlas mapping pose endpoint is required')
+            raise ValueError('absolute Src mapping pose endpoint is required')
         if not isinstance(estimate_endpoint, str) or not estimate_endpoint.strip():
-            raise ValueError('Atlas mapping pose_estimate endpoint is required')
+            raise ValueError('Src mapping pose_estimate endpoint is required')
         if not map_frame or not math.isfinite(max_age_s) or not 0 < max_age_s <= 2:
             raise ValueError('explicit map frame and bounded pose freshness are required')
         self.node, self.map_frame, self.max_age_s = node, map_frame, max_age_s

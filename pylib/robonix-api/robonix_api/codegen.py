@@ -4,7 +4,7 @@
 Every robonix package gets a single canonical codegen directory:
 
     <pkg>/rbnx-build/codegen/
-        proto_gen/             # gRPC stubs (atlas_pb2, robonix_contracts_pb2_grpc, ...)
+        proto_gen/             # gRPC stubs (src_pb2, robonix_contracts_pb2_grpc, ...)
         robonix_mcp_types/     # MCP typed-input dataclasses (when --mcp was passed)
 
 `rbnx codegen -p <pkg>` writes there and `Capability(...)` reads from there.
@@ -32,7 +32,7 @@ def ensure_proto_gen(start: Path | None = None) -> Path | None:
     for _ in range(20):
         codegen = d / "rbnx-build" / "codegen"
         proto_gen = codegen / "proto_gen"
-        if (proto_gen / "atlas_pb2.py").is_file():
+        if (proto_gen / "src_pb2.py").is_file():
             _add_to_path(proto_gen)
             mcp_types = codegen / "robonix_mcp_types"
             if mcp_types.is_dir():

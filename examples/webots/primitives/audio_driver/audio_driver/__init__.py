@@ -7,7 +7,7 @@
 # This package is the REFERENCE TEMPLATE for all future primitive driver packages.
 #
 # Key modules:
-#   node.py          — Main entry point (Atlas registration + gRPC servers)
+#   node.py          — Main entry point (Src registration + gRPC servers)
 #   alsa_utils.py    — ALSA device scanning + driver registry
 #   mic_driver.py    — Microphone capture via arecord subprocess
 #   speaker_driver.py — Speaker playback via aplay subprocess

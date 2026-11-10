@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MulanPSL-2.0
-"""Delete an enrolled voiceprint user through Atlas discovery."""
+"""Delete an enrolled voiceprint user through Src discovery."""
 from __future__ import annotations
 
 import argparse
@@ -20,16 +20,16 @@ def _add_paths(repo: Path) -> None:
 
 
 def _connect_contract(contract_id: str, provider_id: str = ""):
-    from robonix_api import ATLAS
-    from robonix_api.atlas_types import Transport
+    from robonix_api import SRC
+    from robonix_api.src_types import Transport
 
-    providers = ATLAS.query(contract_id=contract_id, transport=Transport.GRPC)
+    providers = SRC.query(contract_id=contract_id, transport=Transport.GRPC)
     if provider_id:
         providers = [p for p in providers if p.id == provider_id or p.namespace == provider_id]
     if not providers:
         raise RuntimeError(f"no provider for {contract_id!r}")
     provider = providers[0]
-    channel = ATLAS.connect_capability(
+    channel = SRC.connect_capability(
         consumer_id="voiceprint-delete-demo",
         provider_id=provider.id,
         contract_id=contract_id,

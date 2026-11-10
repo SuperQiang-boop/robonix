@@ -1,4 +1,4 @@
-"""Isolated real ROS sensor transport; no Atlas, map writes or robot connection."""
+"""Isolated real ROS sensor transport; no Src, map writes or robot connection."""
 from concurrent.futures import ThreadPoolExecutor
 import os
 from pathlib import Path

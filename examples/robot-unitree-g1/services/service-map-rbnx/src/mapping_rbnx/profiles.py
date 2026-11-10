@@ -64,13 +64,13 @@ def legacy_rtabmap_profiles() -> dict[str, dict[str, object]]:
 def choose_provider_record(
     records: list[Any], provider_id: str, contract_id: str
 ) -> Any | None:
-    """Select one Atlas record without depending on response ordering."""
+    """Select one Src record without depending on response ordering."""
     if not records:
         return None
     if not provider_id and len(records) > 1:
         candidates = sorted({str(record.provider_id) for record in records})
         raise RuntimeError(
-            f"multiple Atlas providers expose {contract_id}: {candidates}; "
+            f"multiple Src providers expose {contract_id}: {candidates}; "
             "set config.sensor_providers for this sensor"
         )
     return records[0]
@@ -81,7 +81,7 @@ def resolve_occupancy_sources(
 ) -> dict[str, object]:
     """Translate explicit 2D-grid policy into RTAB-Map parameters.
 
-    Atlas discovery answers which streams exist. It must not decide which
+    Src discovery answers which streams exist. It must not decide which
     streams are stable enough to build a robot's occupancy grid.
     """
     if raw_sources is None:
@@ -100,7 +100,7 @@ def resolve_occupancy_sources(
     missing = sources - available_sources
     if missing:
         raise RuntimeError(
-            f"occupancy source(s) {sorted(missing)} were requested but not resolved from Atlas"
+            f"occupancy source(s) {sorted(missing)} were requested but not resolved from Src"
         )
     grid_sensor = {
         frozenset({"lidar"}): 0,
@@ -116,7 +116,7 @@ def resolve_occupancy_sources(
 def select_rtabmap_inputs(
     raw_inputs: object | None, resolved: dict[str, str]
 ) -> dict[str, str]:
-    """Apply an explicit RTAB-Map subscription policy to Atlas results."""
+    """Apply an explicit RTAB-Map subscription policy to Src results."""
     if raw_inputs is None:
         return dict(resolved)
     if not isinstance(raw_inputs, (list, tuple)) or not raw_inputs:
@@ -137,19 +137,19 @@ def select_rtabmap_inputs(
             if resolved.get(key):
                 selected[key] = resolved[key]
         if not ({"scan_topic", "lidar_topic"} & selected.keys()):
-            raise RuntimeError("RTAB-Map lidar input was requested but not resolved from Atlas")
+            raise RuntimeError("RTAB-Map lidar input was requested but not resolved from Src")
     if "rgbd" in inputs:
         if not resolved.get("rgb_topic") or not resolved.get("depth_topic"):
-            raise RuntimeError("RTAB-Map rgbd input was requested but not resolved from Atlas")
+            raise RuntimeError("RTAB-Map rgbd input was requested but not resolved from Src")
         selected["rgb_topic"] = resolved["rgb_topic"]
         selected["depth_topic"] = resolved["depth_topic"]
     if "odom" in inputs:
         if not resolved.get("odom_topic"):
-            raise RuntimeError("RTAB-Map odom input was requested but not resolved from Atlas")
+            raise RuntimeError("RTAB-Map odom input was requested but not resolved from Src")
         selected["odom_topic"] = resolved["odom_topic"]
     if "imu" in inputs:
         if not resolved.get("imu_topic"):
-            raise RuntimeError("RTAB-Map imu input was requested but not resolved from Atlas")
+            raise RuntimeError("RTAB-Map imu input was requested but not resolved from Src")
         selected["imu_topic"] = resolved["imu_topic"]
     return selected
 

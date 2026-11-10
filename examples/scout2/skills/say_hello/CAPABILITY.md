@@ -28,7 +28,7 @@
 
 ## 技术细节
 
-- 通过 Atlas 动态发现 `robonix/service/speech/speak` MCP 端点（轮询超时 30s）
+- 通过 Src 动态发现 `robonix/service/speech/speak` MCP 端点（轮询超时 30s）
 - 使用 `fastmcp.Client` 异步调用 speech 服务的 `speak` 工具
 - 同步包装：`ThreadPoolExecutor(asyncio.run())` 将异步 MCP 调用转为同步，避免事件循环冲突
 - 无任务状态管理：调用即播，无 status/cancel 接口
@@ -40,4 +40,4 @@
 |-----|----------|-----------|
 | speech_speak | robonix/service/speech/speak | MCP |
 
-Skill 在激活时通过 Atlas 解析 speech 端点，解析失败则拒绝启动。
+Skill 在激活时通过 Src 解析 speech 端点，解析失败则拒绝启动。

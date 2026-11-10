@@ -3,7 +3,7 @@
 #
 # Multi-stage:
 #   builder       — compile FASTLIO2_ROS2 packages (fastlio2, pgo, localizer, hba, interface)
-#   runtime-bridge — Python-only Atlas bridge (dev/test without SLAM)
+#   runtime-bridge — Python-only Src bridge (dev/test without SLAM)
 #   runtime        — full SLAM + bridge
 
 # ── Build stage: FASTLIO2_ROS2 C++ ──────────────────────────────────────────
@@ -112,7 +112,7 @@ COPY skills/ /ws/skills/
 COPY proto_gen* /ws/proto_gen/
 
 ENV PYTHONPATH="/ws/src:/ws/proto_gen"
-CMD ["python3", "-m", "mapping_rbnx.atlas_bridge"]
+CMD ["python3", "-m", "mapping_rbnx.src_bridge"]
 
 # ── Full runtime (with C++ SLAM nodes) ───────────────────────────────────────
 FROM runtime-bridge AS runtime

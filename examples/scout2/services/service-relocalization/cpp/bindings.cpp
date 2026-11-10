@@ -52,7 +52,7 @@ static SearchResult run_search(const BbsSearch& search,
     return search.search(points, owned_options, deadline, *owned_token);
 }
 
-// Internal extension only: no new Atlas contracts or robot actions.
+// Internal extension only: no new Src contracts or robot actions.
 PYBIND11_MODULE(_relocalization_bbs, module) {
     py::register_exception<SearchCancelled>(module, "SearchCancelled", PyExc_RuntimeError);
     py::register_exception<SearchTimeout>(module, "SearchTimeout", PyExc_RuntimeError);

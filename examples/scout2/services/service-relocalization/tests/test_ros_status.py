@@ -10,7 +10,7 @@ from relocalization_rbnx import ros_status
 
 
 class FakeRuntime:
-    """Model two failed/completed task cycles without ROS or Atlas."""
+    """Model two failed/completed task cycles without ROS or Src."""
 
     def __init__(self, succeeds_on=2):
         self.calls = 0

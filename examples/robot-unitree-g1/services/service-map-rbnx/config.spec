@@ -13,7 +13,7 @@ required:
   sensor_providers:
     type: mapping[string, string]
     description: >-
-      Sensor role to Atlas provider_id. A key enables that Mapping input and
+      Sensor role to Src provider_id. A key enables that Mapping input and
       its value selects the provider. Supported roles are lidar2d, lidar3d,
       rgb, depth, imu, and odom. RGB-D requires both rgb and depth.
     example:

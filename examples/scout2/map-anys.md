@@ -57,7 +57,7 @@ provider_ids:
   scan_cloud: scout2_lidar
 ```
 
-Nav2 通过 Atlas 找到地图服务发布的 `robonix/service/map/occupancy_grid`，并将其映射为 Nav2 使用的 `/map` 话题。
+Nav2 通过 Src 找到地图服务发布的 `robonix/service/map/occupancy_grid`，并将其映射为 Nav2 使用的 `/map` 话题。
 
 `config/nav2_params.yaml` 中的全局代价地图配置为：
 
@@ -216,7 +216,7 @@ services/service-map-rbnx/maps/<map_id>/
 
 相关实现位置：
 
-- `services/service-map-rbnx/src/mapping_rbnx/atlas_bridge.py`
+- `services/service-map-rbnx/src/mapping_rbnx/src_bridge.py`
 - `services/service-map-rbnx/src/mapping_rbnx/map_ops.py`
 - `services/service-map-rbnx/launch/rtabmap_2d.launch.py`
 - `services/service-map-rbnx/scripts/start.sh`

@@ -98,11 +98,11 @@ class RtabmapConfigurationTest(unittest.TestCase):
             SimpleNamespace(provider_id="front_lidar"),
             SimpleNamespace(provider_id="rear_lidar"),
         ]
-        with self.assertRaisesRegex(RuntimeError, "multiple Atlas providers"):
+        with self.assertRaisesRegex(RuntimeError, "multiple Src providers"):
             profiles.choose_provider_record(records, "", "lidar3d")
 
     def test_provider_bindings_are_the_sensor_enablement_source(self):
-        source = (ROOT / "src" / "mapping_rbnx" / "atlas_bridge.py").read_text()
+        source = (ROOT / "src" / "mapping_rbnx" / "src_bridge.py").read_text()
         self.assertIn('providers = cfg.get("sensor_providers")', source)
         self.assertIn("return {key: key in providers", source)
         self.assertIn("config.sensors is deprecated", source)
@@ -182,10 +182,10 @@ class RtabmapConfigurationTest(unittest.TestCase):
 
     def test_missing_requested_source_fails_loudly(self):
         profiles = load_profiles()
-        with self.assertRaisesRegex(RuntimeError, "not resolved from Atlas"):
+        with self.assertRaisesRegex(RuntimeError, "not resolved from Src"):
             profiles.resolve_occupancy_sources(["depth"], {"lidar"})
 
-    def test_explicit_inputs_drop_rgbd_without_hiding_atlas_capabilities(self):
+    def test_explicit_inputs_drop_rgbd_without_hiding_src_capabilities(self):
         profiles = load_profiles()
         resolved = {
             "lidar_topic": "/scanner/cloud",
@@ -233,7 +233,7 @@ class RtabmapConfigurationTest(unittest.TestCase):
         )
 
     def test_external_odom_keeps_its_original_capability_owner(self):
-        source = (ROOT / "src" / "mapping_rbnx" / "atlas_bridge.py").read_text()
+        source = (ROOT / "src" / "mapping_rbnx" / "src_bridge.py").read_text()
         self.assertIn(
             'contract_id == "robonix/service/map/odom" and resolved.get("odom_topic")',
             source,
@@ -241,7 +241,7 @@ class RtabmapConfigurationTest(unittest.TestCase):
         self.assertIn("external odom remains owned by its provider", source)
 
     def test_occupancy_grid_declares_transient_local_qos(self):
-        source = (ROOT / "src" / "mapping_rbnx" / "atlas_bridge.py").read_text()
+        source = (ROOT / "src" / "mapping_rbnx" / "src_bridge.py").read_text()
         self.assertIn(
             'contract_id == "robonix/service/map/occupancy_grid"',
             source,
@@ -305,7 +305,7 @@ class RtabmapConfigurationTest(unittest.TestCase):
         self.assertNotIn("ResetPose", bridge_source)
 
     def test_navigation_odom_bridge_config_reaches_launch(self):
-        bridge = (ROOT / "src" / "mapping_rbnx" / "atlas_bridge.py").read_text()
+        bridge = (ROOT / "src" / "mapping_rbnx" / "src_bridge.py").read_text()
         engine = (ROOT / "scripts" / "start_engine.sh").read_text()
         self.assertIn('"navigation_odom_bridge"', bridge)
         self.assertIn('navigation_odom_bridge:="$NAV_ODOM_BRIDGE"', engine)

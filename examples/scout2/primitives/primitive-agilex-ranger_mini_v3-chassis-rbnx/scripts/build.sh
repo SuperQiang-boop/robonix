@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: Apache-2.0
 # Build phase: colcon-build the vendored ranger_ros2 + ugv_sdk, then
-# rbnx codegen so atlas_bridge can import atlas_pb2 + lifecycle_pb2.
+# rbnx codegen so src_bridge can import src_pb2 + lifecycle_pb2.
 set -euo pipefail
 PKG="${RBNX_PACKAGE_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
 cd "$PKG"

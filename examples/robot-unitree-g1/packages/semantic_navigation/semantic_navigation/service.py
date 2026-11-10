@@ -36,8 +36,8 @@ from semantic_navigation_mcp import (
     NavigateLandmark_Request,
     NavigateLandmark_Response,
 )
-from robonix_api import ATLAS, Err, Ok, Skill
-from robonix_api.atlas_types import LifecycleState, Transport
+from robonix_api import SRC, Err, Ok, Skill
+from robonix_api.src_types import LifecycleState, Transport
 
 from .cancel_policy import cancel_until_terminal
 from .core import Landmark, LandmarkError, LandmarkStore
@@ -121,7 +121,7 @@ def _resolve_config_path(value: object) -> Path:
 
 
 def _navigation_stub(contract_id: str, stub_name: str):
-    caps = ATLAS.find_capability(
+    caps = SRC.find_capability(
         contract_id=contract_id,
         transport=Transport.GRPC,
         provider_id=_navigation_provider_id,
@@ -130,7 +130,7 @@ def _navigation_stub(contract_id: str, stub_name: str):
         raise RuntimeError(
             f"expected one {_navigation_provider_id!r} provider for {contract_id}, found {len(caps)}"
         )
-    connection = ATLAS.connect_capability(
+    connection = SRC.connect_capability(
         consumer_id=skill.id,
         provider_id=caps[0].provider_id,
         contract_id=contract_id,
@@ -204,7 +204,7 @@ def _resolve_run_id(run_id: str) -> str:
 
 
 def _mapping_lifecycle_capability():
-    providers = ATLAS.query_services(
+    providers = SRC.query_services(
         id=_mapping_provider_id,
         contract_id=MAP_LIFECYCLE_CONTRACT_ID,
         transport=Transport.ROS2,
@@ -234,7 +234,7 @@ def _mapping_lifecycle_capability():
 
 def _assert_mapping_provider_live(expected_topic: str) -> None:
     provider, _capability = _mapping_lifecycle_capability()
-    channel = ATLAS.connect_capability(
+    channel = SRC.connect_capability(
         consumer_id=skill.id,
         provider_id=provider.id,
         contract_id=MAP_LIFECYCLE_CONTRACT_ID,
@@ -615,9 +615,9 @@ def activate():
     try:
         _start_status_notifier()
         _start_navigation_monitors()
-        validate_contract_descriptor(ATLAS.query_contract(MAP_LIFECYCLE_CONTRACT_ID))
+        validate_contract_descriptor(SRC.query_contract(MAP_LIFECYCLE_CONTRACT_ID))
         _provider, capability = _mapping_lifecycle_capability()
-        channel = ATLAS.connect_capability(
+        channel = SRC.connect_capability(
             consumer_id=skill.id,
             provider_id=capability.provider_id,
             contract_id=MAP_LIFECYCLE_CONTRACT_ID,
@@ -626,7 +626,7 @@ def activate():
         topic = (channel.endpoint or "").strip()
         if not topic:
             channel.close()
-            raise LifecycleBindingError("Atlas returned an empty map lifecycle topic")
+            raise LifecycleBindingError("Src returned an empty map lifecycle topic")
         guard = LifecycleGuard(
             store.map_id,
             store.map_generation,

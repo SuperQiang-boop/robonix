@@ -48,7 +48,7 @@ resolve_advertise_host() {
 ADVERTISE_HOST="$(resolve_advertise_host)"
 
 exec docker exec \
-  -e ROBONIX_ATLAS="${ROBONIX_SIM_ATLAS:-${ROBONIX_ATLAS:-127.0.0.1:50051}}" \
+  -e ROBONIX_SRC="${ROBONIX_SIM_SRC:-${ROBONIX_SRC:-127.0.0.1:50051}}" \
   -e ROBONIX_ADVERTISE_HOST="$ADVERTISE_HOST" \
   -e ROBONIX_PKG_HOST_DIR="$(cd "$(dirname "$0")/.." && pwd)" \
   -e TIAGO_SCAN_TOPIC="$OUT_TOPIC" \

@@ -8,9 +8,9 @@ Provider kind: service; id: `camera_rtsp`; namespace: `robonix/service/camera_rt
 | `robonix/service/camera_rtsp/get_stream` | gRPC | Empty request; available, url, camera_provider_id, error |
 
 The ROS 2 input is the existing `robonix/primitive/camera/rgb` topic_out contract
-(sensor_msgs/Image), selected by configured provider id using Atlas. The Atlas
+(sensor_msgs/Image), selected by configured provider id using Src. The Src
 channel is closed on deactivation and rediscovered on activation. RTSP is an
-external media endpoint returned by GetStream, not an Atlas transport.
+external media endpoint returned by GetStream, not an Src transport.
 
 INIT validates configuration and discovery. ACTIVATE owns ROS context/node/thread,
 MediaMTX (unless external), FFmpeg and a temporary server configuration. Success

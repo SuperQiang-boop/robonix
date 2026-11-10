@@ -20,7 +20,7 @@ def save_objects(map_id: str, generation: int) -> dict:
     retries both saves. Scene checks the live map and generation before
     committing its snapshot.
     """
-    url = os.environ.get("SCENE_WEB_URL", "http://127.0.0.1:50107").rstrip("/")
+    url = os.environ.get("WORLD_WEB_URL", "http://127.0.0.1:50107").rstrip("/")
     try:
         request = urllib.request.Request(
             f"{url}/api/maps/save",

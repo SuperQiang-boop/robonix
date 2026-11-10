@@ -13,8 +13,8 @@ from g1_arm_actions_mcp import (
     RunG1ArmAction_Request,
     RunG1ArmAction_Response,
 )
-from robonix_api import ATLAS, Err, Ok, Skill
-from robonix_api.atlas_types import Transport
+from robonix_api import SRC, Err, Ok, Skill
+from robonix_api.src_types import Transport
 
 
 ALLOWED_ACTIONS = {
@@ -72,9 +72,9 @@ def _response(action: str, accepted: bool, detail: str) -> RunG1ArmAction_Respon
 
 
 def _call_arm_primitive(action: str) -> RunG1ArmAction_Response:
-    """Resolve the arm primitive through Atlas and call its gRPC action RPC."""
+    """Resolve the arm primitive through Src and call its gRPC action RPC."""
     try:
-        caps = ATLAS.find_capability(
+        caps = SRC.find_capability(
             provider_id=_arm_provider_id,
             contract_id=ARM_ACTION_CONTRACT,
             transport=Transport.GRPC,

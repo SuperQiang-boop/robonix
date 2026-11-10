@@ -107,7 +107,7 @@ def run(profile, output, *, seconds=10.0, lidar_topic='/velodyne_points', odom_t
 
     Use the real production collector for the final stationary-input check.
     Write a report even if no sensors arrive or timing is still unknown.
-    No Atlas, pose-estimate RPC, map load or robot command is issued.
+    No Src, pose-estimate RPC, map load or robot command is issued.
     """
     import rclpy
     from rclpy.context import Context

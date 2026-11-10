@@ -205,8 +205,8 @@ class PersistenceTest(unittest.TestCase):
                 map_ops.persistent_runtime_db(value)
 
     def test_startup_uses_same_named_path_and_does_not_delete_on_resume(self):
-        """Run the bridge's exact resolver without starting Atlas/MCP servers."""
-        source = Path(__file__).parent / "src/mapping_rbnx/atlas_bridge.py"
+        """Run the bridge's exact resolver without starting Src/MCP servers."""
+        source = Path(__file__).parent / "src/mapping_rbnx/src_bridge.py"
         tree = ast.parse(source.read_text())
         names = {"_resolve_persistence", "_sanitize_map_id", "_truthy", "_find_latest_map"}
         funcs = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in names]
@@ -223,7 +223,7 @@ class PersistenceTest(unittest.TestCase):
 
     def test_auto_mode_localizes_latest_saved_map_and_uses_id_only_when_empty(self):
         """Auto mode picks the newest saved map; configured ID names first map."""
-        source = Path(__file__).parent / "src/mapping_rbnx/atlas_bridge.py"
+        source = Path(__file__).parent / "src/mapping_rbnx/src_bridge.py"
         tree = ast.parse(source.read_text())
         names = {"_resolve_persistence", "_sanitize_map_id", "_truthy", "_find_latest_map"}
         funcs = [node for node in tree.body if isinstance(node, ast.FunctionDef)
@@ -279,7 +279,7 @@ class PersistenceTest(unittest.TestCase):
 
     def test_localization_without_map_id_selects_latest_and_fails_when_empty(self):
         """Localization follows the newest saved map and never falls back to mapping."""
-        source = Path(__file__).parent / "src/mapping_rbnx/atlas_bridge.py"
+        source = Path(__file__).parent / "src/mapping_rbnx/src_bridge.py"
         tree = ast.parse(source.read_text())
         names = {"_resolve_persistence", "_sanitize_map_id", "_truthy", "_find_latest_map"}
         funcs = [node for node in tree.body if isinstance(node, ast.FunctionDef)
@@ -303,7 +303,7 @@ class PersistenceTest(unittest.TestCase):
 
     def test_latest_saved_map_ties_use_map_id_order(self):
         """Mapping's no-ID selection is stable when map directory times tie."""
-        source = Path(__file__).parent / "src/mapping_rbnx/atlas_bridge.py"
+        source = Path(__file__).parent / "src/mapping_rbnx/src_bridge.py"
         tree = ast.parse(source.read_text())
         finder = next(node for node in tree.body if isinstance(node, ast.FunctionDef)
                       and node.name == "_find_latest_map")
@@ -327,7 +327,7 @@ class PersistenceTest(unittest.TestCase):
         self.assertTrue(relocalization["config"]["auto_relocalize"])
         self.assertNotIn("map_id", relocalization["config"])
         self.assertNotIn("map_id", manifest["system"]["scene"])
-        self.assertNotIn("SCENE_MAP_ID", manifest.get("env", {}))
+        self.assertNotIn("WORLD_MAP_ID", manifest.get("env", {}))
 
     def test_loaded_localization_copy_becomes_persistent_before_mapping(self):
         """Mode switching must not strand new nodes in an ephemeral DB."""
@@ -357,8 +357,8 @@ class PersistenceTest(unittest.TestCase):
         self.assertEqual(read_db(next_copy), 1)
 
     def test_shutdown_is_idempotent_and_does_not_publish_localization_copy(self):
-        """Exercise the actual hook without importing Atlas or generated IDLs."""
-        source = Path(__file__).parent / "src/mapping_rbnx/atlas_bridge.py"
+        """Exercise the actual hook without importing Src or generated IDLs."""
+        source = Path(__file__).parent / "src/mapping_rbnx/src_bridge.py"
         tree = ast.parse(source.read_text())
         hook = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "shutdown")
         hook.decorator_list = []
@@ -383,7 +383,7 @@ class PersistenceTest(unittest.TestCase):
 
     def test_periodic_save_uses_current_map_not_startup_identity(self):
         """A runtime map change must redirect subsequent periodic saves."""
-        source = Path(__file__).parent / "src/mapping_rbnx/atlas_bridge.py"
+        source = Path(__file__).parent / "src/mapping_rbnx/src_bridge.py"
         tree = ast.parse(source.read_text())
         hook = next(n for n in tree.body if isinstance(n, ast.FunctionDef)
                     and n.name == "_start_checkpoint_loop")
@@ -406,7 +406,7 @@ class PersistenceTest(unittest.TestCase):
 
     def test_failed_spatial_checkpoint_never_saves_objects(self):
         """Do not publish new semantics alongside an old spatial checkpoint."""
-        source = Path(__file__).parent / "src/mapping_rbnx/atlas_bridge.py"
+        source = Path(__file__).parent / "src/mapping_rbnx/src_bridge.py"
         hook = next(n for n in ast.parse(source.read_text()).body
                     if isinstance(n, ast.FunctionDef) and n.name == "_start_checkpoint_loop")
         stop = threading.Event()

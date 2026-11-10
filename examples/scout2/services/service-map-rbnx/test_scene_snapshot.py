@@ -16,7 +16,7 @@ class SceneSnapshotTest(unittest.TestCase):
         """The notification saves Scene objects without issuing another spatial save."""
         response = {"ok": True, "map_id": "custom", "objects": 2,
                     "snapshot_partition": "custom__s1"}
-        with (patch.dict("os.environ", {"SCENE_WEB_URL": "http://scene.test:50107/"}),
+        with (patch.dict("os.environ", {"WORLD_WEB_URL": "http://scene.test:50107/"}),
               patch.object(scene_snapshot.urllib.request, "urlopen",
                            return_value=io.BytesIO(json.dumps(response).encode())) as send):
             self.assertEqual(scene_snapshot.save_objects("custom", 7), response)

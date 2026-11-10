@@ -39,7 +39,7 @@ audio_driver/
 │   └── start.sh                # Managed-venv runtime entry
 ├── audio_driver/
 │   ├── __init__.py             # Package entry point
-│   ├── node.py                 # Main entry: Atlas registration + daemon threads + main()
+│   ├── node.py                 # Main entry: Src registration + daemon threads + main()
 │   ├── alsa_utils.py           # ALSA device scanning + driver registry
 │   ├── mic_driver.py           # Microphone capture (arecord subprocess)
 │   └── speaker_driver.py       # Speaker playback (aplay subprocess)
@@ -87,9 +87,9 @@ rbnx run com.robonix.example.audio_driver
 | `AUDIO_SPEAKER_CHANNELS` | `1` | Playback channel count |
 | `AUDIO_SPEAKER_BITS` | `16` | Playback bit depth |
 | `AUDIO_SPEAKER_PORT` | `0` (auto-assign) | Speaker gRPC port |
-| `AUDIO_DRIVER_STANDALONE` | — | Set to `1` to skip Atlas registration |
-| `ROBONIX_ATLAS` | `localhost:50051` | Atlas control plane address |
-| `ROBONIX_NODE_ID` | `com.robonix.primitive.audio` | Atlas node ID |
+| `AUDIO_DRIVER_STANDALONE` | — | Set to `1` to skip Src registration |
+| `ROBONIX_SRC` | `localhost:50051` | Src control plane address |
+| `ROBONIX_NODE_ID` | `com.robonix.primitive.audio` | Src node ID |
 
 ## Automatic Device Discovery
 
@@ -157,7 +157,7 @@ Startup sequence (following the tiago_bridge pattern):
 2. find_default_mic/speaker()    → Select devices
 3. MicDriver / SpeakerDriver()   → Create driver instances
 4. auto-pick ports               → Auto-assign gRPC ports
-5. RegisterPrimitive                  → Atlas registration
+5. RegisterPrimitive                  → Src registration
 6. DeclareCapability × 2          → Declare mic + speaker capabilities
 7. daemon threads                → Start heartbeat + 2 gRPC servers
 8. main thread sleep             → Block and wait
@@ -181,9 +181,9 @@ Keep the managed build contract unchanged: prepare the package venv before
 `rbnx codegen`, select its interpreter through both `PATH` and
 `RBNX_CODEGEN_PYTHON`, and import-test generated modules before runtime.
 
-## Atlas Integration
+## Src Integration
 
 - **RegisterPrimitive**: `audio_driver`, namespace `robonix/primitive/audio`
 - **DeclareCapability**: mic (server-stream) + speaker (client-stream)
 - **Heartbeat**: Sends NodeHeartbeat every 15 seconds
-- **Degradation**: Automatically runs standalone when Atlas is unavailable
+- **Degradation**: Automatically runs standalone when Src is unavailable

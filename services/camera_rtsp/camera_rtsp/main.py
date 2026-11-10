@@ -1,9 +1,9 @@
-"""Atlas registration and Driver lifecycle for the camera RTSP service."""
+"""Src registration and Driver lifecycle for the camera RTSP service."""
 import logging
 import threading
 
-from robonix_api import ATLAS, Err, Ok, Service
-from robonix_api.atlas_types import Transport
+from robonix_api import SRC, Err, Ok, Service
+from robonix_api.src_types import Transport
 import camera_rtsp_pb2 as camera_pb
 
 from .runtime import Pipeline, Settings
@@ -17,7 +17,7 @@ _lock = threading.RLock()
 
 
 def discover(settings):
-    return ATLAS.find_unique_capability(contract_id=RGB, transport=Transport.ROS2,
+    return SRC.find_unique_capability(contract_id=RGB, transport=Transport.ROS2,
                                         provider_id=settings.camera_provider_id)
 
 

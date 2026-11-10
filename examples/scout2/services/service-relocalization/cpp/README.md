@@ -24,7 +24,7 @@ ICP。精配准固定调用方给定的高度、roll、pitch，只优化 x/y/yaw
 Eigen3、Python 开发头、NumPy、pybind11；RTAB-Map 导出器另需 0.23.7。
 标准 `../scripts/build.sh` 已使用服务虚拟环境 Python 调用原生构建，
 CTest 同时检查真实模块加载和取消接口；`../scripts/start.sh` 在注册
-Atlas 前检查扩展来自本包构建目录并可加载。此检查不启用生产重定位。
+Src 前检查扩展来自本包构建目录并可加载。此检查不启用生产重定位。
 `relocalization_rbnx.search.load_search_index` 和
 `load_planar_registration` 从同一份摘要校验的索引加载栅格及点云。
 内部 `computation.compute_candidate` 已串联 ROS 采集和本扩展，匹配后复查

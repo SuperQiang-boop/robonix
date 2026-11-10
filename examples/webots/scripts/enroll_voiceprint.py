@@ -3,7 +3,7 @@
 """Enroll a voiceprint through the same audio path used by the demo.
 
 The script discovers the active audio mic primitive and voiceprint enroll
-service through Atlas, records 16 kHz mono PCM from the mic, then calls
+service through Src, records 16 kHz mono PCM from the mic, then calls
 robonix/service/voiceprint/enroll. It is intentionally small demo tooling:
 no new public contract, no bespoke audio path.
 """
@@ -29,16 +29,16 @@ def _add_paths(repo: Path) -> None:
 
 
 def _connect_contract(contract_id: str, provider_id: str = ""):
-    from robonix_api import ATLAS
-    from robonix_api.atlas_types import Transport
+    from robonix_api import SRC
+    from robonix_api.src_types import Transport
 
-    providers = ATLAS.query(contract_id=contract_id, transport=Transport.GRPC)
+    providers = SRC.query(contract_id=contract_id, transport=Transport.GRPC)
     if provider_id:
         providers = [p for p in providers if p.id == provider_id or p.namespace == provider_id]
     if not providers:
         raise RuntimeError(f"no provider for {contract_id!r}")
     provider = providers[0]
-    channel = ATLAS.connect_capability(
+    channel = SRC.connect_capability(
         consumer_id="voiceprint-enroll-demo",
         provider_id=provider.id,
         contract_id=contract_id,

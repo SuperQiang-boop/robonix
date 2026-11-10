@@ -1,11 +1,11 @@
-"""Atlas registration, lifecycle and RPCs for the relocalization service."""
+"""Src registration, lifecycle and RPCs for the relocalization service."""
 from __future__ import annotations
 
 import logging
 import threading
 
-from robonix_api import ATLAS, Err, Ok, Service
-from robonix_api.atlas_types import Transport
+from robonix_api import SRC, Err, Ok, Service
+from robonix_api.src_types import Transport
 
 from .runtime import Runtime
 from .settings import Settings
@@ -28,7 +28,7 @@ _backend = None
 
 
 def dependencies(settings):
-    """Bind each required capability to its configured provider via Atlas."""
+    """Bind each required capability to its configured provider via Src."""
     return (
         (settings.lidar_provider_id, "robonix/primitive/lidar/lidar3d", Transport.ROS2),
         (settings.odom_provider_id, "robonix/primitive/chassis/odom", Transport.ROS2),
@@ -54,7 +54,7 @@ def init(config):
 
 @service.on_activate
 def activate():
-    """Connect Atlas endpoints and assemble real matching, handoff and monitoring."""
+    """Connect Src endpoints and assemble real matching, handoff and monitoring."""
     global _publisher, _status_topic, _backend
     with _lock:
         if _settings is None:
@@ -63,11 +63,11 @@ def activate():
             return Err("deactivate before activating again")
         try:
             for provider_id, contract_id, transport in dependencies(_settings):
-                capability = ATLAS.find_unique_capability(contract_id=contract_id,
+                capability = SRC.find_unique_capability(contract_id=contract_id,
                     transport=transport, provider_id=provider_id)
                 _channels.append(service.connect_capability(capability, contract_id, transport))
             _publisher = StatusPublisher(_runtime, _settings, service.id)
-            # Atlas declarations last for the provider registration, including
+            # Src declarations last for the provider registration, including
             # inactive periods. Reuse the authoritative topic on reactivation.
             if _status_topic is None:
                 _status_topic = service.declare_ros2_topic(

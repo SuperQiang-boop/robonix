@@ -11,7 +11,7 @@ from .observations import (ObservationUnavailable, check_stationary, prepare_pai
 
 
 class ObservationCollector:
-    """Collect independent scans from explicit Atlas-resolved ROS endpoints.
+    """Collect independent scans from explicit Src-resolved ROS endpoints.
 
     The caller spins the node on another thread. Construction starts only
     subscriptions, never motion or matching. Each collector serves one capture

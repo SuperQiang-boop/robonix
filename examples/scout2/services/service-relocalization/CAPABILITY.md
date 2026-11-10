@@ -15,7 +15,7 @@ provider_id 默认 `relocalization`，namespace 为 `robonix/service/relocalizat
 | cancel | gRPC | 取消指定任务或撤销其已验证结果；最近取消可重复调用 |
 | status | ROS 2 topic_out | 按配置周期发布实时状态；消费者必须使过期样本失效 |
 
-服务通过 Atlas 从配置的 provider 连接 lidar3d、底盘 odom、mapping 的
+服务通过 Src 从配置的 provider 连接 lidar3d、底盘 odom、mapping 的
 pose / pose_estimate / lifecycle。实际地图副本通过同主机私有协调目录绑定，
 不将保存目录最新文件当作已加载数据库。
 

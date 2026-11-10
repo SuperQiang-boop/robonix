@@ -39,7 +39,7 @@ log = logging.getLogger("mapping_rbnx.webui")
 MAPS_DIR = os.environ.get("MAPPING_MAPS_DIR", "/mapping/maps")
 MAP_TOPIC = os.environ.get("MAPPING_MAP_TOPIC", "/map")
 POSE_TOPIC = os.environ.get("MAPPING_POSE_TOPIC", "/robonix/map/pose")
-SCENE_WEB_URL = os.environ.get("SCENE_WEB_URL", "http://127.0.0.1:50107").rstrip("/")
+WORLD_WEB_URL = os.environ.get("WORLD_WEB_URL", "http://127.0.0.1:50107").rstrip("/")
 
 # Latest map / pose, filled by ROS subscriptions on the webui's own node.
 _latest = {"grid": None, "pose": None}
@@ -64,7 +64,7 @@ _mode = os.environ.get("MAPPING_STARTUP_MODE", "mapping")
 
 
 def set_mode_hint(mode: str) -> None:
-    """Record the current SLAM mode for the UI (called by atlas_bridge at init
+    """Record the current SLAM mode for the UI (called by src_bridge at init
     with the config's startup map_mode, and by the switch/load handlers)."""
     global _mode
     if mode:
@@ -84,9 +84,9 @@ def _delete_scene_map(map_id: str) -> dict:
 
     Mapping owns the spatial map, while Scene owns persisted objects and
     annotations. This best-effort call keeps the 8091 delete response useful
-    when Scene is stopped, and reports the failed cleanup to the operator.
+    when World is stopped, and reports the failed cleanup to the operator.
     """
-    url = f"{SCENE_WEB_URL}/api/maps/delete"
+    url = f"{WORLD_WEB_URL}/api/maps/delete"
     payload = json.dumps({"map_id": map_id}).encode("utf-8")
     request = urllib.request.Request(
         url,
@@ -545,7 +545,7 @@ class _Handler(BaseHTTPRequestHandler):
             return self._json({"ok": False, "detail": str(e)}, code=500)
 
 
-# Set by atlas_bridge so save_map can checkpoint the live (possibly ephemeral)
+# Set by src_bridge so save_map can checkpoint the live (possibly ephemeral)
 # session's db; webui itself has no session state.
 _active_db_fn = None
 

@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MulanPSL-2.0
 # mapping_rbnx — RTAB-Map SLAM service image.
 #
-# Same packaging pattern as system/scene: own image so the package can
+# Same packaging pattern as system/world: own image so the package can
 # pick its RMW + SLAM toolchain without polluting the sim image.
 # --network host + --ipc=host at runtime so DDS/SHM line up with
 # whatever sim/robot container is publishing the sensor topics.
@@ -48,7 +48,7 @@ ENV PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple \
 
 # Runtime deps:
 #   rtabmap-ros: SLAM core + rtabmap_viz GUI for dev inspection
-#   tf2 / tf-transformations: pose lookups in atlas_bridge
+#   tf2 / tf-transformations: pose lookups in src_bridge
 #   pointcloud_to_laserscan: depth → 2D scan adapter (used by dlio
 #     fallback paths and any future depth-only deploys)
 RUN apt-get update \

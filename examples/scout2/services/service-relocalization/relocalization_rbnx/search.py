@@ -11,7 +11,7 @@ from .map_index import read_export, verify_index
 def load_search_index(directory: Path, identity: dict):
     """Check exact prepared identity, artifacts and bounds before native loading.
 
-    This is an internal offline entry point, not an Atlas capability. Callers
+    This is an internal offline entry point, not an Src capability. Callers
     must bind identity to the actual loaded mapping snapshot before using it
     for a robot task. The returned search owns its layers and releases the GIL
     while computing; its candidates still require registration and handoff.

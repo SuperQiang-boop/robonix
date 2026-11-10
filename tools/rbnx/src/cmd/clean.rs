@@ -150,7 +150,7 @@ fn clean_deploy(config: &Config, manifest_path: &Path, also_cache: bool) -> Resu
         }
     }
     // system: section — non-builtin entries are real packages under
-    // `<robonix_source>/system/<key>/` (memory/scene/speech/…).
+    // `<robonix_source>/system/<key>/` (memory/world/speech/…).
     if let Some(map) = root.get("system").and_then(|v| v.as_mapping())
         && let Some(source_root) = config.robonix_source_path.as_ref()
     {

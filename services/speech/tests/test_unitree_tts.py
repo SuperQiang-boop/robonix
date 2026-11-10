@@ -179,7 +179,7 @@ class UnitreeTTSTests(unittest.TestCase):
         native = SimpleNamespace(speak_native=Mock(return_value='SDK accepted'), synthesize=Mock())
         with patch.object(service._tts_servicer, 'tts_backend', native), \
              patch.object(service, '_default_speaker_provider_id', 'g1_audio'), \
-             patch.object(service.ATLAS, 'find_capability', return_value=[SimpleNamespace(provider_id='g1_audio')]), \
+             patch.object(service.SRC, 'find_capability', return_value=[SimpleNamespace(provider_id='g1_audio')]), \
              patch.object(service.speech, 'connect_capability') as connect, \
              patch.object(service, 'EdgeTTSBackend') as edge:
             response = service.speak(SimpleNamespace(text='您好', target=''))

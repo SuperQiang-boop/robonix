@@ -26,7 +26,7 @@ if [[ "$CLEAN" == "1" ]]; then
 fi
 mkdir -p rbnx-build/data
 
-# ── 1. Codegen (Atlas MCP bindings only) — every target ────────────────────
+# ── 1. Codegen (Src MCP bindings only) — every target ────────────────────
 if command -v rbnx >/dev/null 2>&1; then
     FLAGS=(--mcp)
     [[ "$CLEAN" == "1" ]] && FLAGS+=(--clean)

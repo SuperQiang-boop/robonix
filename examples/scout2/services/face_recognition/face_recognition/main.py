@@ -1,4 +1,4 @@
-"""Atlas/lifecycle bridge for the external VSIS face recognition executable."""
+"""Src/lifecycle bridge for the external VSIS face recognition executable."""
 from __future__ import annotations
 
 import asyncio
@@ -13,8 +13,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
-from robonix_api import ATLAS, Err, Ok, Service
-from robonix_api.atlas_types import Transport
+from robonix_api import SRC, Err, Ok, Service
+from robonix_api.src_types import Transport
 
 log = logging.getLogger("face_recognition")
 service = Service(id="face_recognition", namespace="robonix/service/face_recognition")
@@ -78,7 +78,7 @@ def _find_speech() -> Any:
     kwargs = {"contract_id": SPEAK, "transport": Transport.MCP}
     if _settings and _settings.speech_provider_id:
         kwargs["provider_id"] = _settings.speech_provider_id
-    return ATLAS.find_unique_capability(**kwargs)
+    return SRC.find_unique_capability(**kwargs)
 
 
 async def _call_speech(endpoint: str, text: str) -> dict[str, Any]:

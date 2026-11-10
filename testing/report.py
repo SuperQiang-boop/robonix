@@ -754,7 +754,7 @@ def _log_shortcuts(logs: list[dict]) -> str:
         ("rbnx boot", ("rbnx-boot.log",)),
         ("Scenario summary", ("summary.json",)),
         ("Scenario events", ("scenario.jsonl", "events.jsonl", "scenario-events.jsonl")),
-        ("Scene", ("scene.log",)),
+        ("World", ("world.log",)),
         ("Simulator", ("webots.log", "webots.stdout", "webots.stdout.log", "sim.log")),
     ]
     by_name: dict[str, dict] = {}
@@ -789,7 +789,7 @@ def _preferred_log_id(logs: list[dict]) -> str:
         "summary.json",
         "scenario.jsonl",
         "events.jsonl",
-        "scene.log",
+        "world.log",
     )
     for name in preferred:
         for entry in logs:

@@ -43,7 +43,7 @@
   节点 1、93、182 的保存扫描离线几何检查通过；这不能替代搬放后的实时定位验收。
 - 隔离生产入口 E2E：1/1 通过，覆盖无地图等待、自动定位、同图重载重新定位、
   auto_relocalize=false 后手动 map_id 请求及 request_id 关联、停用资源回收。
-  使用隔离 Atlas、合成地图/ROS 输入和原生匹配，不连接实车。
+  使用隔离 Src、合成地图/ROS 输入和原生匹配，不连接实车。
 - 在本部署目录完整执行 `rbnx build -f robonix_manifest.yaml --no-update-check`：15/15 成功。
   首次沙箱运行受 Docker socket、uv 缓存、Scene 目录权限限制；授权重跑后全部通过。
 - Python 语法、YAML、共享路径一致性、导航速度上限和 `git diff --check` 通过。

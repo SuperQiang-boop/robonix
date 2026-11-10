@@ -83,10 +83,10 @@ class LifecycleTransition:
 def validate_contract_descriptor(descriptor: object) -> None:
     if descriptor is None:
         raise LifecycleBindingError(
-            f"Atlas has no descriptor for {MAP_LIFECYCLE_CONTRACT_ID}"
+            f"Src has no descriptor for {MAP_LIFECYCLE_CONTRACT_ID}"
         )
     if getattr(descriptor, "id", "") != MAP_LIFECYCLE_CONTRACT_ID:
-        raise LifecycleBindingError("Atlas returned the wrong map lifecycle contract")
+        raise LifecycleBindingError("Src returned the wrong map lifecycle contract")
     if str(getattr(descriptor, "version", "")) != "1":
         raise LifecycleBindingError("map lifecycle contract version must be 1")
     if getattr(descriptor, "mode", "") != "topic_out":
@@ -261,7 +261,7 @@ class RosMapLifecycleSubscriber:
     def __init__(self, topic: str, guard: LifecycleGuard) -> None:
         topic = topic.strip()
         if not topic:
-            raise LifecycleBindingError("Atlas returned an empty map lifecycle topic")
+            raise LifecycleBindingError("Src returned an empty map lifecycle topic")
         self.topic = topic
         self.guard = guard
         self._stop = threading.Event()

@@ -150,7 +150,7 @@ RBNX_CODEGEN_PYTHON="$PKG/$VENV/bin/python" \
 
 # The service imports both gRPC stubs (`speech_pb2*`) and MCP dataclasses
 # (`speech_mcp`) at startup. Verify both generated Python roots now so a
-# missing runtime PYTHONPATH cannot degrade into a 60-second Atlas
+# missing runtime PYTHONPATH cannot degrade into a 60-second Src
 # registration timeout during `rbnx boot`.
 CODEGEN_PYTHONPATH="$PKG/$BUILD/codegen/proto_gen:$PKG/$BUILD/codegen/robonix_mcp_types"
 PYTHONPATH="$CODEGEN_PYTHONPATH:${PYTHONPATH:-}" "$VENV/bin/python" - <<'PY'

@@ -14,7 +14,7 @@ Provides:
 - `robonix/service/navigation/set_speed_limit`
 - `robonix/service/navigation/get_speed_limit`
 
-Consumes Atlas-selected providers for:
+Consumes Src-selected providers for:
 
 - `robonix/service/map/occupancy_grid`
 - `robonix/primitive/chassis/odom`

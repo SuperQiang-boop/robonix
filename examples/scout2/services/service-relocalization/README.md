@@ -1,7 +1,7 @@
 # service-relocalization
 
 Scout2 平面重定位服务：全图/全航向 BBS 搜索、平面 ICP、独立扫描验证，
-再通过 Atlas 调用 mapping 的 `pose_estimate` 并用新扫描复核。
+再通过 Src 调用 mapping 的 `pose_estimate` 并用新扫描复核。
 服务不主动移动小车；只有交接和持续验证通过才发布 `localization_valid=true`。
 
 ## 单配置启动
@@ -68,18 +68,18 @@ Docker 将协调目录挂载为可写、包目录只读。原子记录、flock �
 手动请求只需 `relocalize_by_map(map_id)`，保存 `request_id` 后轮询空请求 `get_status`；
 `busy=false` 且 `localization_valid=true` 才表示本次请求成功。
 完整接口、结果字段及示例见 [relocalization.md](relocalization.md) 和
-[CAPABILITY.md](CAPABILITY.md)。接口通过 Atlas 发现，禁止硬编码动态 gRPC 端口。
+[CAPABILITY.md](CAPABILITY.md)。接口通过 Src 发现，禁止硬编码动态 gRPC 端口。
 
 ```bash
 bash services/service-relocalization/scripts/smoke.sh
 bash services/service-relocalization/scripts/smoke.sh --production-e2e
 ```
 
-隔离联调用合成地图/ROS 输入、真实 Atlas、Driver、原生匹配和 RPC，
+隔离联调用合成地图/ROS 输入、真实 Src、Driver、原生匹配和 RPC，
 覆盖空图库等待、自动定位、同图重载、关闭自动后手动请求及资源清理，不连接实车。
 实车搬放定位、误定位拒绝和受控导航仍需实车验收。
 
 环境变量：`ROBONIX_SOURCE_PATH` 指定源码；`RELOCALIZATION_PYTHON` 选择构建解释器；
 `RELOCALIZATION_ROS_SETUP` 选择 ROS setup；`RBNX_INVOCATION_CWD` 指定部署目录。
-运行继承 `ROBONIX_ATLAS`、`ROS_DOMAIN_ID`、`RMW_IMPLEMENTATION` 和 Fast DDS 配置。
+运行继承 `ROBONIX_SRC`、`ROS_DOMAIN_ID`、`RMW_IMPLEMENTATION` 和 Fast DDS 配置。
 只读诊断可用 `relocalization_rbnx.calibration`、`probe`、`map_check` 的 `--help`。

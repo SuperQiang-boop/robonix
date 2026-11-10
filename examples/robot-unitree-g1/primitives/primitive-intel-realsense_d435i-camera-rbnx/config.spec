@@ -60,7 +60,7 @@ config:
   intrinsics_topic: /<camera_name>/color/camera_info
 
   # string, default: /camera/extrinsics.
-  # Latched Atlas extrinsics topic. The provider fills it from the TF transform
+  # Latched Src extrinsics topic. The provider fills it from the TF transform
   # below after the camera and robot TF publishers are available.
   extrinsics_topic: /camera/extrinsics
 

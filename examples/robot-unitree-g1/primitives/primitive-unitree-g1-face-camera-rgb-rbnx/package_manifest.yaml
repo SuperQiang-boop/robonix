@@ -1,5 +1,5 @@
 # G1 face camera RGB bridge. The camera driver is owned by the robot stack;
-# this package only exposes its existing ROS 2 image topic through Atlas.
+# this package only exposes its existing ROS 2 image topic through Src.
 manifestVersion: 1
 
 package:

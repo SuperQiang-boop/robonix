@@ -12,7 +12,7 @@ def verify(directory: Path):
 
     Reject a missing build or an extension found elsewhere on PYTHONPATH. An
     actual import exposes incompatible ABI and missing shared libraries before
-    Atlas registration. This proves deployment availability only, not sensor
+    Src registration. This proves deployment availability only, not sensor
     readiness, map consistency or localization validity. Import errors propagate.
     """
     expected = Path(directory).resolve(strict=True)

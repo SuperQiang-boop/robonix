@@ -46,13 +46,13 @@ POSE_TOPIC = os.environ.get("MAPPING_POSE_TOPIC", "/robonix/map/pose")
 # frame, so the page can draw them straight onto the occupancy canvas and an
 # operator can see whether the live returns line up with the saved map.
 _latest = {"grid": None, "pose": None, "scan": None, "cloud": None}
-# Topics for the range sensors, resolved through Atlas by the bridge and
+# Topics for the range sensors, resolved through Src by the bridge and
 # injected with set_sensor_topics(). Empty means the deployment has no such
 # capability bound, and the page simply has nothing to draw.
 _sensor_topics = {"scan": "", "cloud": ""}
 
 
-# A deployment whose 2-D scan is not an Atlas capability can name it here (or
+# A deployment whose 2-D scan is not an Src capability can name it here (or
 # through the deployment config key webui_scan_topic). The Ranger is exactly
 # that case: its mid360 declares only robonix/primitive/lidar/lidar3d, and the
 # 2-D scan is derived downstream by the navigation service, which does not
@@ -72,7 +72,7 @@ _range_subscribed = {"scan": False, "cloud": False}
 def set_sensor_topics(scan: str = "", cloud: str = "") -> None:
     """Bind the range-sensor topics the page overlays on the map.
 
-    Called by atlas_bridge with whatever it resolved from Atlas for
+    Called by src_bridge with whatever it resolved from Src for
     robonix/primitive/lidar/lidar (2-D scan) and .../lidar3d (point cloud), so
     the UI follows the deployment's capability bindings instead of hardcoding
     topic names. Must be called before the first request creates the
@@ -370,7 +370,7 @@ def _log_overlay_state(out: dict) -> None:
 
 
 def _subscribe_range_sensors(node) -> None:
-    """Subscribe to the range topics Atlas resolved, if any.
+    """Subscribe to the range topics Src resolved, if any.
 
     Sensor data is best-effort published, so both use a SENSOR_DATA profile;
     subscribing RELIABLE to a BEST_EFFORT publisher silently receives nothing.

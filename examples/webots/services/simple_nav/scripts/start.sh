@@ -7,7 +7,7 @@ set -euo pipefail
 SIM_CT="${ROBONIX_SIM_CONTAINER:-robonix_tiago_sim}"
 
 exec docker exec \
-    -e ROBONIX_ATLAS="${ROBONIX_ATLAS:-127.0.0.1:50051}" \
+    -e ROBONIX_SRC="${ROBONIX_SRC:-127.0.0.1:50051}" \
     -e ROBONIX_PKG_HOST_DIR="$(pwd)" \
     -e RMW_IMPLEMENTATION="${RMW_IMPLEMENTATION:-rmw_zenoh_cpp}" \
     "$SIM_CT" bash -lc '
@@ -17,5 +17,5 @@ exec docker exec \
         [ -f "$OVL" ] && source "$OVL" || true
         cd /robonix_pkgs/services/simple_nav
         export PYTHONPATH="$(pwd):/robonix_pkgs/pylib/robonix-api:${PYTHONPATH:-}"
-        exec python3 -m simple_nav.atlas_bridge
+        exec python3 -m simple_nav.src_bridge
     '
