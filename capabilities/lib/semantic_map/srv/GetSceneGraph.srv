@@ -1,4 +1,4 @@
-# robonix/system/scene/get_scene_graph — return the current scene graph
+# robonix/system/world/get_scene_graph — return the current scene graph
 # snapshot with all stable nodes and their inferred relations.
 ---
 SceneGraphNode[] nodes

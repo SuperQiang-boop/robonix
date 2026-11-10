@@ -1,4 +1,4 @@
-# robonix/system/scene/list_objects — return every object the scene
+# robonix/system/world/list_objects — return every object the world
 # registry currently believes exists. Room entries remain for v1
 # compatibility; new callers should use ListRegions for full room geometry.
 ---

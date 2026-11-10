@@ -1,0 +1,172 @@
+# Scene -> World migration file inventory
+# Paths are repository-relative; other pre-existing renames may share callers.
+# move	old	new / update	path / add	path
+
+move	capabilities/system/scene/get_object_context.v1.toml	capabilities/system/world/get_object_context.v1.toml
+move	capabilities/system/scene/get_robot_context.v1.toml	capabilities/system/world/get_robot_context.v1.toml
+move	capabilities/system/scene/get_scene_graph.v1.toml	capabilities/system/world/get_scene_graph.v1.toml
+move	capabilities/system/scene/goal_near.v1.toml	capabilities/system/world/goal_near.v1.toml
+move	capabilities/system/scene/goal_room.v1.toml	capabilities/system/world/goal_room.v1.toml
+move	capabilities/system/scene/list_objects.v1.toml	capabilities/system/world/list_objects.v1.toml
+move	capabilities/system/scene/list_regions.v1.toml	capabilities/system/world/list_regions.v1.toml
+move	capabilities/system/scene/list_relations.v1.toml	capabilities/system/world/list_relations.v1.toml
+move	system/scene/.gitignore	system/world/.gitignore
+move	system/scene/README.md	system/world/README.md
+move	system/scene/docker/Dockerfile	system/world/docker/Dockerfile
+move	system/scene/docker/Dockerfile.jetson	system/world/docker/Dockerfile.jetson
+move	system/scene/docker/_weights/.gitignore	system/world/docker/_weights/.gitignore
+move	system/scene/docker/entrypoint.sh	system/world/docker/entrypoint.sh
+move	system/scene/docker/no_shm_profile.xml	system/world/docker/no_shm_profile.xml
+move	system/scene/docker/requirements.txt	system/world/docker/requirements.txt
+move	system/scene/docker/requirements/scene-base.txt	system/world/docker/requirements/world-base.txt
+move	system/scene/docker/requirements/scene-perception-core.txt	system/world/docker/requirements/world-perception-core.txt
+move	system/scene/docker/requirements/scene-perception-heavy.txt	system/world/docker/requirements/world-perception-heavy.txt
+move	system/scene/docker/requirements/scene-pytorch3d.txt	system/world/docker/requirements/world-pytorch3d.txt
+move	system/scene/package_manifest.jetson-docker.yaml	system/world/package_manifest.jetson-docker.yaml
+move	system/scene/package_manifest.jetson-native.yaml	system/world/package_manifest.jetson-native.yaml
+move	system/scene/package_manifest.yaml	system/world/package_manifest.yaml
+move	system/scene/pyproject.toml	system/world/pyproject.toml
+move	system/scene/scene_service/__init__.py	system/world/world_service/__init__.py
+move	system/scene/scene_service/annotations.py	system/world/world_service/annotations.py
+move	system/scene/scene_service/geometry.py	system/world/world_service/geometry.py
+move	system/scene/scene_service/goal_planner.py	system/world/world_service/goal_planner.py
+move	system/scene/scene_service/ingest/__init__.py	system/world/world_service/ingest/__init__.py
+move	system/scene/scene_service/ingest/capabilities.py	system/world/world_service/ingest/capabilities.py
+move	system/scene/scene_service/ingest/perception_concept_graphs.py	system/world/world_service/ingest/perception_concept_graphs.py
+move	system/scene/scene_service/ingest/perception_concept_graphs.py.bak260818	system/world/world_service/ingest/perception_concept_graphs.py.bak260818
+move	system/scene/scene_service/ingest/perception_vlm.py	system/world/world_service/ingest/perception_vlm.py
+move	system/scene/scene_service/ingest/ros_subscribers.py	system/world/world_service/ingest/ros_subscribers.py
+move	system/scene/scene_service/map_binding.py	system/world/world_service/map_binding.py
+move	system/scene/scene_service/map_meta.py	system/world/world_service/map_meta.py
+move	system/scene/scene_service/mcp_tools.py	system/world/world_service/mcp_tools.py
+move	system/scene/scene_service/mcp_tools.py.bak260819	system/world/world_service/mcp_tools.py.bak260819
+move	system/scene/scene_service/object_watchdog.py	system/world/world_service/object_watchdog.py
+move	system/scene/scene_service/persistence.py	system/world/world_service/persistence.py
+move	system/scene/scene_service/robot_geometry.py	system/world/world_service/robot_geometry.py
+move	system/scene/scene_service/scene_graph/__init__.py	system/world/world_service/scene_graph/__init__.py
+move	system/scene/scene_service/scene_graph/builder.py	system/world/world_service/scene_graph/builder.py
+move	system/scene/scene_service/scene_graph/captioner.py	system/world/world_service/scene_graph/captioner.py
+move	system/scene/scene_service/scene_graph/geometric_loop.py	system/world/world_service/scene_graph/geometric_loop.py
+move	system/scene/scene_service/scene_graph/geometry.py	system/world/world_service/scene_graph/geometry.py
+move	system/scene/scene_service/scene_graph/image_relations.py	system/world/world_service/scene_graph/image_relations.py
+move	system/scene/scene_service/scene_graph/llm_client.py	system/world/world_service/scene_graph/llm_client.py
+move	system/scene/scene_service/scene_graph/prompts.py	system/world/world_service/scene_graph/prompts.py
+move	system/scene/scene_service/scene_graph/relations.py	system/world/world_service/scene_graph/relations.py
+move	system/scene/scene_service/scene_graph/store.py	system/world/world_service/scene_graph/store.py
+move	system/scene/scene_service/scene_graph/types.py	system/world/world_service/scene_graph/types.py
+move	system/scene/scene_service/service.py	system/world/world_service/service.py
+move	system/scene/scene_service/state/__init__.py	system/world/world_service/state/__init__.py
+move	system/scene/scene_service/state/data_assoc.py	system/world/world_service/state/data_assoc.py
+move	system/scene/scene_service/state/object_registry.py	system/world/world_service/state/object_registry.py
+move	system/scene/scene_service/web.py	system/world/world_service/web.py
+move	system/scene/scene_service/web.py.bak260818	system/world/world_service/web.py.bak260818
+move	system/scene/scene_service/web_binding.py	system/world/world_service/web_binding.py
+move	system/scene/scripts/build.sh	system/world/scripts/build.sh
+move	system/scene/scripts/start.sh	system/world/scripts/start.sh
+move	system/scene/scripts/start_native.sh	system/world/scripts/start_native.sh
+move	system/scene/tests/test_annotations.py	system/world/tests/test_annotations.py
+move	system/scene/tests/test_auto_map_save.py	system/world/tests/test_auto_map_save.py
+move	system/scene/tests/test_build_offline_contract.py	system/world/tests/test_build_offline_contract.py
+move	system/scene/tests/test_camera_selection.py	system/world/tests/test_camera_selection.py
+move	system/scene/tests/test_capabilities.py	system/world/tests/test_capabilities.py
+move	system/scene/tests/test_data_assoc_frames.py	system/world/tests/test_data_assoc_frames.py
+move	system/scene/tests/test_geometry.py	system/world/tests/test_geometry.py
+move	system/scene/tests/test_goal_hints.py	system/world/tests/test_goal_hints.py
+move	system/scene/tests/test_goal_planner.py	system/world/tests/test_goal_planner.py
+move	system/scene/tests/test_goal_room_planner.py	system/world/tests/test_goal_room_planner.py
+move	system/scene/tests/test_identity.py	system/world/tests/test_identity.py
+move	system/scene/tests/test_image_relations.py	system/world/tests/test_image_relations.py
+move	system/scene/tests/test_lifecycle_flush.py	system/world/tests/test_lifecycle_flush.py
+move	system/scene/tests/test_map_binding.py	system/world/tests/test_map_binding.py
+move	system/scene/tests/test_map_epoch.py	system/world/tests/test_map_epoch.py
+move	system/scene/tests/test_map_meta.py	system/world/tests/test_map_meta.py
+move	system/scene/tests/test_map_operation_ui.py	system/world/tests/test_map_operation_ui.py
+move	system/scene/tests/test_perception_config.py	system/world/tests/test_perception_config.py
+move	system/scene/tests/test_perception_visibility.py	system/world/tests/test_perception_visibility.py
+move	system/scene/tests/test_perception_vlm_geometry.py	system/world/tests/test_perception_vlm_geometry.py
+move	system/scene/tests/test_persistence.py	system/world/tests/test_persistence.py
+move	system/scene/tests/test_regions.py	system/world/tests/test_regions.py
+move	system/scene/tests/test_robot_context.py	system/world/tests/test_robot_context.py
+move	system/scene/tests/test_robot_geometry.py	system/world/tests/test_robot_geometry.py
+move	system/scene/tests/test_ros_contract_qos.py	system/world/tests/test_ros_contract_qos.py
+move	system/scene/tests/test_runtime_protobuf_contract.py	system/world/tests/test_runtime_protobuf_contract.py
+move	system/scene/tests/test_scene_graph.py	system/world/tests/test_scene_graph.py
+move	system/scene/tests/test_spatial_contract_frames.py	system/world/tests/test_spatial_contract_frames.py
+move	system/scene/tests/test_web_binding.py	system/world/tests/test_web_binding.py
+move	system/scene/tests/test_web_live_views.py	system/world/tests/test_web_live_views.py
+update	.github/CODEOWNERS
+update	.github/ISSUE_TEMPLATE/bug_report.md
+update	.github/ISSUE_TEMPLATE/feature_request.md
+update	.github/labeler.yml
+update	.github/labels.yml
+update	.github/workflows/issue-triage.yml
+update	.github/workflows/testing.yml
+update	AGENTS.md
+update	MAINTAINERS.md
+update	Makefile
+update	README.md
+update	capabilities/lib/semantic_map/srv/GetObjectContext.srv
+update	capabilities/lib/semantic_map/srv/GetSceneGraph.srv
+update	capabilities/lib/semantic_map/srv/GoalNear.srv
+update	capabilities/lib/semantic_map/srv/GoalRoom.srv
+update	capabilities/lib/semantic_map/srv/ListObjects.srv
+update	capabilities/lib/semantic_map/srv/ListRegions.srv
+update	capabilities/lib/semantic_map/srv/ListRelations.srv
+update	capabilities/system/planner/get_health.toml
+update	examples/robot-agilex-ranger_mini_v3/README.md
+update	examples/robot-agilex-ranger_mini_v3/robonix_manifest.no-arm.yaml
+update	examples/robot-agilex-ranger_mini_v3/robonix_manifest.yaml
+update	examples/robot-agilex-ranger_mini_v3/soma.yaml
+update	examples/robot-unitree-g1/README.md
+update	examples/robot-unitree-g1/robonix_manifest.yaml
+update	examples/robot-unitree-g1/services/service-map-rbnx/docker/Dockerfile
+update	examples/robot-unitree-g1/services/service-map-rbnx/scripts/start.sh
+update	examples/robot-unitree-g1/skills/g1_face_greeting/README.md
+update	examples/robot-unitree-g1/skills/g1_face_greeting/g1_face_greeting/main.py
+update	examples/robot-unitree-g1/skills/g1_face_greeting/tests/test_messages.py
+update	examples/robot-unitree-g1/soma.yaml
+update	examples/scout2/note.md
+update	examples/scout2/robonix_manifest.yaml
+update	examples/scout2/services/service-map-rbnx/README.md
+update	examples/scout2/services/service-map-rbnx/docker/Dockerfile
+update	examples/scout2/services/service-map-rbnx/scripts/start.sh
+update	examples/scout2/services/service-map-rbnx/src/mapping_rbnx/scene_snapshot.py
+update	examples/scout2/services/service-map-rbnx/src/mapping_rbnx/webui.py
+update	examples/scout2/services/service-map-rbnx/test_persistence.py
+update	examples/scout2/services/service-map-rbnx/test_scene_snapshot.py
+update	examples/scout2/services/service-navigation-rbnx/docker/entrypoint.sh
+update	examples/scout2/skills/skill-explore-rbnx/explore_skill/__init__.py
+update	examples/scout2/skills/skill-explore-rbnx/explore_skill/controller.py
+update	examples/scout2/skills/skill-explore-rbnx/package_manifest.yaml
+update	examples/scout2/skills/skill-explore-rbnx/scripts/build.sh
+update	examples/webots/robonix_manifest.yaml
+update	examples/webots/sim/stop.sh
+update	pylib/robonix-api/README.md
+update	pyproject.toml
+update	scripts/check_runtime_portability.py
+update	scripts/tests/test_python_codegen_policy.py
+update	services/memory/memory_service/service.py
+update	system/executor/src/service.rs
+update	system/planner/README.md
+update	system/planner/src/navigation_goal.rs
+update	system/planner/src/planner.rs
+update	system/planner/src/state_context.rs
+update	system/planner/src/vlm.rs
+update	testing/README.md
+update	testing/SCENARIO_SPEC.md
+update	testing/build_report_from_artifacts.py
+update	testing/report.py
+update	testing/scenarios/cap/scene_object_fixture.yaml
+update	testing/scenarios/flow/object_navigation.yaml
+update	testing/validate_lifecycle.py
+update	testing/verify_world_map_persistence.py
+update	tools/rbnx/README.md
+update	tools/rbnx/src/cmd/deploy.rs
+update	tools/rbnx/src/manifest.rs
+update	uv.lock
+add	system/world/scripts/smoke_runtime.py
+add	system/world/docs/scene-to-world-migration.md
+add	system/world/docs/scene-to-world-files.txt
+
+# Existing history/semantic data retained: CHANGELOG, old migration records, scene graph/IDs/data keys.
+# Root docs/ is an uninitialized Git submodule; the package copy is trackable in this repository.

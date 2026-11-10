@@ -1,4 +1,4 @@
-# robonix/system/scene/get_object_context — return one object's node
+# robonix/system/world/get_object_context — return one object's node
 # info, its direct relations, and nearby objects sorted by distance.
 string object_id
 ---

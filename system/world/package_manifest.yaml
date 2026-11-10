@@ -1,0 +1,41 @@
+# World MCP server — current-state semantic + geometric map of the
+# robot's environment. Exposes read-only MCP tools for Planner.
+#
+# Deployment shape: world runs in its OWN docker container (image
+# `robonix-world`, built by scripts/build.sh). Joins host network so:
+#   - it can reach src at 127.0.0.1:50051
+#   - it shares the host DDS bus with whatever sim/robot container
+#     is publishing the camera, lidar, pose, and map topics declared through src.
+#
+# Robotdesc adapter: world's ingest layer reads `config.observations[]`
+# (passed in via RBNX_CONFIG_FILE by `rbnx boot`) to know which ROS2
+# topics to subscribe to. Each entry pairs a logical kind ("rgb",
+# "depth", "lidar2d", "pose", "odom") with a topic name and ROS msg
+# class.
+manifestVersion: 1
+
+package:
+  name: com.robonix.system.world
+  version: 0.1.0
+  vendor: robonix
+  description: World — semantic + geometric live map of the environment.
+  license: MulanPSL-2.0
+
+# Src provider_id (matched verbatim by rbnx-boot). Same value as package.name
+# here because World's deployment identity and runtime cap line up; the
+# explicit declaration removes any ambiguity for the wait-for-cap loop.
+
+build: bash scripts/build.sh
+start: bash scripts/start.sh
+
+stop: docker rm -f "${ROBONIX_WORLD_CONTAINER:-robonix_world}"
+
+capabilities:
+  - name: robonix/system/world/list_objects
+  - name: robonix/system/world/get_robot_context
+  - name: robonix/system/world/list_regions
+  - name: robonix/system/world/goal_near
+  - name: robonix/system/world/goal_room
+  - name: robonix/system/world/get_scene_graph
+  - name: robonix/system/world/get_object_context
+  - name: robonix/system/world/list_relations

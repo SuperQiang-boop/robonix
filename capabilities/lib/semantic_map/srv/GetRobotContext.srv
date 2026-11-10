@@ -1,4 +1,4 @@
-# Return the current spatial context used by Pilot before planning.
+# Return the current spatial context used by Planner before planning.
 ---
 bool pose_known
 string map_id
