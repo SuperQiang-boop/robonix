@@ -1,39 +1,39 @@
 // SPDX-License-Identifier: MulanPSL-2.0
 // Author: wheatfox <wheatfox17@icloud.com>
 //
-// Atlas client-side helpers shared by every Robonix component that talks
-// to Atlas (pilot, executor, cli, system services, …).
+// Src client-side helpers shared by every Robonix component that talks
+// to Src (planner, executor, cli, system services, …).
 //
 // All helpers return `anyhow::Error` wrapping the underlying
 // `tonic::Status` so callers can attach context with `.with_context(...)`.
 
 use crate::pb;
 use anyhow::{Context, Result};
-use robonix_scribe::{debug, warn};
+use robonix_log::{debug, warn};
 use std::time::Duration;
 use tonic::transport::{Channel, Endpoint};
 
-/// Wrapped `pb::atlas_client::AtlasClient` with helpers.
+/// Wrapped `pb::src_client::SrcClient` with helpers.
 ///
 /// Cheap to clone — the inner generated client wraps a `Channel`, which
 /// is itself just a handle to a connection pool. Share clones across
 /// tasks rather than wrapping in a `Mutex`.
 #[derive(Clone)]
-pub struct AtlasClient {
-    inner: pb::atlas_client::AtlasClient<Channel>,
+pub struct SrcClient {
+    inner: pb::src_client::SrcClient<Channel>,
 }
 
-impl AtlasClient {
+impl SrcClient {
     /// Connect once. Accepts bare `host:port` or full `http://host:port`.
     pub async fn connect(endpoint: impl AsRef<str>) -> Result<Self> {
         let normalized = normalize_grpc_endpoint(endpoint.as_ref());
         let channel = Endpoint::new(normalized.clone())
-            .with_context(|| format!("invalid Atlas endpoint '{}'", normalized))?
+            .with_context(|| format!("invalid Src endpoint '{}'", normalized))?
             .connect()
             .await
-            .with_context(|| format!("connect to Atlas at '{}'", normalized))?;
+            .with_context(|| format!("connect to Src at '{}'", normalized))?;
         Ok(Self {
-            inner: pb::atlas_client::AtlasClient::new(channel),
+            inner: pb::src_client::SrcClient::new(channel),
         })
     }
 
@@ -50,7 +50,7 @@ impl AtlasClient {
                 Ok(c) => return Ok(c),
                 Err(e) => {
                     debug!(
-                        "[atlas-client] connect attempt {}/{} failed: {e:#}",
+                        "[src-client] connect attempt {}/{} failed: {e:#}",
                         i + 1,
                         attempts
                     );
@@ -64,7 +64,7 @@ impl AtlasClient {
         Err(last_err.unwrap_or_else(|| anyhow::anyhow!("connect_with_retry: 0 attempts")))
     }
 
-    pub fn inner(&self) -> pb::atlas_client::AtlasClient<Channel> {
+    pub fn inner(&self) -> pb::src_client::SrcClient<Channel> {
         self.inner.clone()
     }
 
@@ -79,14 +79,14 @@ impl AtlasClient {
             id: id.to_string(),
             namespace: namespace.to_string(),
             capability_md_path: capability_md_path.to_string(),
-            // Rust system components (atlas / executor / pilot / liaison)
+            // Rust system components (src / executor / planner / gateway)
             // ship no CAPABILITY.md; only Python packages register content
             // (via the robonix_api client). Leave empty here.
             capability_md: String::new(),
         }
     }
 
-    /// Register a Primitive. Returns the (possibly Atlas-assigned) id.
+    /// Register a Primitive. Returns the (possibly Src-assigned) id.
     pub async fn register_primitive(
         &mut self,
         id: &str,
@@ -176,7 +176,7 @@ impl AtlasClient {
 
     /// Declare one Capability (transport-bound endpoint) on an entity.
     /// Returns the *authoritative* endpoint (may differ from the request
-    /// when Atlas rewrote to disambiguate). `description` is the optional
+    /// when Src rewrote to disambiguate). `description` is the optional
     /// natural-language description for this Capability.
     pub async fn declare_capability(
         &mut self,
@@ -349,7 +349,7 @@ impl AtlasClient {
 
     // ── Channels ───────────────────────────────────────────────────────────
 
-    /// Open a channel to one (provider, contract, transport). Atlas only
+    /// Open a channel to one (provider, contract, transport). Src only
     /// providers the edge — the consumer dials the returned endpoint
     /// itself using whatever transport-appropriate mechanism (tonic for
     /// grpc, rclrs for ros2, fastmcp for mcp, …).
@@ -433,11 +433,11 @@ impl AtlasClient {
 ///
 /// Returns `(channel_id, provider_id, Channel)`.
 pub async fn connect_to_capability(
-    atlas: &mut AtlasClient,
+    src: &mut SrcClient,
     consumer_id: &str,
     contract_id: &str,
 ) -> Result<(String, String, Channel)> {
-    let rows = atlas
+    let rows = src
         .flatten_capabilities(contract_id, "", pb::Transport::Grpc)
         .await?;
     if rows.is_empty() {
@@ -448,7 +448,7 @@ pub async fn connect_to_capability(
     }
     if rows.len() > 1 {
         warn!(
-            "[atlas-client] {} entities offer '{contract_id}' over gRPC; \
+            "[src-client] {} entities offer '{contract_id}' over gRPC; \
              picking first ('{}'). Use query_capabilities + connect_capability \
              for deterministic selection.",
             rows.len(),
@@ -460,7 +460,7 @@ pub async fn connect_to_capability(
         .next()
         .expect("non-empty checked above")
         .provider_id;
-    let (channel_id, endpoint_str, _params) = atlas
+    let (channel_id, endpoint_str, _params) = src
         .connect_capability(consumer_id, &provider_id, contract_id, pb::Transport::Grpc)
         .await?;
     let normalized = normalize_grpc_endpoint(&endpoint_str);

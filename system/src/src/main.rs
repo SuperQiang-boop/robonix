@@ -2,42 +2,42 @@
 // Author: wheatfox <wheatfox17@icloud.com>
 
 use clap::Parser;
-use robonix_atlas::contract_registry::{ContractRegistry, resolve_capabilities_roots};
-use robonix_atlas::service::{AtlasRegistry, serve_atlas};
-use robonix_scribe::{info, warn};
+use robonix_log::{info, warn};
+use robonix_src::contract_registry::{ContractRegistry, resolve_capabilities_roots};
+use robonix_src::service::{SrcRegistry, serve_src};
 use std::sync::Arc;
 
 const DEFAULT_LISTEN: &str = "0.0.0.0:50051";
 
 #[derive(Parser, Debug)]
-#[command(name = "robonix-atlas", about = "Robonix Atlas — capability registry")]
+#[command(name = "robonix-src", about = "Robonix Src — capability registry")]
 struct Args {
-    /// Address Atlas binds its gRPC service on (default 0.0.0.0:50051).
-    #[arg(long, env = "ROBONIX_ATLAS_LISTEN")]
+    /// Address Src binds its gRPC service on (default 0.0.0.0:50051).
+    #[arg(long, env = "ROBONIX_SRC_LISTEN")]
     listen: Option<String>,
 
-    /// Comma-separated list of directories atlas walks for contract
+    /// Comma-separated list of directories src walks for contract
     /// TOMLs at startup. Each `*.toml` whose `[contract].id` is set
     /// becomes a `ContractDescriptor` served by `QueryContract` /
     /// `ListContracts`. Roots are merged in order: a duplicate id from
     /// a later root overrides earlier ones, which lets a per-package
     /// `<pkg>/capabilities/` re-declare a contract from the global
-    /// `<robonix_source>/capabilities/`. When unset, atlas falls back
+    /// `<robonix_source>/capabilities/`. When unset, src falls back
     /// to `$ROBONIX_SOURCE_PATH/capabilities`. When neither is set,
     /// the contract registry runs empty (clients see found=false on
     /// every QueryContract).
-    #[arg(long, env = "ROBONIX_ATLAS_CAPABILITIES", value_delimiter = ',')]
+    #[arg(long, env = "ROBONIX_SRC_CAPABILITIES", value_delimiter = ',')]
     capabilities: Vec<String>,
 
     /// Log level for this component (`debug`/`info`/`warn`/`error`). Sets the
-    /// scribe log-file floor; falls back to `SCRIBE_FILE_LEVEL` / `info`.
+    /// log-file level floor; falls back to `ROBONIX_LOG_FILE_LEVEL` / `info`.
     /// Normally arrives inside `--config-json`, not as a standalone flag.
     #[arg(long)]
     log: Option<String>,
 
-    /// The component's `system.atlas` manifest block, serialized to JSON by
+    /// The component's `system.src` manifest block, serialized to JSON by
     /// rbnx and passed as one arg (`--config-json '{…}'`). Parsed by the binary
-    /// itself — see `robonix_scribe::init_from_config`, which reads the `log`
+    /// itself — see `robonix_log::init_from_config`, which reads the `log`
     /// key from it so the manifest's per-component level reaches the log.
     #[arg(long)]
     config_json: Option<String>,
@@ -48,11 +48,11 @@ async fn main() {
     let args = Args::parse();
 
     // Apply the manifest's per-component `log:` level (delivered inside
-    // --config-json) to scribe's file sink before the first log line, so it
+    // --config-json) to log's file sink before the first log line, so it
     // controls what this component persists; `rbnx logs --level` still
     // filters at read time.
-    robonix_scribe::init_from_config("atlas", args.config_json.as_deref());
-    info!("robonix-atlas starting (control plane)");
+    robonix_log::init_from_config("src", args.config_json.as_deref());
+    info!("robonix-src starting (control plane)");
 
     let listen = args.listen.unwrap_or_else(|| DEFAULT_LISTEN.to_string());
     let listen_addr: std::net::SocketAddr = match listen.parse() {
@@ -65,7 +65,7 @@ async fn main() {
     let roots = resolve_capabilities_roots(&args.capabilities);
     let contracts = if roots.is_empty() {
         warn!(
-            "[atlas] contract registry: no capabilities dir configured \
+            "[src] contract registry: no capabilities dir configured \
              (pass --capabilities or set ROBONIX_SOURCE_PATH); QueryContract \
              will return found=false for every id"
         );
@@ -75,19 +75,17 @@ async fn main() {
         match ContractRegistry::load_from_capability_roots(&refs) {
             Ok(r) => r,
             Err(e) => {
-                warn!(
-                    "[atlas] contract registry: load failed ({e:#}); running with empty registry"
-                );
+                warn!("[src] contract registry: load failed ({e:#}); running with empty registry");
                 ContractRegistry::default()
             }
         }
     };
-    let registry = Arc::new(AtlasRegistry::with_contracts(contracts));
+    let registry = Arc::new(SrcRegistry::with_contracts(contracts));
 
-    info!("atlas gRPC on {listen}");
+    info!("src gRPC on {listen}");
 
-    if let Err(e) = serve_atlas(registry, listen_addr).await {
-        eprintln!("robonix-atlas error: {e:?}");
+    if let Err(e) = serve_src(registry, listen_addr).await {
+        eprintln!("robonix-src error: {e:?}");
         std::process::exit(1);
     }
 }

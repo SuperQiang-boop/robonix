@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MulanPSL-2.0
 // Author: wheatfox <wheatfox17@icloud.com>
 syntax = "proto3";
-package robonix.atlas;
+package robonix.src;
 
 // ---------------------------------------------------------------------------
-// Atlas data model -- at a glance
+// Src data model -- at a glance
 //
 //   +--------------------+  owns 1..*  +------------+
 //   | CapabilityProvider |------------>| Capability |
@@ -40,9 +40,9 @@ package robonix.atlas;
 //                process per device.
 //   Service   -- composed user-facing function (e.g. mapping,
 //                navigation, scene). Long-lived; includes the
-//                platform-internal services (pilot, executor, scene,
-//                memory, liaison) -- they ARE services other
-//                components consume, not a separate category. Atlas
+//                platform-internal services (planner, executor, scene,
+//                memory, gateway) -- they ARE services other
+//                components consume, not a separate category. Src
 //                itself does not register.
 //   Skill     -- model-backed, executor-activated on demand (e.g.
 //                VLA pick_and_place, frontier explore). Sits at
@@ -50,7 +50,7 @@ package robonix.atlas;
 //                (configurable, default off) flip it back to
 //                INACTIVE on idle to free GPU.
 //
-// Why decouple Capability from CapabilityProvider? Pilot composes
+// Why decouple Capability from CapabilityProvider? Planner composes
 // Capabilities into plans; the CapabilityProvider holds lifecycle.
 // Splitting them lets the LLM-facing surface stay flat (a list of
 // Capabilities with `description`s) while the process/resource side
@@ -67,7 +67,7 @@ package robonix.atlas;
 //      ready (e.g. ROS 2 discovery needs a few seconds).
 //
 // Why hide endpoint in the read view? Forcing consumers through
-// ConnectCapability lets Atlas record the consumer->provider edge, so
+// ConnectCapability lets Src record the consumer->provider edge, so
 // channel auto-cleanup on eviction has a place to deliver
 // invalidations from. The read view (`Capability`) is fan-out
 // metadata; the channel is the bookkeeping handle.
@@ -79,7 +79,7 @@ package robonix.atlas;
 // MUST gate on `state == ACTIVE`. See LifecycleState below.
 // ---------------------------------------------------------------------------
 
-// Closed set of wire transports Atlas understands.
+// Closed set of wire transports Src understands.
 enum Transport {
   TRANSPORT_UNSPECIFIED = 0;
   TRANSPORT_GRPC = 1;
@@ -103,7 +103,7 @@ enum Kind {
 //
 // Three typed Register RPCs, one per CapabilityProvider kind. Request
 // and response bodies are identical across kinds -- the kind is carried
-// by which RPC the caller invoked (Atlas routes into the right per-kind
+// by which RPC the caller invoked (Src routes into the right per-kind
 // table).
 //
 // `id` is unique GLOBALLY across all three kinds. Registering an id
@@ -119,7 +119,7 @@ enum Kind {
 // The caller is expected to redeclare its Capabilities after takeover.
 
 message RegisterRequest {
-  // Stable id, e.g. "front_camera". Empty => Atlas
+  // Stable id, e.g. "front_camera". Empty => Src
   // assigns "ephemeral-<uuid>". Convention: id matches `name:` in
   // package_manifest.yaml.
   string id = 1;
@@ -132,16 +132,16 @@ message RegisterRequest {
   // Absolute path to the package's CAPABILITY.md, in the *provider's own*
   // filesystem namespace. Recorded for debugging only -- it is NOT
   // portable: a provider running in a container reports a container path
-  // (e.g. "/explore/CAPABILITY.md") that Atlas and consumers on the host
+  // (e.g. "/explore/CAPABILITY.md") that Src and consumers on the host
   // cannot open. Use `capability_md` (the content) instead.
   // Empty => no markdown for this CapabilityProvider.
   string capability_md_path = 3;
   // The CAPABILITY.md *content* (full markdown text), read by the
   // CapabilityProvider from its own filesystem at registration time --
   // where `capability_md_path` is always valid, even when the provider
-  // runs in a container with a different mount layout than Atlas or its
+  // runs in a container with a different mount layout than Src or its
   // consumers. This is the cross-host / cross-container-safe channel the
-  // old `capability_md_path` comment anticipated: consumers (Pilot) use
+  // old `capability_md_path` comment anticipated: consumers (Planner) use
   // this text instead of trying to open the path themselves.
   // Empty => no markdown for this CapabilityProvider.
   string capability_md = 4;
@@ -154,11 +154,11 @@ message RegisterResponse { string id = 1; }
 message UnregisterRequest { string id = 1; }
 message UnregisterResponse { bool was_present = 1; }
 
-// Liveness signal. Atlas may evict CapabilityProviders whose
+// Liveness signal. Src may evict CapabilityProviders whose
 // heartbeat lapses.
 //
 // Cadence: clients SHOULD call Heartbeat every ~30s. The eviction
-// threshold is implementation-defined (Atlas v1: 90s, i.e. ~3 missed
+// threshold is implementation-defined (Src v1: 90s, i.e. ~3 missed
 // heartbeats). Sending faster than 1Hz is wasteful; slower than
 // threshold/2 risks being evicted on a single delay.
 //
@@ -197,20 +197,20 @@ message TransportParams {
 // -- Declare one Capability on a registered CapabilityProvider --------------------------
 //
 // To expose the same contract over multiple transports, call once per
-// transport. Atlas guarantees the returned endpoint is globally unique
+// transport. Src guarantees the returned endpoint is globally unique
 // on (transport, endpoint).
 //
 // Uniqueness: for any single CapabilityProvider, the (contract_id,
 // transport) pair appears at most once -- equivalently, the global
-// (provider_id, contract_id, transport) tuple is unique across Atlas.
+// (provider_id, contract_id, transport) tuple is unique across Src.
 // A duplicate DeclareCapability for the same triple returns gRPC
 // `AlreadyExists`; to redeclare with a different endpoint, the
 // caller must Unregister + re-Register the whole provider (takeover
 // semantics drop the old declares with it), or let the provider's
-// heartbeat lapse so Atlas evicts it.
+// heartbeat lapse so Src evicts it.
 //
 // gRPC errors:
-//   * NotFound          -- `provider_id` is not registered with Atlas.
+//   * NotFound          -- `provider_id` is not registered with Src.
 //   * InvalidArgument   -- `transport` is TRANSPORT_UNSPECIFIED;
 //                         `params.kind` does not match `transport`;
 //                         or the conflict-
@@ -226,17 +226,17 @@ message DeclareCapabilityRequest {
   Transport transport = 3;
   // Preferred address string. Format is transport-specific:
   //   grpc:  "127.0.0.1:50105"   (caller binds first)
-  //   ros2:  "/scanner/cloud"     ("" => Atlas mints)
+  //   ros2:  "/scanner/cloud"     ("" => Src mints)
   //   mcp:   "http://host:port/mcp"
   //
   // Conflict resolution:
   //   - empty proposal + mintable transport (ros2)
-  //                     -> Atlas mints "/rbnx/<dotted-contract>/<uuid8>"
+  //                     -> Src mints "/rbnx/<dotted-contract>/<uuid8>"
   //   - empty proposal + non-mintable transport (grpc, mcp)
   //                     -> InvalidArgument
   //   - non-empty + no collision        -> stored verbatim
   //   - non-empty + collision + mintable
-  //                     -> Atlas rewrites by appending "__<uuid8>"
+  //                     -> Src rewrites by appending "__<uuid8>"
   //   - non-empty + collision + non-mintable
   //                     -> AlreadyExists (caller picks new and retries)
   //
@@ -250,7 +250,7 @@ message DeclareCapabilityRequest {
   // Example: contract `robonix/primitive/camera/rgb` already explains
   // "returns current RGB image as sensor_msgs/Image"; this field adds
   // "front-facing, 640x480 @ 30 Hz, no exposure compensation" for the
-  // front_camera instance specifically. Surfaced to Pilot / LLM.
+  // front_camera instance specifically. Surfaced to Planner / LLM.
   //
   // Filled by the CapabilityProvider -- either explicitly, or auto-
   // filled by the framework from the handler's docstring (e.g.
@@ -279,7 +279,7 @@ message DeclareCapabilityResponse {
 // Public view of one declared Capability -- what shows up inside
 // `CapabilityProvider.capabilities` returned by Query. Mirrors the fields of
 // DeclareCapabilityRequest EXCEPT `endpoint` is OMITTED: endpoint
-// disclosure is gated behind ConnectCapability so Atlas records the
+// disclosure is gated behind ConnectCapability so Src records the
 // consumer->provider edge before any traffic flows. Consumers MUST
 // call ConnectCapability to obtain the dial-able endpoint.
 //
@@ -292,7 +292,7 @@ message DeclareCapabilityResponse {
 //
 // Invariant: `params`'s oneof variant matches `transport` --
 //   GRPC <-> GrpcParams, ROS2 <-> Ros2Params, MCP <-> McpParams.
-// Atlas enforces this at DeclareCapability time, so a Capability read
+// Src enforces this at DeclareCapability time, so a Capability read
 // from Query is guaranteed consistent. Consumers MAY assume this and
 // skip a re-check.
 message Capability {
@@ -304,7 +304,7 @@ message Capability {
   // Natural-language description (see DeclareCapabilityRequest.description).
   string description = 6;
   // True when this contract sits outside the provider's primary namespace
-  // and its ContractDescriptor does not opt into cross-namespace use. Atlas
+  // and its ContractDescriptor does not opt into cross-namespace use. Src
   // still accepts and serves the capability; this is diagnostic only.
   bool namespace_mismatch = 7;
 }
@@ -313,22 +313,22 @@ message Capability {
 //
 // Lifecycle is per-CapabilityProvider (per Primitive / Service /
 // Skill), not per-Capability. The CapabilityProvider itself is the
-// source of truth; Atlas only stores what it reported via
+// source of truth; Src only stores what it reported via
 // SetLifecycleState.
 //
 // The `Driver(CMD_INIT)` / `Driver(CMD_ACTIVATE)` / etc. calls
-// referenced below are NOT part of Atlas. `Driver` is defined by
+// referenced below are NOT part of Src. `Driver` is defined by
 // `lib/lifecycle/srv/Driver.srv` and exposed by each CapabilityProvider
 // as a gRPC service alongside its data Capabilities. `rbnx boot` and
 // the executor call it on the CapabilityProvider's own gRPC endpoint
-// to drive the transitions described here. Atlas only observes the
+// to drive the transitions described here. Src only observes the
 // resulting SetLifecycleState pushes.
 //
 //   STATE_REGISTERED  -- process up, Register* succeeded, but
 //                       Driver(CMD_INIT) hasn't completed.
 //   STATE_INACTIVE    -- Driver(CMD_INIT) ok. Config parsed, upstream
 //                       CapabilityProvider dependencies looked up via
-//                       Atlas Query, soft validation done; no hot
+//                       Src Query, soft validation done; no hot
 //                       resources held. Skills sit here until the
 //                       executor sends CMD_ACTIVATE. Primitives /
 //                       Services pass through immediately -- `rbnx
@@ -340,7 +340,7 @@ message Capability {
 //   STATE_ERROR       -- last Driver(CMD_*) returned ok=false or
 //                       raised. Terminal apart from CMD_SHUTDOWN.
 //   STATE_TERMINATED  -- on_shutdown ran (or process exited / heartbeat
-//                       lapsed). Atlas GCs after a brief delay.
+//                       lapsed). Src GCs after a brief delay.
 enum LifecycleState {
   STATE_UNSPECIFIED = 0;
   STATE_REGISTERED  = 1;
@@ -355,7 +355,7 @@ enum LifecycleState {
 // the executor use the result to gate follow-up Driver(CMD_*) calls
 // without polling.
 //
-// Validation policy. Two tiers -- Atlas does NOT accept literally
+// Validation policy. Two tiers -- Src does NOT accept literally
 // everything:
 //
 //   * HARD-reject (gRPC error, no state change):
@@ -367,7 +367,7 @@ enum LifecycleState {
 //     logged) whenever the (previous_state, new_state) edge is not
 //     one of the legal FSM edges in the LifecycleState diagram. The
 //     CapabilityProvider is always the source of truth -- a hardened
-//     transition check would create boot-time deadlocks if an Atlas
+//     transition check would create boot-time deadlocks if an Src
 //     restart loses pushed state mid-lifecycle, so we log and keep
 //     going. Pre-launch tooling (`rbnx caps`) surfaces the warns so
 //     out-of-spec transitions stay visible without blocking progress.
@@ -379,7 +379,7 @@ message SetLifecycleStateRequest {
   string detail = 3;
 }
 message SetLifecycleStateResponse {
-  // The state Atlas had stored just before this call returned
+  // The state Src had stored just before this call returned
   // successfully -- the real previous state, NOT STATE_UNSPECIFIED,
   // even when the (previous_state, new_state) edge was soft-rejected
   // (logged but applied). Useful for the caller to log a clean
@@ -441,13 +441,13 @@ message QueryResponse {
 
 // -- Channels ---------------------------------------------------------------
 //
-// A channel is an Atlas-recorded edge from a consumer to one
+// A channel is an Src-recorded edge from a consumer to one
 // (provider_id, contract_id, transport) triple. It does NOT carry
-// traffic; the consumer dials the returned `endpoint` itself. Atlas
+// traffic; the consumer dials the returned `endpoint` itself. Src
 // keeps the edge purely for bookkeeping (who is talking to whom)
 // and to fan-out invalidations.
 //
-// Channel auto-cleanup. Atlas drops every channel pointing at the
+// Channel auto-cleanup. Src drops every channel pointing at the
 // provider side when:
 //   * the provider Unregisters,
 //   * the provider's heartbeat lapses past the eviction threshold, or
@@ -475,7 +475,7 @@ message ConnectCapabilityResponse {
   // DisconnectCapability when the consumer is done.
   string channel_id = 1;
   // Authoritative dial-able endpoint string (same form the provider
-  // registered at DeclareCapability time, possibly Atlas-rewritten on
+  // registered at DeclareCapability time, possibly Src-rewritten on
   // collision). The consumer dials this directly using the matching
   // client (tonic for grpc, rclrs / rclpy for ros2, fastmcp for mcp).
   string endpoint = 2;
@@ -487,7 +487,7 @@ message ConnectCapabilityResponse {
 
 // DisconnectCapability -- release a channel. Idempotent: unknown
 // `channel_id` returns `was_open = false`, NOT a gRPC error
-// (Atlas may have already dropped it due to provider eviction or
+// (Src may have already dropped it due to provider eviction or
 // takeover; that's expected and the caller has nothing to do).
 message DisconnectCapabilityRequest { string channel_id = 1; }
 message DisconnectCapabilityResponse { bool was_open = 1; }
@@ -537,10 +537,10 @@ message QueryContractResponse {
 message ListContractsRequest { string namespace_prefix = 1; }
 message ListContractsResponse { repeated ContractDescriptor contracts = 1; }
 
-message InspectAtlasRequest {}
-message InspectAtlasResponse { string json = 1; }
+message InspectSrcRequest {}
+message InspectSrcResponse { string json = 1; }
 
-service Atlas {
+service Src {
   // Registration -- one RPC per CapabilityProvider kind.
   rpc RegisterPrimitive(RegisterRequest) returns (RegisterResponse);
   rpc RegisterService(RegisterRequest)   returns (RegisterResponse);
@@ -572,5 +572,5 @@ service Atlas {
   rpc ListContracts(ListContractsRequest) returns (ListContractsResponse);
 
   // Debug.
-  rpc InspectAtlas(InspectAtlasRequest) returns (InspectAtlasResponse);
+  rpc InspectSrc(InspectSrcRequest) returns (InspectSrcResponse);
 }

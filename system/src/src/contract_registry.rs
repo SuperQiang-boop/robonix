@@ -2,9 +2,9 @@
 // Author: wheatfox <wheatfox17@icloud.com>
 //
 // Contract registry — loads `<robonix_source>/capabilities/**/*.toml` at
-// atlas startup and serves their parsed metadata to clients via
+// src startup and serves their parsed metadata to clients via
 // QueryContract / ListContracts. Clients no longer walk the filesystem
-// or parse contract TOMLs themselves; atlas is the single source of
+// or parse contract TOMLs themselves; src is the single source of
 // truth for "what contracts exist and what's their wire shape".
 //
 // Scope is deliberately small: only the fields current TOMLs actually
@@ -13,7 +13,7 @@
 // capability-card-style fields) waits until the TOML schema grows.
 
 use anyhow::Context;
-use robonix_scribe::{info, warn};
+use robonix_log::{info, warn};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -42,7 +42,7 @@ struct ContractSection {
     #[serde(default)]
     kind: Option<String>,
     /// Lib-relative IDL path (with extension), e.g. `sensor_msgs/msg/Image.msg`
-    /// or `pilot/srv/SubmitTask.srv`. Source of truth in the post-migration
+    /// or `planner/srv/SubmitTask.srv`. Source of truth in the post-migration
     /// schema; `[io.msg]` / `[io.srv]` are legacy and only honoured when
     /// `idl` is absent so old TOMLs keep loading until they're rewritten.
     #[serde(default)]
@@ -88,7 +88,7 @@ struct SrvSubsection {
 }
 
 /// In-memory contract metadata. Built once at startup; never mutated
-/// while atlas runs. Wrapped in `Arc<ContractRegistry>` so handlers can
+/// while src runs. Wrapped in `Arc<ContractRegistry>` so handlers can
 /// read it without locks.
 #[derive(Debug, Default)]
 pub struct ContractRegistry {
@@ -118,14 +118,14 @@ impl ContractRegistry {
     /// still served, just without field-level introspection).
     ///
     /// Malformed TOMLs and `*.toml` files without a `[contract].id` are
-    /// logged and skipped — one bad file must not take atlas down.
+    /// logged and skipped — one bad file must not take src down.
     pub fn load_from_capability_roots(roots: &[&Path]) -> anyhow::Result<Self> {
         let mut by_id: HashMap<String, pb::ContractDescriptor> = HashMap::new();
         let mut total_roots_walked = 0usize;
         for root in roots {
             if !root.exists() {
                 warn!(
-                    "[atlas] contract registry: capabilities root missing: {} \
+                    "[src] contract registry: capabilities root missing: {} \
                      (skipping)",
                     root.display()
                 );
@@ -157,7 +157,7 @@ impl ContractRegistry {
                         let id = desc.id.clone();
                         if let Some(prev) = by_id.insert(id.clone(), desc) {
                             warn!(
-                                "[atlas] contract registry: duplicate id '{id}' \
+                                "[src] contract registry: duplicate id '{id}' \
                                  (was {}, now {}); keeping latest",
                                 prev.source_toml_path,
                                 path.display()
@@ -165,17 +165,17 @@ impl ContractRegistry {
                         }
                         loaded_from_root += 1;
                     }
-                    Err(e) => warn!("[atlas] contract registry: skip {} ({e:#})", path.display()),
+                    Err(e) => warn!("[src] contract registry: skip {} ({e:#})", path.display()),
                 }
             }
             info!(
-                "[atlas] contract registry: {} contracts from {}",
+                "[src] contract registry: {} contracts from {}",
                 loaded_from_root,
                 root.display()
             );
         }
         info!(
-            "[atlas] contract registry: total {} unique contracts across {} root(s)",
+            "[src] contract registry: total {} unique contracts across {} root(s)",
             by_id.len(),
             total_roots_walked
         );
@@ -254,7 +254,7 @@ fn io_types_from_parsed(parsed: &RawContract) -> (String, String) {
 /// Parse a lib-relative IDL path like `sensor_msgs/msg/Image.msg`
 /// into (pkg, kind, name). Mirrors the codegen-side parser
 /// (`robonix-codegen::contract_gen::parse_idl_path`) but lives here so
-/// atlas doesn't need a build-dep on the full codegen crate just for one
+/// src doesn't need a build-dep on the full codegen crate just for one
 /// six-line helper.
 fn parse_idl_path(s: &str) -> Option<(&str, &'static str, &str)> {
     let (stem, kind): (&str, &'static str) = if let Some(rest) = s.strip_suffix(".srv") {
@@ -342,7 +342,7 @@ fn load_one(path: &Path) -> anyhow::Result<pb::ContractDescriptor> {
 ///
 /// Failures are logged-and-skipped: a contract with no resolvable IDL
 /// (e.g. type "X" not present in any `lib/`) just keeps its empty
-/// `msg_fields` / `srv_*_fields`. Atlas startup must not fail because
+/// `msg_fields` / `srv_*_fields`. Src startup must not fail because
 /// of a single missing `.msg`.
 fn attach_idl_fields(by_id: &mut HashMap<String, pb::ContractDescriptor>, roots: &[&Path]) {
     // The msg_parser indexes from `include_paths`. For each capability
@@ -354,14 +354,14 @@ fn attach_idl_fields(by_id: &mut HashMap<String, pb::ContractDescriptor>, roots:
         .filter(|p| p.exists())
         .collect();
     if lib_paths.is_empty() {
-        info!("[atlas] contract registry: no <root>/lib/ found — skipping IDL field attachment");
+        info!("[src] contract registry: no <root>/lib/ found — skipping IDL field attachment");
         return;
     }
     let mut resolver = match MsgResolver::new(&lib_paths) {
         Ok(r) => r,
         Err(e) => {
             warn!(
-                "[atlas] contract registry: MsgResolver init failed ({e:#}); \
+                "[src] contract registry: MsgResolver init failed ({e:#}); \
                  contracts will have no field-level schema"
             );
             return;
@@ -380,7 +380,7 @@ fn attach_idl_fields(by_id: &mut HashMap<String, pb::ContractDescriptor>, roots:
                 }
                 Err(e) => {
                     warn!(
-                        "[atlas] contract registry: IDL resolve failed for \
+                        "[src] contract registry: IDL resolve failed for \
                          contract '{}' io_msg_type='{}': {e:#}",
                         desc.id, desc.io_msg_type
                     );
@@ -397,7 +397,7 @@ fn attach_idl_fields(by_id: &mut HashMap<String, pb::ContractDescriptor>, roots:
                 }
                 Err(e) => {
                     warn!(
-                        "[atlas] contract registry: IDL resolve failed for \
+                        "[src] contract registry: IDL resolve failed for \
                          contract '{}' io_srv_type='{}': {e:#}",
                         desc.id, desc.io_srv_type
                     );
@@ -407,7 +407,7 @@ fn attach_idl_fields(by_id: &mut HashMap<String, pb::ContractDescriptor>, roots:
         }
     }
     info!(
-        "[atlas] contract registry: IDL fields — msg {msg_filled} ok / {msg_missing} missing, \
+        "[src] contract registry: IDL fields — msg {msg_filled} ok / {msg_missing} missing, \
          srv {srv_filled} ok / {srv_missing} missing"
     );
 }
@@ -482,12 +482,12 @@ fn spec_to_field_specs(spec: &MsgSpec) -> Vec<pb::FieldSpec> {
         .collect()
 }
 
-/// Resolve the list of capability roots atlas should load. Priority:
+/// Resolve the list of capability roots src should load. Priority:
 ///   1. explicit CLI/env paths (any non-empty entries from
-///      `--capabilities a,b,c` or `ROBONIX_ATLAS_CAPABILITIES=a,b,c`)
+///      `--capabilities a,b,c` or `ROBONIX_SRC_CAPABILITIES=a,b,c`)
 ///   2. `$ROBONIX_SOURCE_PATH/capabilities` as a single fallback root
 ///
-/// Returns an empty vec if nothing is configured; atlas then runs with
+/// Returns an empty vec if nothing is configured; src then runs with
 /// an empty registry (handlers return found=false on every query).
 ///
 /// Per-package `<pkg>/capabilities/` dirs aren't included here — those

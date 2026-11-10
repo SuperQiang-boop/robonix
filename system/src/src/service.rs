@@ -1,17 +1,17 @@
 // SPDX-License-Identifier: MulanPSL-2.0
 // Author: wheatfox <wheatfox17@icloud.com>
 //
-// Atlas — Robonix capability registry (gRPC service).
+// Src — Robonix capability registry (gRPC service).
 //
-// `AtlasRegistry` owns the in-memory state and exposes typed async methods
-// for each operation. `AtlasService` is a thin facade that parses wire
+// `SrcRegistry` owns the in-memory state and exposes typed async methods
+// for each operation. `SrcService` is a thin facade that parses wire
 // types out of `pb::*` requests and calls the registry. The legacy
 // `RobonixRuntime` shim (see crate::legacy) calls the same registry
 // methods after translating old fields, which is how backward compat is
 // implemented without a parallel state.
 
 use anyhow::{Context, Result};
-use robonix_scribe::{info, warn};
+use robonix_log::{info, warn};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -24,7 +24,7 @@ use crate::contract_registry::ContractRegistry;
 use crate::pb;
 pub use pb::Transport;
 
-/// How many times Atlas tries to mint a unique endpoint before giving up.
+/// How many times Src tries to mint a unique endpoint before giving up.
 const MINT_ATTEMPTS: usize = 16;
 
 #[derive(Debug, Clone, Serialize)]
@@ -264,19 +264,19 @@ impl State {
 }
 
 /// In-memory state shared by all gRPC handlers (new + legacy). All ops go
-/// through one of the typed async methods below. `Arc<AtlasRegistry>` is
+/// through one of the typed async methods below. `Arc<SrcRegistry>` is
 /// cheap to clone; the interior `RwLock` serialises mutations.
 ///
 /// `contracts` is loaded once at startup from `<robonix_source>/capabilities/**`
 /// and is read-only for the lifetime of the process — handlers serve
 /// QueryContract / ListContracts directly off it without locking.
 #[derive(Debug, Default)]
-pub struct AtlasRegistry {
+pub struct SrcRegistry {
     pub(crate) inner: RwLock<State>,
     contracts: ContractRegistry,
 }
 
-impl AtlasRegistry {
+impl SrcRegistry {
     /// Construct a registry with an empty capability/channel state plus a
     /// pre-loaded contract registry. Use this from `main.rs` once the
     /// capabilities dir has been resolved.
@@ -292,7 +292,7 @@ impl AtlasRegistry {
     }
 }
 
-impl AtlasRegistry {
+impl SrcRegistry {
     pub fn now_ms() -> u64 {
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -314,7 +314,7 @@ impl AtlasRegistry {
 
     /// Register a new capability instance, OR take over an existing
     /// provider_id slot whose previous provider is gone. Empty `provider_id` triggers
-    /// Atlas-assigned ephemeral id. Returns the resolved id.
+    /// Src-assigned ephemeral id. Returns the resolved id.
     ///
     /// Takeover semantics — a re-Register on an existing provider_id is NOT
     /// an error. We assume the old process is dead (or about to be), so
@@ -322,9 +322,9 @@ impl AtlasRegistry {
     /// The caller is then expected to redeclare capabilities with its own
     /// fresh endpoints. Without this, an orphan provider (heartbeat eviction
     /// hasn't fired yet — 60s default) blocks every subsequent boot of
-    /// the same package: rbnx waits for a "new" provider to appear in atlas,
+    /// the same package: rbnx waits for a "new" provider to appear in src,
     /// the python framework only retries register once and then quietly
-    /// keeps going, and atlas keeps pointing consumers at the dead
+    /// keeps going, and src keeps pointing consumers at the dead
     /// process's endpoints. The previous "ALREADY_EXISTS" failure mode
     /// caught accidental dual deployments but the cure was worse than
     /// the disease — silent boot failures are nearly impossible to
@@ -368,7 +368,7 @@ impl AtlasRegistry {
             existing.state_detail.clear();
             let dropped = state.drop_channels_of(&provider_id);
             info!(
-                "[atlas] register {provider_id} (takeover; dropped {prev_iface_count} \
+                "[src] register {provider_id} (takeover; dropped {prev_iface_count} \
                  stale capabilities, {dropped} channels)"
             );
             return Ok(provider_id);
@@ -387,7 +387,7 @@ impl AtlasRegistry {
                 state_detail: String::new(),
             },
         );
-        info!("[atlas] register {provider_id} kind={kind:?}");
+        info!("[src] register {provider_id} kind={kind:?}");
         Ok(provider_id)
     }
 
@@ -403,7 +403,7 @@ impl AtlasRegistry {
         let was_present = state.providers.remove(provider_id).is_some();
         let dropped = state.drop_channels_of(provider_id);
         info!(
-            "[atlas] unregister {provider_id} (was_present={was_present}, \
+            "[src] unregister {provider_id} (was_present={was_present}, \
              channels_dropped={dropped})"
         );
         was_present
@@ -415,7 +415,7 @@ impl AtlasRegistry {
     /// Validation is **soft**: illegal transitions log a warn but the
     /// new state is still stored. Strict validation will land later
     /// once telemetry confirms there are no spurious illegal
-    /// transitions during atlas/provider startup-race conditions.
+    /// transitions during src/provider startup-race conditions.
     pub async fn set_lifecycle_state(
         &self,
         provider_id: &str,
@@ -436,14 +436,14 @@ impl AtlasRegistry {
         let prev = provider.state();
         if !is_legal_transition(prev, new_state) {
             warn!(
-                "[atlas] illegal transition {provider_id}: {:?} -> {:?} (storing anyway, soft-validation v0.1)",
+                "[src] illegal transition {provider_id}: {:?} -> {:?} (storing anyway, soft-validation v0.1)",
                 prev, new_state
             );
         }
         provider.pushed_state = Some(new_state);
         provider.state_detail = detail.trim().to_string();
         info!(
-            "[atlas] state {provider_id}: {:?} -> {:?}{}",
+            "[src] state {provider_id}: {:?} -> {:?}{}",
             prev,
             new_state,
             if provider.state_detail.is_empty() {
@@ -470,7 +470,7 @@ impl AtlasRegistry {
 
     /// Declare ONE transport for ONE contract on a registered provider. Returns
     /// the authoritative endpoint string (may differ from `proposed` when
-    /// Atlas rewrote it to disambiguate on a mintable transport).
+    /// Src rewrote it to disambiguate on a mintable transport).
     pub async fn declare(
         &self,
         provider_id: &str,
@@ -498,7 +498,7 @@ impl AtlasRegistry {
             has_namespace_mismatch(&provider.namespace, &contract_id, cross_namespace);
         if namespace_mismatch {
             warn!(
-                "[atlas] namespace mismatch: provider '{provider_id}' declares '{contract_id}' \
+                "[src] namespace mismatch: provider '{provider_id}' declares '{contract_id}' \
                  outside primary namespace '{}'; accepting capability",
                 provider.namespace
             );
@@ -526,7 +526,7 @@ impl AtlasRegistry {
             description: description.to_string(),
             namespace_mismatch,
         });
-        info!("[atlas] declare {provider_id} {contract_id} via {transport:?} -> {endpoint}");
+        info!("[src] declare {provider_id} {contract_id} via {transport:?} -> {endpoint}");
         Ok(endpoint)
     }
 
@@ -614,9 +614,9 @@ impl AtlasRegistry {
         out
     }
 
-    /// Open a channel to one (provider provider, contract, transport). Atlas
+    /// Open a channel to one (provider provider, contract, transport). Src
     /// only providers the edge — the consumer dials the returned endpoint
-    /// itself (each transport has its own connect protocol; atlas can't
+    /// itself (each transport has its own connect protocol; src can't
     /// dial generically). Returns the allocated channel handle and the
     /// full binding the consumer needs.
     pub async fn connect(
@@ -666,7 +666,7 @@ impl AtlasRegistry {
             },
         );
         info!(
-            "[atlas] connect '{consumer_id}' -> '{provider_id}' \
+            "[src] connect '{consumer_id}' -> '{provider_id}' \
              {contract_id} via {transport:?} -> {endpoint} ({channel_id})"
         );
         Ok((channel_id, endpoint, params))
@@ -682,7 +682,7 @@ impl AtlasRegistry {
         }
         let mut state = self.inner.write().await;
         let was_open = state.channels.remove(channel_id).is_some();
-        info!("[atlas] disconnect {channel_id} (was_open={was_open})");
+        info!("[src] disconnect {channel_id} (was_open={was_open})");
         was_open
     }
 
@@ -690,7 +690,7 @@ impl AtlasRegistry {
     /// when the provider registered without one. Serves the stored text
     /// directly — never touches the filesystem, since `capability_md_path`
     /// is only valid in the provider's own (possibly containerised) mount
-    /// namespace, not Atlas's.
+    /// namespace, not Src's.
     pub async fn capability_md(&self, provider_id: &str) -> Result<String, Status> {
         let provider_id = Self::require("provider_id", provider_id)?;
         let state = self.inner.read().await;
@@ -709,11 +709,11 @@ impl AtlasRegistry {
     }
 }
 
-/// Whether Atlas can mint a fresh endpoint name for this transport without
+/// Whether Src can mint a fresh endpoint name for this transport without
 /// requiring a prior OS-level bind by the caller. ros2 is a pure-name
 /// address space; grpc and mcp need a host:port that only the caller can
 /// produce.
-fn atlas_can_mint(transport: Transport) -> bool {
+fn src_can_mint(transport: Transport) -> bool {
     matches!(transport, Transport::Ros2)
 }
 
@@ -791,7 +791,7 @@ fn resolve_endpoint(
     contract_id: &str,
     own_cap_id: &str,
 ) -> Result<String, Status> {
-    let mintable = atlas_can_mint(transport);
+    let mintable = src_can_mint(transport);
     let collides = |s: &str| -> bool {
         state.providers.iter().any(|(other_id, provider)| {
             other_id != own_cap_id
@@ -815,7 +815,7 @@ fn resolve_endpoint(
         if !mintable {
             return Err(Status::invalid_argument(format!(
                 "transport '{transport:?}' requires caller-supplied endpoint; \
-                 Atlas cannot allocate (e.g. caller must bind a port and pass host:port)"
+                 Src cannot allocate (e.g. caller must bind a port and pass host:port)"
             )));
         }
         for _ in 0..MINT_ATTEMPTS {
@@ -843,7 +843,7 @@ fn resolve_endpoint(
     for _ in 0..MINT_ATTEMPTS {
         // A ROS 2 private-name marker (`~`) is only legal as the first
         // character of a topic. Appending `~<uuid>` produced endpoints such
-        // as `/odom~9857059d`, which Atlas returned successfully but every
+        // as `/odom~9857059d`, which Src returned successfully but every
         // ROS 2 client rejected. Double underscore is valid inside every ROS
         // name token and keeps the collision suffix visually distinct.
         let candidate = format!("{proposed}__{}", short_uuid());
@@ -891,7 +891,7 @@ mod endpoint_tests {
 
     #[tokio::test]
     async fn declare_accepts_namespace_mismatch_and_surfaces_diagnostic() {
-        let registry = AtlasRegistry::default();
+        let registry = SrcRegistry::default();
         registry
             .register(
                 "front_camera",
@@ -930,7 +930,7 @@ mod endpoint_tests {
 
     #[tokio::test]
     async fn legacy_namespaced_driver_contract_remains_clean() {
-        let registry = AtlasRegistry::default();
+        let registry = SrcRegistry::default();
         registry
             .register(
                 "front_camera",
@@ -968,7 +968,7 @@ mod endpoint_tests {
 
     #[tokio::test]
     async fn multiple_providers_can_implement_the_same_contract() {
-        let registry = AtlasRegistry::default();
+        let registry = SrcRegistry::default();
         for (provider_id, endpoint) in [
             ("front_camera", "/front_camera_driver"),
             ("rear_camera", "/rear_camera_driver"),
@@ -1013,7 +1013,7 @@ mod endpoint_tests {
     #[tokio::test]
     async fn cross_namespace_contract_suppresses_the_diagnostic() {
         let root = std::env::temp_dir().join(format!(
-            "robonix-atlas-cross-namespace-{}",
+            "robonix-src-cross-namespace-{}",
             uuid::Uuid::new_v4()
         ));
         std::fs::create_dir_all(&root).expect("create temporary capability root");
@@ -1029,7 +1029,7 @@ cross_namespace = true
             .expect("load shared contract fixture");
         std::fs::remove_dir_all(&root).expect("remove temporary capability root");
 
-        let registry = AtlasRegistry::with_contracts(contracts);
+        let registry = SrcRegistry::with_contracts(contracts);
         registry
             .register(
                 "front_camera",
@@ -1107,18 +1107,18 @@ cross_namespace = true
 }
 
 #[derive(Debug)]
-pub struct AtlasService {
-    registry: Arc<AtlasRegistry>,
+pub struct SrcService {
+    registry: Arc<SrcRegistry>,
 }
 
-impl AtlasService {
-    pub fn new(registry: Arc<AtlasRegistry>) -> Self {
+impl SrcService {
+    pub fn new(registry: Arc<SrcRegistry>) -> Self {
         Self { registry }
     }
 }
 
 #[tonic::async_trait]
-impl pb::atlas_server::Atlas for AtlasService {
+impl pb::src_server::Src for SrcService {
     async fn register_primitive(
         &self,
         req: Request<pb::RegisterRequest>,
@@ -1268,12 +1268,12 @@ impl pb::atlas_server::Atlas for AtlasService {
         Ok(Response::new(pb::DisconnectCapabilityResponse { was_open }))
     }
 
-    async fn inspect_atlas(
+    async fn inspect_src(
         &self,
-        _req: Request<pb::InspectAtlasRequest>,
-    ) -> Result<Response<pb::InspectAtlasResponse>, Status> {
+        _req: Request<pb::InspectSrcRequest>,
+    ) -> Result<Response<pb::InspectSrcResponse>, Status> {
         let json = self.registry.inspect_json().await?;
-        Ok(Response::new(pb::InspectAtlasResponse { json }))
+        Ok(Response::new(pb::InspectSrcResponse { json }))
     }
 
     async fn query_contract(
@@ -1332,23 +1332,23 @@ fn read_env_u64(name: &str, default: u64) -> u64 {
 /// Phase 1 keeps a debug-friendly "yes that provider died, here's why" view in
 /// `rbnx caps` for `gc_after_ms` after the lapse; phase 2 frees memory.
 async fn eviction_loop(
-    registry: Arc<AtlasRegistry>,
+    registry: Arc<SrcRegistry>,
     timeout_ms: u64,
     gc_after_ms: u64,
     interval_ms: u64,
 ) {
     if timeout_ms == 0 {
-        info!("[atlas] heartbeat eviction disabled (timeout=0)");
+        info!("[src] heartbeat eviction disabled (timeout=0)");
         return;
     }
     info!(
-        "[atlas] heartbeat eviction: terminate-after={timeout_ms}ms \
+        "[src] heartbeat eviction: terminate-after={timeout_ms}ms \
          gc-after-terminated={gc_after_ms}ms interval={interval_ms}ms"
     );
     let interval = std::time::Duration::from_millis(interval_ms);
     loop {
         tokio::time::sleep(interval).await;
-        let now = AtlasRegistry::now_ms();
+        let now = SrcRegistry::now_ms();
         let mut state = registry.inner.write().await;
 
         // Phase 1: lapsed → TERMINATED.
@@ -1368,7 +1368,7 @@ async fn eviction_loop(
             }
             let dropped = state.drop_channels_of(id);
             warn!(
-                "[atlas] '{id}' → TERMINATED (heartbeat lapsed > {timeout_ms}ms, \
+                "[src] '{id}' → TERMINATED (heartbeat lapsed > {timeout_ms}ms, \
                  channels_dropped={dropped})"
             );
         }
@@ -1385,26 +1385,26 @@ async fn eviction_loop(
             .collect();
         for id in &stale {
             state.providers.remove(id);
-            warn!("[atlas] '{id}' GC'd from registry (TERMINATED > {gc_after_ms}ms)");
+            warn!("[src] '{id}' GC'd from registry (TERMINATED > {gc_after_ms}ms)");
         }
     }
 }
 
-/// Start the Atlas gRPC server on `listen` using the given registry.
+/// Start the Src gRPC server on `listen` using the given registry.
 /// Spawns a background heartbeat-eviction task and exposes BOTH the new
-/// `Atlas` service and the deprecated `RobonixRuntime` shim on the same
+/// `Src` service and the deprecated `RobonixRuntime` shim on the same
 /// gRPC port.
-pub async fn serve_atlas(registry: Arc<AtlasRegistry>, listen: SocketAddr) -> Result<()> {
+pub async fn serve_src(registry: Arc<SrcRegistry>, listen: SocketAddr) -> Result<()> {
     let timeout_ms = read_env_u64(
-        "ROBONIX_ATLAS_HEARTBEAT_TIMEOUT_MS",
+        "ROBONIX_SRC_HEARTBEAT_TIMEOUT_MS",
         DEFAULT_HEARTBEAT_TIMEOUT_MS,
     );
     let gc_after_ms = read_env_u64(
-        "ROBONIX_ATLAS_GC_AFTER_TERMINATED_MS",
+        "ROBONIX_SRC_GC_AFTER_TERMINATED_MS",
         DEFAULT_GC_AFTER_TERMINATED_MS,
     );
     let interval_ms = read_env_u64(
-        "ROBONIX_ATLAS_EVICTION_INTERVAL_MS",
+        "ROBONIX_SRC_EVICTION_INTERVAL_MS",
         DEFAULT_EVICTION_INTERVAL_MS,
     );
     let _eviction_task = tokio::spawn(eviction_loop(
@@ -1414,13 +1414,13 @@ pub async fn serve_atlas(registry: Arc<AtlasRegistry>, listen: SocketAddr) -> Re
         interval_ms,
     ));
 
-    let svc = AtlasService::new(Arc::clone(&registry));
+    let svc = SrcService::new(Arc::clone(&registry));
 
-    info!("[atlas] gRPC listening on {listen}");
+    info!("[src] gRPC listening on {listen}");
     tonic::transport::Server::builder()
-        .add_service(pb::atlas_server::AtlasServer::new(svc))
+        .add_service(pb::src_server::SrcServer::new(svc))
         .serve(listen)
         .await
-        .context("Atlas server failed")?;
+        .context("Src server failed")?;
     Ok(())
 }
