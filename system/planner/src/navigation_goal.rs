@@ -1,13 +1,13 @@
-use crate::pb::pilot::{CapabilityCallResult, Plan};
+use crate::pb::planner::{CapabilityCallResult, Plan};
 use anyhow::{Context, Result, bail};
 use serde_json::{Value, json};
 use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
 
 const NAVIGATE: &str = "robonix/service/navigation/navigate";
-const SCENE_GOALS: [&str; 2] = [
-    "robonix/system/scene/goal_near",
-    "robonix/system/scene/goal_room",
+const WORLD_GOALS: [&str; 2] = [
+    "robonix/system/world/goal_near",
+    "robonix/system/world/goal_room",
 ];
 const MAX_AGE: Duration = Duration::from_secs(120);
 const MAX_GOALS: usize = 32;
@@ -36,7 +36,7 @@ impl SceneNavigationGoals {
     /// Accept results only for exact calls actually dispatched by this interaction.
     pub(crate) fn track_plan(&mut self, plan: &Plan) {
         for call in plan.nodes.iter().filter_map(|node| node.call.as_ref()) {
-            if SCENE_GOALS.contains(&call.contract_id.as_str()) {
+            if WORLD_GOALS.contains(&call.contract_id.as_str()) {
                 self.pending.insert(
                     call.call_id.clone(),
                     (call.provider_id.clone(), call.contract_id.clone()),
@@ -89,7 +89,7 @@ impl SceneNavigationGoals {
             .nodes
             .iter()
             .filter_map(|node| node.call.as_ref())
-            .any(|call| SCENE_GOALS.contains(&call.contract_id.as_str()));
+            .any(|call| WORLD_GOALS.contains(&call.contract_id.as_str()));
         let mut corrected = 0;
         for call in plan.nodes.iter_mut().filter_map(|node| node.call.as_mut()) {
             if call.contract_id != NAVIGATE {
@@ -164,16 +164,16 @@ fn same_orientation(current: &Value, expected: &Value) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::pb::pilot::{CapabilityCall, RtdlNode};
+    use crate::pb::planner::{CapabilityCall, RtdlNode};
 
-    /// Build a single dispatched capability call without Atlas or physical execution.
+    /// Build a single dispatched capability call without Src or physical execution.
     fn plan(contract: &str, args: Value) -> Plan {
         Plan {
             nodes: vec![RtdlNode {
                 node_kind: 2,
                 call: Some(CapabilityCall {
                     call_id: "1:0".into(),
-                    provider_id: "scene".into(),
+                    provider_id: "world".into(),
                     contract_id: contract.into(),
                     args_json: args.to_string(),
                 }),
@@ -183,12 +183,12 @@ mod tests {
         }
     }
 
-    /// Reproduce the exact chair resolution whose yaw was mistranscribed by Pilot.
+    /// Reproduce the exact chair resolution whose yaw was mistranscribed by Planner.
     fn resolution(reachable: bool) -> CapabilityCallResult {
         CapabilityCallResult {
             call_id: "1:0".into(),
-            provider_id: "scene".into(),
-            contract_id: SCENE_GOALS[0].into(),
+            provider_id: "world".into(),
+            contract_id: WORLD_GOALS[0].into(),
             success: true,
             output: json!({"reachable": reachable, "x": 0.5431279931217432,
                 "y": 3.416287550702691, "yaw": -2.392551870225323})
@@ -212,7 +212,7 @@ mod tests {
     fn cache(now: Instant) -> SceneNavigationGoals {
         let mut goals = SceneNavigationGoals::default();
         goals.track_plan(&plan(
-            SCENE_GOALS[0],
+            WORLD_GOALS[0],
             json!({"object_id": "scene.object.chair_002"}),
         ));
         goals.observe(&resolution(true), now);
@@ -263,7 +263,7 @@ mod tests {
             assert_eq!(plan.nodes[0].call.as_ref().unwrap().args_json, original);
         }
         let mut goals = SceneNavigationGoals::default();
-        goals.track_plan(&plan(SCENE_GOALS[0], json!({})));
+        goals.track_plan(&plan(WORLD_GOALS[0], json!({})));
         goals.observe(&resolution(false), now);
         assert_eq!(goals.canonicalize(&mut navigation(), now).unwrap(), 0);
     }
@@ -278,7 +278,7 @@ mod tests {
                 .canonicalize(&mut navigation(), now + MAX_AGE + Duration::from_secs(1))
                 .is_err()
         );
-        goals.track_plan(&plan(SCENE_GOALS[0], json!({})));
+        goals.track_plan(&plan(WORLD_GOALS[0], json!({})));
         goals.clear();
         goals.observe(&resolution(true), now);
         assert_eq!(goals.canonicalize(&mut navigation(), now).unwrap(), 0);
@@ -289,7 +289,7 @@ mod tests {
     fn unrelated_provider_or_contract_cannot_supply_a_scene_goal() {
         let now = Instant::now();
         let mut goals = SceneNavigationGoals::default();
-        goals.track_plan(&plan(SCENE_GOALS[0], json!({})));
+        goals.track_plan(&plan(WORLD_GOALS[0], json!({})));
         let mut result = resolution(true);
         result.provider_id = "unrelated".into();
         goals.observe(&result, now);
@@ -302,7 +302,7 @@ mod tests {
     /// Both Scene goal contracts produce unit planar quaternions across heading quadrants.
     fn room_and_object_headings_are_converted_without_trigonometric_approximation() {
         let now = Instant::now();
-        for contract in SCENE_GOALS {
+        for contract in WORLD_GOALS {
             for yaw in [-3.0_f64, -1.5, 0.0, 1.5, 3.0] {
                 let mut goals = SceneNavigationGoals::default();
                 goals.track_plan(&plan(contract, json!({})));
@@ -336,14 +336,14 @@ mod tests {
             r#"{"reachable":true,"x":0.5431279931217432,"y":3.416287550702691,"yaw":null}"#,
         ] {
             let mut goals = SceneNavigationGoals::default();
-            goals.track_plan(&plan(SCENE_GOALS[0], json!({})));
+            goals.track_plan(&plan(WORLD_GOALS[0], json!({})));
             let mut result = resolution(true);
             result.output = output.into();
             goals.observe(&result, now);
             assert_eq!(goals.canonicalize(&mut navigation(), now).unwrap(), 0);
         }
         let mut goals = SceneNavigationGoals::default();
-        goals.track_plan(&plan(SCENE_GOALS[0], json!({})));
+        goals.track_plan(&plan(WORLD_GOALS[0], json!({})));
         let mut result = resolution(true);
         result.success = false;
         goals.observe(&result, now);
@@ -355,7 +355,7 @@ mod tests {
     fn dependent_scene_and_navigation_calls_cannot_share_one_tree() {
         let goals = SceneNavigationGoals::default();
         let mut mixed = navigation();
-        mixed.nodes.extend(plan(SCENE_GOALS[0], json!({})).nodes);
+        mixed.nodes.extend(plan(WORLD_GOALS[0], json!({})).nodes);
         assert!(goals.canonicalize(&mut mixed, Instant::now()).is_err());
     }
 }

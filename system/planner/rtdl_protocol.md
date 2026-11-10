@@ -195,7 +195,7 @@ Rules:
      navigation in a later round using the returned x, y, yaw verbatim.
    - Physical objects: call `goal_near` first; emit navigation in a later
      round using the returned x, y, yaw verbatim.
-   For a matching map-frame Scene goal, the Pilot harness computes the planar
+   For a matching map-frame Scene goal, the Planner harness computes the planar
    quaternion from Scene's returned yaw before dispatch; do not substitute the
    object's own yaw or invent another heading. After a new user steer, resolve
    the Scene goal again before dependent navigation.

@@ -1,26 +1,26 @@
 // SPDX-License-Identifier: MulanPSL-2.0
 // Author: wheatfox <wheatfox17@icloud.com>
 //
-// `RobonixSystemPilot` gRPC handler (contract `robonix/system/pilot`).
+// `RobonixSystemPlanner` gRPC handler (contract `robonix/system/planner`).
 
 use crate::pb::contracts::{
     robonix_system_executor_control_plan_client::RobonixSystemExecutorControlPlanClient,
     robonix_system_executor_execute_client::RobonixSystemExecutorExecuteClient,
     robonix_system_executor_list_active_plans_client::RobonixSystemExecutorListActivePlansClient,
-    robonix_system_pilot_get_health_server::RobonixSystemPilotGetHealth,
-    robonix_system_pilot_server::RobonixSystemPilot,
+    robonix_system_planner_get_health_server::RobonixSystemPlannerGetHealth,
+    robonix_system_planner_server::RobonixSystemPlanner,
 };
 use crate::pb::module_health::{
     GetModuleHealthRequest, GetModuleHealthResponse, ModuleHealth, ModuleHealthReport,
 };
-use crate::pb::pilot::{
-    BatchResult, PilotEvent, Plan, RtdlNodeState, SessionStatusEvent, Task, TaskStateEvent,
+use crate::pb::planner::{
+    BatchResult, Plan, PlannerEvent, RtdlNodeState, SessionStatusEvent, Task, TaskStateEvent,
 };
 use crate::planner::{self, ExecutorConn, TaskState};
 use crate::vlm::{Message, VlmClient};
 use anyhow::Context;
-use robonix_atlas::client::{self as atlas_client, AtlasClient};
-use robonix_scribe::{debug, error};
+use robonix_log::{debug, error};
+use robonix_src::client::{self as src_client, SrcClient};
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -33,12 +33,12 @@ use uuid::Uuid;
 #[repr(u32)]
 #[allow(dead_code)]
 pub enum SessionState {
-    Active = 0,    // when pilot recieved a task
+    Active = 0,    // when planner recieved a task
     Completed = 1, // the task is completed
     Failed = 2,    // the task failed
 }
 
-// `PilotEvent` carries one of N payloads tagged by `event_kind`. proto3 lacks
+// `PlannerEvent` carries one of N payloads tagged by `event_kind`. proto3 lacks
 // a oneof here so we keep the discriminator explicit; planner + service both
 // build events through `pack`.
 pub const EVT_TEXT_CHUNK: u32 = 0;
@@ -53,7 +53,7 @@ const MODULE_HEALTH_OK: u32 = 0;
 const MODULE_HEALTH_TTL_MS: u32 = 5000;
 
 #[allow(dead_code)]
-pub enum PilotStreamBody {
+pub enum PlannerStreamBody {
     TextChunk(String),
     FinalText(String),
     Plan(Plan),
@@ -63,37 +63,37 @@ pub enum PilotStreamBody {
     TaskState(TaskStateEvent),
 }
 
-pub fn pack(session_id: &str, body: PilotStreamBody) -> PilotEvent {
-    let mut e = PilotEvent {
+pub fn pack(session_id: &str, body: PlannerStreamBody) -> PlannerEvent {
+    let mut e = PlannerEvent {
         session_id: session_id.to_string(),
         ..Default::default()
     };
     match body {
-        PilotStreamBody::TextChunk(s) => {
+        PlannerStreamBody::TextChunk(s) => {
             e.event_kind = EVT_TEXT_CHUNK;
             e.text_chunk = s;
         }
-        PilotStreamBody::Plan(g) => {
+        PlannerStreamBody::Plan(g) => {
             e.event_kind = EVT_PLAN;
             e.plan = Some(g);
         }
-        PilotStreamBody::BatchResult(b) => {
+        PlannerStreamBody::BatchResult(b) => {
             e.event_kind = EVT_BATCH_RESULT;
             e.batch_result = Some(b);
         }
-        PilotStreamBody::Status(s) => {
+        PlannerStreamBody::Status(s) => {
             e.event_kind = EVT_STATUS;
             e.status = Some(s);
         }
-        PilotStreamBody::FinalText(s) => {
+        PlannerStreamBody::FinalText(s) => {
             e.event_kind = EVT_FINAL_TEXT;
             e.final_text = s;
         }
-        PilotStreamBody::NodeState(ns) => {
+        PlannerStreamBody::NodeState(ns) => {
             e.event_kind = EVT_NODE_STATE;
             e.node_state = Some(ns);
         }
-        PilotStreamBody::TaskState(ts) => {
+        PlannerStreamBody::TaskState(ts) => {
             e.event_kind = EVT_TASK_STATE;
             e.task_state = Some(ts);
         }
@@ -110,7 +110,7 @@ type TaskStates = Arc<Mutex<HashMap<String, Arc<Mutex<Option<TaskState>>>>>>;
 struct ActiveTurnInput {
     turn_id: String,
     tx: mpsc::Sender<Task>,
-    events: broadcast::Sender<Result<PilotEvent, String>>,
+    events: broadcast::Sender<Result<PlannerEvent, String>>,
     reply_generation: Arc<AtomicU64>,
 }
 
@@ -118,18 +118,18 @@ struct ActiveTurnInput {
 /// A caller is complete after one user-facing FinalText, while the underlying
 /// supervisor and its long-running RTDL trees may remain alive for later input.
 fn subscribe_turn_events(
-    events: &broadcast::Sender<Result<PilotEvent, String>>,
+    events: &broadcast::Sender<Result<PlannerEvent, String>>,
     reply_generation: &Arc<AtomicU64>,
-) -> ReceiverStream<Result<PilotEvent, Status>> {
+) -> ReceiverStream<Result<PlannerEvent, Status>> {
     view_turn_events(events, reply_generation, true)
 }
 
 /// Greeting voice observes the live turn without detaching the frontend's view.
 fn view_turn_events(
-    events: &broadcast::Sender<Result<PilotEvent, String>>,
+    events: &broadcast::Sender<Result<PlannerEvent, String>>,
     reply_generation: &Arc<AtomicU64>,
     take_reply: bool,
-) -> ReceiverStream<Result<PilotEvent, Status>> {
+) -> ReceiverStream<Result<PlannerEvent, Status>> {
     let generation = if take_reply {
         reply_generation.fetch_add(1, Ordering::AcqRel) + 1
     } else {
@@ -161,7 +161,7 @@ fn view_turn_events(
                 Err(broadcast::error::RecvError::Lagged(skipped)) => {
                     let _ = tx
                         .send(Err(Status::resource_exhausted(format!(
-                            "Pilot event subscriber lagged by {skipped} event(s)"
+                            "Planner event subscriber lagged by {skipped} event(s)"
                         ))))
                         .await;
                     break;
@@ -176,17 +176,17 @@ fn view_turn_events(
 const SEEN_TASK_IDS_PER_SESSION: usize = 256;
 
 #[derive(Clone)]
-pub struct PilotServiceImpl {
-    /// `AtlasClient` is cheap to clone (its inner channel is just a handle);
+pub struct PlannerServiceImpl {
+    /// `SrcClient` is cheap to clone (its inner channel is just a handle);
     /// each Stream RPC clones it to discover executor concurrently without
     /// serialising on a single mutex.
-    atlas: AtlasClient,
-    /// Pilot's own provider_id; passed to atlas as `consumer_id` on every
+    src: SrcClient,
+    /// Planner's own provider_id; passed to src as `consumer_id` on every
     /// `ConnectCapability` so the channel record reflects who is using
     /// the executor.
     provider_id: String,
     vlm: VlmClient,
-    soma_prompt_block: Arc<String>,
+    robotdesc_prompt_block: Arc<String>,
     histories: Histories,
     /// Harness-owned standing goal per session. It survives a transport turn
     /// that pauses for user input, so the next message cannot silently replace
@@ -208,18 +208,18 @@ pub struct PilotServiceImpl {
     plan_seq: Arc<AtomicU64>,
 }
 
-impl PilotServiceImpl {
+impl PlannerServiceImpl {
     pub fn new(
-        atlas: AtlasClient,
+        src: SrcClient,
         provider_id: String,
         vlm: VlmClient,
-        soma_prompt_block: String,
+        robotdesc_prompt_block: String,
     ) -> Self {
         Self {
-            atlas,
+            src,
             provider_id,
             vlm,
-            soma_prompt_block: Arc::new(soma_prompt_block),
+            robotdesc_prompt_block: Arc::new(robotdesc_prompt_block),
             histories: Arc::new(Mutex::new(HashMap::new())),
             task_states: Arc::new(Mutex::new(HashMap::new())),
             cancels: Arc::new(Mutex::new(HashMap::new())),
@@ -301,8 +301,8 @@ fn strict_expected_turn(task: &Task) -> bool {
 }
 
 #[tonic::async_trait]
-impl RobonixSystemPilot for PilotServiceImpl {
-    type SubmitTaskStream = ReceiverStream<Result<PilotEvent, Status>>;
+impl RobonixSystemPlanner for PlannerServiceImpl {
+    type SubmitTaskStream = ReceiverStream<Result<PlannerEvent, Status>>;
 
     async fn submit_task(
         &self,
@@ -327,17 +327,17 @@ impl RobonixSystemPilot for PilotServiceImpl {
             .await
         {
             debug!(
-                "[pilot] duplicate task ignored session={} task_id={}",
+                "[planner] duplicate task ignored session={} task_id={}",
                 task.session_id, task.task_id
             );
-            let (_tx, rx) = tokio::sync::mpsc::channel::<Result<PilotEvent, Status>>(1);
+            let (_tx, rx) = tokio::sync::mpsc::channel::<Result<PlannerEvent, Status>>(1);
             return Ok(Response::new(ReceiverStream::new(rx)));
         }
 
         if task_is_abort_turn(&task) {
             let id = task.session_id.clone();
             if let Err(error) = crate::task_control::stop_greeting(&id) {
-                robonix_scribe::warn!("could not record greeting Stop for {id}: {error}");
+                robonix_log::warn!("could not record greeting Stop for {id}: {error}");
             }
             let turn_signaled = if let Some(tx) = self.cancels.lock().await.get(&id) {
                 tx.send_if_modified(|interrupted| {
@@ -351,8 +351,8 @@ impl RobonixSystemPilot for PilotServiceImpl {
             } else {
                 false
             };
-            debug!("[pilot] session-scoped stop session {id} (turn_signaled={turn_signaled})");
-            let (tx, rx) = tokio::sync::mpsc::channel::<Result<PilotEvent, Status>>(1);
+            debug!("[planner] session-scoped stop session {id} (turn_signaled={turn_signaled})");
+            let (tx, rx) = tokio::sync::mpsc::channel::<Result<PlannerEvent, Status>>(1);
             let message = if turn_signaled {
                 "stop requested for this session; its active RTDL plans are being cancelled"
             } else {
@@ -361,7 +361,7 @@ impl RobonixSystemPilot for PilotServiceImpl {
             let _ = tx
                 .send(Ok(pack(
                     &id,
-                    PilotStreamBody::Status(SessionStatusEvent {
+                    PlannerStreamBody::Status(SessionStatusEvent {
                         session_id: id.clone(),
                         state: SessionState::Completed as u32,
                         message: message.to_string(),
@@ -387,7 +387,7 @@ impl RobonixSystemPilot for PilotServiceImpl {
                 None => {
                     if explicit_steer {
                         debug!(
-                            "[pilot] steer for session {} has no active turn; starting a new turn",
+                            "[planner] steer for session {} has no active turn; starting a new turn",
                             task.session_id
                         );
                     }
@@ -415,7 +415,7 @@ impl RobonixSystemPilot for PilotServiceImpl {
                     )));
                 }
                 debug!(
-                    "[pilot] accepting same-session steer with stale expected turn {} (active={})",
+                    "[planner] accepting same-session steer with stale expected turn {} (active={})",
                     expected, existing.turn_id
                 );
             }
@@ -432,10 +432,10 @@ impl RobonixSystemPilot for PilotServiceImpl {
                 subscribe_turn_events(&existing.events, &existing.reply_generation)
             };
             let ok = existing.tx.send(task).await.is_ok();
-            debug!("[pilot] steer task for session {id} (queued={ok})");
+            debug!("[planner] steer task for session {id} (queued={ok})");
             if !ok {
                 return Err(Status::unavailable(
-                    "active Pilot turn stopped before steer was queued",
+                    "active Planner turn stopped before steer was queued",
                 ));
             }
             return Ok(Response::new(rx));
@@ -448,7 +448,7 @@ impl RobonixSystemPilot for PilotServiceImpl {
         // https://docs.rs/tokio/latest/tokio/sync/mpsc/struct.Sender.html
         // https://tokio.rs/tokio/tutorial/channels
         // MPSC: Multiple Producer Single Consumer
-        let (tx, mut internal_rx) = tokio::sync::mpsc::channel::<Result<PilotEvent, Status>>(64);
+        let (tx, mut internal_rx) = tokio::sync::mpsc::channel::<Result<PlannerEvent, Status>>(64);
         let rx = subscribe_turn_events(&candidate_events, &candidate_reply_generation);
         let relay_events = candidate_events.clone();
         tokio::spawn(async move {
@@ -457,10 +457,10 @@ impl RobonixSystemPilot for PilotServiceImpl {
                 let _ = relay_events.send(shared);
             }
         });
-        let atlas = self.atlas.clone();
+        let src = self.src.clone();
         let provider_id = self.provider_id.clone();
         let vlm = self.vlm.clone();
-        let soma_prompt_block = Arc::clone(&self.soma_prompt_block);
+        let robotdesc_prompt_block = Arc::clone(&self.robotdesc_prompt_block);
         let session_id = task.session_id.clone();
         let cancels = Arc::clone(&self.cancels);
         let steers = Arc::clone(&self.steers);
@@ -475,7 +475,7 @@ impl RobonixSystemPilot for PilotServiceImpl {
             let _ = tx
                 .send(Ok(pack(
                     &session_id,
-                    PilotStreamBody::Status(SessionStatusEvent {
+                    PlannerStreamBody::Status(SessionStatusEvent {
                         session_id: session_id.clone(),
                         state: SessionState::Active as u32,
                         message: format!("turn_id={}", task.task_id),
@@ -483,13 +483,13 @@ impl RobonixSystemPilot for PilotServiceImpl {
                 )))
                 .await;
 
-            let mut atlas_for_turn = atlas.clone();
-            let mut executor = match build_executor_conn(atlas, &provider_id).await {
+            let mut src_for_turn = src.clone();
+            let mut executor = match build_executor_conn(src, &provider_id).await {
                 Ok(e) => e,
                 Err(e) => {
                     let _ = tx
                         .send(Err(Status::unavailable(format!(
-                            "cannot reach Executor via atlas: {e:#}"
+                            "cannot reach Executor via src: {e:#}"
                         ))))
                         .await;
                     cancels.lock().await.remove(&session_id);
@@ -506,17 +506,17 @@ impl RobonixSystemPilot for PilotServiceImpl {
                 &mut standing_task,
                 &vlm,
                 &mut executor,
-                &mut atlas_for_turn,
+                &mut src_for_turn,
                 &provider_id,
                 &tx,
                 cancel_rx,
                 steer_rx,
                 plan_seq,
-                soma_prompt_block.as_str(),
+                robotdesc_prompt_block.as_str(),
             )
             .await
             {
-                error!("[pilot] turn error for session '{session_id}': {e:#}");
+                error!("[planner] turn error for session '{session_id}': {e:#}");
                 let _ = tx.send(Err(Status::internal(e.to_string()))).await;
             }
 
@@ -529,28 +529,28 @@ impl RobonixSystemPilot for PilotServiceImpl {
 }
 
 #[tonic::async_trait]
-impl RobonixSystemPilotGetHealth for PilotServiceImpl {
+impl RobonixSystemPlannerGetHealth for PlannerServiceImpl {
     async fn get_module_health(
         &self,
         _request: Request<GetModuleHealthRequest>,
     ) -> Result<Response<GetModuleHealthResponse>, Status> {
         Ok(Response::new(GetModuleHealthResponse {
-            report: Some(pilot_health_report(&self.provider_id)),
+            report: Some(planner_health_report(&self.provider_id)),
         }))
     }
 }
 
-fn pilot_health_report(provider_id: &str) -> ModuleHealthReport {
+fn planner_health_report(provider_id: &str) -> ModuleHealthReport {
     ModuleHealthReport {
         schema_version: MODULE_HEALTH_SCHEMA_VERSION,
         module: Some(ModuleHealth {
             module_key: String::new(),
-            module_id: "pilot".to_string(),
+            module_id: "planner".to_string(),
             provider_id: provider_id.to_string(),
             health: MODULE_HEALTH_OK,
             state: "active".to_string(),
             reason_code: "OK".to_string(),
-            detail: "pilot serving".to_string(),
+            detail: "planner serving".to_string(),
             source: String::new(),
             received_ts_ns: 0,
             ttl_ms: MODULE_HEALTH_TTL_MS,
@@ -559,28 +559,25 @@ fn pilot_health_report(provider_id: &str) -> ModuleHealthReport {
 }
 
 /// Connect to Executor's business-plan and out-of-band control RPCs.
-/// Capability discovery (what the LLM may call) remains Atlas-driven and does
+/// Capability discovery (what the LLM may call) remains Src-driven and does
 /// not expose the control RPC as an RTDL capability.
 async fn build_executor_conn(
-    mut atlas: AtlasClient,
+    mut src: SrcClient,
     consumer_id: &str,
 ) -> anyhow::Result<ExecutorConn> {
-    let (_, executor_provider_id, exec_ch) = atlas_client::connect_to_capability(
-        &mut atlas,
-        consumer_id,
-        "robonix/system/executor/execute",
-    )
-    .await
-    .context("connect_to_capability robonix/system/executor/execute")?;
-    let (_, control_provider_id, control_ch) = atlas_client::connect_to_capability(
-        &mut atlas,
+    let (_, executor_provider_id, exec_ch) =
+        src_client::connect_to_capability(&mut src, consumer_id, "robonix/system/executor/execute")
+            .await
+            .context("connect_to_capability robonix/system/executor/execute")?;
+    let (_, control_provider_id, control_ch) = src_client::connect_to_capability(
+        &mut src,
         consumer_id,
         "robonix/system/executor/control_plan",
     )
     .await
     .context("connect_to_capability robonix/system/executor/control_plan")?;
-    let (_, active_provider_id, active_ch) = atlas_client::connect_to_capability(
-        &mut atlas,
+    let (_, active_provider_id, active_ch) = src_client::connect_to_capability(
+        &mut src,
         consumer_id,
         "robonix/system/executor/list_active_plans",
     )
@@ -602,10 +599,10 @@ async fn build_executor_conn(
 mod tests {
     use super::{
         EVT_FINAL_TEXT, EVT_STATUS, MODULE_HEALTH_OK, MODULE_HEALTH_SCHEMA_VERSION,
-        MODULE_HEALTH_TTL_MS, expected_turn_id, pilot_health_report, strict_expected_turn,
+        MODULE_HEALTH_TTL_MS, expected_turn_id, planner_health_report, strict_expected_turn,
         subscribe_turn_events, task_is_abort_turn, task_is_steer,
     };
-    use crate::pb::pilot::{PilotEvent, Task};
+    use crate::pb::planner::{PlannerEvent, Task};
     use tokio_stream::StreamExt;
 
     fn task(ctx: &str) -> Task {
@@ -621,17 +618,17 @@ mod tests {
     }
 
     #[test]
-    fn pilot_health_report_uses_minimal_module_health_v1_fields() {
-        let report = pilot_health_report("pilot");
+    fn planner_health_report_uses_minimal_module_health_v1_fields() {
+        let report = planner_health_report("planner");
         assert_eq!(report.schema_version, MODULE_HEALTH_SCHEMA_VERSION);
 
         let module = report.module.expect("module health");
-        assert_eq!(module.module_id, "pilot");
-        assert_eq!(module.provider_id, "pilot");
+        assert_eq!(module.module_id, "planner");
+        assert_eq!(module.provider_id, "planner");
         assert_eq!(module.health, MODULE_HEALTH_OK);
         assert_eq!(module.state, "active");
         assert_eq!(module.reason_code, "OK");
-        assert_eq!(module.detail, "pilot serving");
+        assert_eq!(module.detail, "planner serving");
         assert_eq!(module.ttl_ms, MODULE_HEALTH_TTL_MS);
 
         assert!(module.module_key.is_empty());
@@ -667,20 +664,20 @@ mod tests {
         let generation = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
         let mut stream = subscribe_turn_events(&events, &generation);
         events
-            .send(Ok(PilotEvent {
+            .send(Ok(PlannerEvent {
                 event_kind: EVT_STATUS,
                 ..Default::default()
             }))
             .unwrap();
         events
-            .send(Ok(PilotEvent {
+            .send(Ok(PlannerEvent {
                 event_kind: EVT_FINAL_TEXT,
                 final_text: "still running".into(),
                 ..Default::default()
             }))
             .unwrap();
         events
-            .send(Ok(PilotEvent {
+            .send(Ok(PlannerEvent {
                 event_kind: EVT_STATUS,
                 ..Default::default()
             }))
@@ -701,7 +698,7 @@ mod tests {
         let mut frontend = subscribe_turn_events(&events, &generation);
         let mut voice = super::view_turn_events(&events, &generation, false);
         events
-            .send(Ok(PilotEvent {
+            .send(Ok(PlannerEvent {
                 event_kind: EVT_FINAL_TEXT,
                 final_text: "finished".into(),
                 ..Default::default()
@@ -722,7 +719,7 @@ mod tests {
         let mut current = subscribe_turn_events(&events, &generation);
 
         events
-            .send(Ok(PilotEvent {
+            .send(Ok(PlannerEvent {
                 event_kind: EVT_FINAL_TEXT,
                 final_text: "one reply".into(),
                 ..Default::default()

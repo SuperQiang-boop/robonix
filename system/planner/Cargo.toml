@@ -1,12 +1,12 @@
 [package]
-name = "robonix-pilot"
+name = "robonix-planner"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Robonix Pilot: VLM-driven reasoning, planning, and session management"
+description = "Robonix Planner: VLM-driven reasoning, planning, and session management"
 
 [[bin]]
-name = "robonix-pilot"
+name = "robonix-planner"
 path = "src/main.rs"
 
 [dependencies]
@@ -20,13 +20,13 @@ clap.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 serde_yaml.workspace = true
-robonix-scribe.workspace = true
+robonix-log.workspace = true
 uuid.workspace = true
 rmcp = { workspace = true, features = ["client", "transport-child-process", "transport-streamable-http-client-reqwest"] }
 async-openai = { workspace = true, features = ["chat-completion"] }
 reqwest.workspace = true
 futures-util = "0.3"
-robonix-atlas = { path = "../atlas" }
+robonix-src = { path = "../src" }
 
 [build-dependencies]
 robonix-codegen.workspace = true

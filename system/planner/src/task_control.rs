@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MulanPSL-2.0
 //! Harness records for temporarily interrupted work. No new execution RPCs.
 
-use crate::pb::pilot::Task;
-use crate::pb::pilot::{Plan, RtdlNodeState};
+use crate::pb::planner::Task;
+use crate::pb::planner::{Plan, RtdlNodeState};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, HashSet};
 
@@ -225,7 +225,7 @@ pub(crate) fn stop_greeting(session_id: &str) -> std::io::Result<()> {
     std::fs::rename(temporary, path)
 }
 
-/// Face identity is context, never a substitute for Liaison voice authorization.
+/// Face identity is context, never a substitute for Gateway voice authorization.
 pub(crate) fn greeting_task_allowed(task: &Task) -> bool {
     let context = serde_json::from_str::<Value>(&task.context_json).unwrap_or(Value::Null);
     let Some(event_id) = context["greeting_event_id"].as_str() else {
@@ -249,7 +249,7 @@ pub(crate) fn greeting_task_allowed(task: &Task) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::pb::pilot::{CapabilityCall, RtdlNode};
+    use crate::pb::planner::{CapabilityCall, RtdlNode};
 
     /// Check control.
     fn control() -> TaskControl {
@@ -347,7 +347,7 @@ mod tests {
             "B",
             &RtdlNodeState {
                 state: 2,
-                leaf_result: Some(crate::pb::pilot::CapabilityCallResult {
+                leaf_result: Some(crate::pb::planner::CapabilityCallResult {
                     success: true,
                     output: "{\"ok\":false}".into(),
                     ..Default::default()

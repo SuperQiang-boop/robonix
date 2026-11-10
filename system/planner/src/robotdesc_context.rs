@@ -1,34 +1,34 @@
 // SPDX-License-Identifier: MulanPSL-2.0
 //
-// Pilot-side native Soma awareness.
+// Planner-side native Robotdesc awareness.
 //
-// Soma exposes robot body data as gRPC contracts. Pilot fetches the
-// default robot's Soma YAML once at startup, then injects it into every
+// Robotdesc exposes robot body data as gRPC contracts. Planner fetches the
+// default robot's Robotdesc YAML once at startup, then injects it into every
 // turn's system prompt so the model knows its body without the user first
 // calling a bridge tool.
 //
 // Deliberately YAML only. The URDF is a full kinematic XML tree whose link
 // and joint geometry the planner never reasons over, so injecting it only
 // spent context and gave the model a second, lower-level body description to
-// contradict soma.yaml with. Soma still serves get_urdf for consumers that
+// contradict robotdesc.yaml with. Robotdesc still serves get_urdf for consumers that
 // need the kinematics; it just does not belong in a prompt.
 
 use crate::pb::contracts::{
-    robonix_system_soma_get_health_client::RobonixSystemSomaGetHealthClient,
-    robonix_system_soma_get_yaml_client::RobonixSystemSomaGetYamlClient,
+    robonix_system_robotdesc_get_health_client::RobonixSystemRobotdescGetHealthClient,
+    robonix_system_robotdesc_get_yaml_client::RobonixSystemRobotdescGetYamlClient,
 };
-use crate::pb::soma::{GetHealthRequest, GetYamlRequest};
+use crate::pb::robotdesc::{GetHealthRequest, GetYamlRequest};
 use anyhow::{Context, Result};
-use robonix_atlas::client::{self as atlas_client, AtlasClient};
-use robonix_scribe::warn;
+use robonix_log::warn;
+use robonix_src::client::{self as src_client, SrcClient};
 
-const GET_YAML_CONTRACT: &str = "robonix/system/soma/get_yaml";
-const GET_HEALTH_CONTRACT: &str = "robonix/system/soma/get_health";
+const GET_YAML_CONTRACT: &str = "robonix/system/robotdesc/get_yaml";
+const GET_HEALTH_CONTRACT: &str = "robonix/system/robotdesc/get_health";
 
-pub async fn fetch_runtime_prompt_block(atlas: &mut AtlasClient, consumer_id: &str) -> String {
-    match fetch_health(atlas, consumer_id).await {
+pub async fn fetch_runtime_prompt_block(src: &mut SrcClient, consumer_id: &str) -> String {
+    match fetch_health(src, consumer_id).await {
         Ok(value) => format!(
-            "\n\n## Current embodiment state (from Soma)\n\
+            "\n\n## Current embodiment state (from Robotdesc)\n\
              This snapshot was refreshed immediately before planning. Fresh fields are \
              authoritative. Stale or missing fields mean unknown; never reconstruct them \
              from conversation history. `likely_holding` means the calibrated gripper is \
@@ -36,27 +36,27 @@ pub async fn fetch_runtime_prompt_block(atlas: &mut AtlasClient, consumer_id: &s
             serde_json::to_string(&value).unwrap_or_else(|_| "{}".into())
         ),
         Err(error) => format!(
-            "\n\n## Current embodiment state (from Soma)\n\
+            "\n\n## Current embodiment state (from Robotdesc)\n\
              {{\"available\":false,\"error\":{}}}\n",
             serde_json::to_string(&error.to_string()).unwrap_or_else(|_| "\"unknown\"".into())
         ),
     }
 }
 
-async fn fetch_health(atlas: &mut AtlasClient, consumer_id: &str) -> Result<serde_json::Value> {
+async fn fetch_health(src: &mut SrcClient, consumer_id: &str) -> Result<serde_json::Value> {
     let (channel_id, _provider_id, channel) =
-        atlas_client::connect_to_capability(atlas, consumer_id, GET_HEALTH_CONTRACT)
+        src_client::connect_to_capability(src, consumer_id, GET_HEALTH_CONTRACT)
             .await
-            .context("connect to Soma get_health")?;
+            .context("connect to Robotdesc get_health")?;
     let result = async {
-        let response = RobonixSystemSomaGetHealthClient::new(channel)
+        let response = RobonixSystemRobotdescGetHealthClient::new(channel)
             .get_health(GetHealthRequest {})
             .await
-            .context("call Soma get_health")?
+            .context("call Robotdesc get_health")?
             .into_inner();
         let snapshot = response
             .snapshot
-            .context("Soma has not published a health snapshot yet")?;
+            .context("Robotdesc has not published a health snapshot yet")?;
         let components: Vec<_> = snapshot
             .components
             .into_iter()
@@ -117,77 +117,81 @@ async fn fetch_health(atlas: &mut AtlasClient, consumer_id: &str) -> Result<serd
         }))
     }
     .await;
-    let _ = atlas.disconnect_capability(&channel_id).await;
+    let _ = src.disconnect_capability(&channel_id).await;
     result
 }
 
 pub async fn fetch_system_prompt_block(
-    atlas: &mut AtlasClient,
+    src: &mut SrcClient,
     consumer_id: &str,
 ) -> Result<Option<String>> {
-    let yaml = match fetch_yaml(atlas, consumer_id).await {
+    let yaml = match fetch_yaml(src, consumer_id).await {
         Ok(text) => text,
         Err(e) => {
-            warn!("[pilot/soma] get_yaml unavailable; continuing without Soma context: {e:#}");
+            warn!(
+                "[planner/robotdesc] get_yaml unavailable; continuing without Robotdesc context: {e:#}"
+            );
             return Ok(None);
         }
     };
     let mut block = String::from(
-        "\n\n## Robot Body Context (from Soma)\n\n\
-         This is the robot's self-description, loaded automatically at Pilot startup. \
+        "\n\n## Robot Body Context (from Robotdesc)\n\n\
+         This is the robot's self-description, loaded automatically at Planner startup. \
          Treat it as authoritative HARD CONSTRAINTS for the robot's body, sensors, \
          frames, limits, and deployment-specific notes. Do not ask the user to call \
-         Soma manually unless this context is absent or stale.\n\n\
-         ### Hard planning rules from Soma\n\n\
-         - Sensor placement and modality in `soma.yaml` are binding. Do not invent \
+         Robotdesc manually unless this context is absent or stale.\n\n\
+         ### Hard planning rules from Robotdesc\n\n\
+         - Sensor placement and modality in `robotdesc.yaml` are binding. Do not invent \
          sensors, viewpoints, arms, grippers, or degrees of freedom that are not listed.\n\
          - Before planning an observation, match the user's requested viewpoint \
          (front / rear / left / right / top, etc.) against the listed sensors' \
          `placement`, `human_label`, and `cannot_do` notes.\n\
          - If the requested viewpoint is not directly available from the sensors \
-         listed in Soma, say so explicitly. Do NOT call a camera with one placement \
+         listed in Robotdesc, say so explicitly. Do NOT call a camera with one placement \
          and describe its image as if it came from a different placement.\n\
          - If a viewpoint can be achieved only by moving the base (for example, \
          rotate 180 degrees, then use the front camera), state that plan clearly \
          and use motion + observation capabilities rather than pretending a missing \
          sensor exists.\n\n\
-         ### soma.yaml (compact JSON)\n\n```json\n",
+         ### robotdesc.yaml (compact JSON)\n\n```json\n",
     );
     block.push_str(&compact_yaml(&yaml));
     block.push_str("\n```\n");
     Ok(Some(block))
 }
 
-/// Serialize Soma YAML without comments or presentation whitespace while
+/// Serialize Robotdesc YAML without comments or presentation whitespace while
 /// preserving every data field the planner can act on.
 fn compact_yaml(raw: &str) -> String {
     match serde_yaml::from_str::<serde_yaml::Value>(raw) {
         Ok(value) => serde_json::to_string(&value).unwrap_or_else(|_| raw.trim().to_string()),
         Err(error) => {
-            warn!("[pilot/soma] could not compact soma.yaml; keeping source text: {error}");
+            warn!(
+                "[planner/robotdesc] could not compact robotdesc.yaml; keeping source text: {error}"
+            );
             raw.trim().to_string()
         }
     }
 }
 
-async fn fetch_yaml(atlas: &mut AtlasClient, consumer_id: &str) -> Result<String> {
+async fn fetch_yaml(src: &mut SrcClient, consumer_id: &str) -> Result<String> {
     let (channel_id, _provider_id, channel) =
-        atlas_client::connect_to_capability(atlas, consumer_id, GET_YAML_CONTRACT)
+        src_client::connect_to_capability(src, consumer_id, GET_YAML_CONTRACT)
             .await
-            .context("connect to Soma get_yaml")?;
+            .context("connect to Robotdesc get_yaml")?;
     let result = async {
-        let mut client = RobonixSystemSomaGetYamlClient::new(channel);
+        let mut client = RobonixSystemRobotdescGetYamlClient::new(channel);
         let response = client
             .get_yaml(GetYamlRequest {
                 robot_id: String::new(),
             })
             .await
-            .context("call Soma get_yaml")?
+            .context("call Robotdesc get_yaml")?
             .into_inner();
         Ok::<_, anyhow::Error>(response.yaml_text)
     }
     .await;
-    let _ = atlas.disconnect_capability(&channel_id).await;
+    let _ = src.disconnect_capability(&channel_id).await;
     result
 }
 
@@ -196,15 +200,15 @@ mod tests {
     use super::compact_yaml;
 
     #[test]
-    fn representative_soma_context_is_smaller_without_dropping_body_facts() {
-        let yaml = include_str!("../../../examples/webots/soma.yaml");
+    fn representative_robotdesc_context_is_smaller_without_dropping_body_facts() {
+        let yaml = include_str!("../../../examples/webots/robotdesc.yaml");
         let compact_yaml = compact_yaml(yaml);
         let yaml_value: serde_yaml::Value = serde_yaml::from_str(yaml).unwrap();
         let compact_value: serde_json::Value = serde_json::from_str(&compact_yaml).unwrap();
         let before = yaml.len();
         let after = compact_yaml.len();
         eprintln!(
-            "representative Soma prompt bytes: before={before} after={after} reduction={:.1}%",
+            "representative Robotdesc prompt bytes: before={before} after={after} reduction={:.1}%",
             100.0 * (before - after) as f64 / before as f64
         );
         assert!(after < before);

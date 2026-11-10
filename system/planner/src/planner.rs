@@ -10,20 +10,20 @@ use crate::pb::contracts::robonix_system_executor_execute_client::RobonixSystemE
 use crate::pb::contracts::robonix_system_executor_list_active_plans_client::RobonixSystemExecutorListActivePlansClient;
 use crate::pb::executor::rtdl_event::RtdlEventEnum;
 use crate::pb::executor::{ControlPlanRequest, ListActivePlansRequest};
-use crate::pb::pilot::rtdl_node_state::RtdlNodeStateEnum;
-use crate::pb::pilot::{
-    BatchResult, CapabilityCall, CapabilityCallResult, PilotEvent, Plan, RtdlNode, RtdlNodeState,
+use crate::pb::planner::rtdl_node_state::RtdlNodeStateEnum;
+use crate::pb::planner::{
+    BatchResult, CapabilityCall, CapabilityCallResult, Plan, PlannerEvent, RtdlNode, RtdlNodeState,
     SessionStatusEvent, Task, TaskStateEvent,
 };
-use crate::service::{self, PilotStreamBody, SessionState};
+use crate::service::{self, PlannerStreamBody, SessionState};
 use crate::state_context;
 use crate::task_control::{TaskControl, greeting_blocks, greeting_state};
 use crate::vlm::{Message, VlmClient, VlmStreamItem};
 use anyhow::{Context, Result};
 use futures_util::StreamExt;
-use robonix_atlas::client::AtlasClient;
-use robonix_atlas::pb as atlas_pb;
-use robonix_scribe::{debug, info, warn};
+use robonix_log::{debug, info, warn};
+use robonix_src::client::SrcClient;
+use robonix_src::pb as src_pb;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
@@ -36,8 +36,8 @@ use tonic::Request;
 use tonic::transport::Channel;
 use uuid::Uuid;
 
-/// gRPC client for executor's plan-dispatch contract. Pilot only ever calls
-/// `Execute(Plan)` — discovery happens directly against atlas now.
+/// gRPC client for executor's plan-dispatch contract. Planner only ever calls
+/// `Execute(Plan)` — discovery happens directly against src now.
 pub struct ExecutorConn {
     pub graph: RobonixSystemExecutorExecuteClient<Channel>,
     pub control: RobonixSystemExecutorControlPlanClient<Channel>,
@@ -54,7 +54,7 @@ const RTDL_DO: u32 = 2;
 struct DisplayCapability<'a> {
     display_name: String,
     provider_id: &'a str,
-    cap: &'a atlas_pb::Capability,
+    cap: &'a src_pb::Capability,
 }
 
 #[derive(Default)]
@@ -70,7 +70,7 @@ struct PromptSection<'a> {
 }
 
 impl CapabilityPromptCache {
-    /// Reuse the rendered catalog while Atlas reports the same provider,
+    /// Reuse the rendered catalog while Src reports the same provider,
     /// contract, description, and input-schema data. Discovery still runs on
     /// every round, so a registration change invalidates the cache immediately.
     fn render<'a>(&'a mut self, caps: &[DisplayCapability<'_>]) -> (&'a str, bool) {
@@ -132,7 +132,7 @@ fn assemble_planning_messages(
         "estimated_tokens": estimated_text_tokens(correction_bytes),
     }));
     info!(
-        "[pilot/prompt] {}",
+        "[planner/prompt] {}",
         serde_json::json!({
             "round": round,
             "prompt_text_bytes": prompt_bytes,
@@ -154,7 +154,7 @@ fn assemble_planning_messages(
 }
 
 fn max_tool_rounds() -> usize {
-    std::env::var("ROBONIX_PILOT_MAX_TOOL_ROUNDS")
+    std::env::var("ROBONIX_PLANNER_MAX_TOOL_ROUNDS")
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(64)
@@ -162,7 +162,7 @@ fn max_tool_rounds() -> usize {
 
 fn vlm_idle_timeout() -> Duration {
     configured_vlm_idle_timeout(
-        std::env::var("ROBONIX_PILOT_VLM_IDLE_TIMEOUT_SECS")
+        std::env::var("ROBONIX_PLANNER_VLM_IDLE_TIMEOUT_SECS")
             .ok()
             .as_deref(),
     )
@@ -235,7 +235,7 @@ fn task_is_session_end(task: &Task) -> bool {
         .unwrap_or(false)
 }
 
-/// `context_json.modality` — set by liaison to "text" / "voice" / "api".
+/// `context_json.modality` — set by gateway to "text" / "voice" / "api".
 /// `None` when the field is missing or context_json is empty/malformed.
 fn task_modality(task: &Task) -> Option<String> {
     let j = task.context_json.trim();
@@ -259,7 +259,7 @@ fn skip_memory_prefetch(user_text: &str) -> bool {
 }
 
 /// Metadata for one in-flight RTDL tree in the forest. Trees are keyed by
-/// pilot-assigned `plan_id`; this carries what the supervisor and the LLM need
+/// planner-assigned `plan_id`; this carries what the supervisor and the LLM need
 /// to reason about a running tree (and, later, what the chat UI renders).
 struct TreeMeta {
     /// LLM-supplied `rtdl_description` (sub-task label).
@@ -327,7 +327,7 @@ async fn drive_plan(
     let mut stream = match client.execute(Request::new(plan)).await {
         Ok(resp) => resp.into_inner(),
         Err(e) => {
-            warn!("[pilot/forest] plan_id={plan_id} Execute RPC failed: {e}");
+            warn!("[planner/forest] plan_id={plan_id} Execute RPC failed: {e}");
             forest_revision.fetch_add(1, Ordering::Release);
             let _ = events_tx
                 .send(ForestEvent::PlanDone {
@@ -388,7 +388,7 @@ async fn drive_plan(
             }
             Ok(None) => break,
             Err(e) => {
-                warn!("[pilot/forest] plan_id={plan_id} stream recv error: {e}");
+                warn!("[planner/forest] plan_id={plan_id} stream recv error: {e}");
                 any_failed = true;
                 break;
             }
@@ -406,8 +406,8 @@ async fn drive_plan(
         .await;
 }
 
-/// Cancel every real task tree owned by this turn before reporting the Pilot
-/// session interrupted. Dropping the Execute stream alone only detaches Pilot;
+/// Cancel every real task tree owned by this turn before reporting the Planner
+/// session interrupted. Dropping the Execute stream alone only detaches Planner;
 /// Executor continues the plan (and synchronous tools such as run_command)
 /// unless its PlanRuntime receives an explicit cancel_plan request.
 async fn cancel_forest_plans(
@@ -434,18 +434,18 @@ async fn cancel_forest_plans(
             Ok(Ok(response)) => {
                 let response = response.into_inner();
                 if response.success {
-                    info!("[pilot] canceled executor plan {target} on abort_turn");
+                    info!("[planner] canceled executor plan {target} on abort_turn");
                 } else {
                     warn!(
-                        "[pilot] cancel executor plan {target} rejected: {}",
+                        "[planner] cancel executor plan {target} rejected: {}",
                         response.error
                     );
                 }
             }
             Ok(Err(error)) => {
-                warn!("[pilot] cancel executor plan {target} failed: {error}")
+                warn!("[planner] cancel executor plan {target} failed: {error}")
             }
-            Err(_) => warn!("[pilot] cancel executor plan {target} timed out"),
+            Err(_) => warn!("[planner] cancel executor plan {target} timed out"),
         }
     }
 }
@@ -670,7 +670,7 @@ fn build_forest_block(
          plan_id at most once — a cancel that returned is already stopping; do NOT \
          re-issue it. Do not reuse these ids for new trees. If an in-flight plan \
          is already executing the same goal, do not cancel or re-issue it; wait \
-         for it to finish. This block contains trees owned by the current Pilot \
+         for it to finish. This block contains trees owned by the current Planner \
          supervisor only. The authoritative Executor snapshot below may contain \
          additional plans started by an earlier interaction. Never use this \
          local block alone to answer how many tasks are running.\n",
@@ -738,18 +738,18 @@ async fn fetch_executor_active_block(executor: &mut ExecutorConn) -> String {
                 build_executor_active_block(Some(&response.plans_json))
             } else {
                 warn!(
-                    "[pilot/state] Executor active-plan query rejected: {}",
+                    "[planner/state] Executor active-plan query rejected: {}",
                     response.error
                 );
                 build_executor_active_block(None)
             }
         }
         Ok(Err(error)) => {
-            warn!("[pilot/state] Executor active-plan query failed: {error}");
+            warn!("[planner/state] Executor active-plan query failed: {error}");
             build_executor_active_block(None)
         }
         Err(_) => {
-            warn!("[pilot/state] Executor active-plan query timed out");
+            warn!("[planner/state] Executor active-plan query timed out");
             build_executor_active_block(None)
         }
     }
@@ -770,7 +770,7 @@ fn append_steer(
     if text.is_empty() {
         return false;
     }
-    info!("[pilot/steer] mid-task input: {text}");
+    info!("[planner/steer] mid-task input: {text}");
     history.push(Message::user(text));
     let mut control = current_task
         .take()
@@ -839,7 +839,7 @@ fn apply_task_update(
     let before = state.clone();
     if update.goal != state.goal {
         warn!(
-            "[pilot/rtdl] ignoring model goal replacement {:?}; harness goal remains {:?}",
+            "[planner/rtdl] ignoring model goal replacement {:?}; harness goal remains {:?}",
             update.goal, state.goal
         );
         // The response was sampled for an older interaction. Applying even
@@ -920,7 +920,7 @@ async fn compact_history(history: &mut Vec<Message>, vlm: &VlmClient) {
     compacted.extend_from_slice(&history[split..]);
     *history = compacted;
     info!(
-        "[pilot] compacted history {before} -> {} messages (was ~{total} chars)",
+        "[planner] compacted history {before} -> {} messages (was ~{total} chars)",
         history.len()
     );
 }
@@ -1000,7 +1000,7 @@ fn record_dispatched_plan(history: &mut Vec<Message>, plan: &Plan, description: 
         "calls": calls,
     });
     history.push(Message::user(&format!(
-        "Pilot harness dispatch record (already sent to Executor; not a new user request): {record}"
+        "Planner harness dispatch record (already sent to Executor; not a new user request): {record}"
     )));
     history::trim(history, MAX_HISTORY);
 }
@@ -1012,13 +1012,13 @@ pub async fn run_turn(
     standing_task: &mut Option<TaskState>,
     vlm: &VlmClient,
     executor: &mut ExecutorConn,
-    atlas: &mut AtlasClient,
+    src: &mut SrcClient,
     consumer_id: &str,
-    tx: &mpsc::Sender<Result<PilotEvent, tonic::Status>>,
+    tx: &mpsc::Sender<Result<PlannerEvent, tonic::Status>>,
     mut cancel_rx: watch::Receiver<bool>,
     mut steer_rx: mpsc::Receiver<Task>,
     plan_seq: Arc<AtomicU64>,
-    soma_prompt_block: &str,
+    robotdesc_prompt_block: &str,
 ) -> Result<()> {
     let session_id = task.session_id.clone();
     // Keep the provider's prefix-cache routing stable across planning rounds
@@ -1036,7 +1036,7 @@ pub async fn run_turn(
             let _ = tx
                 .send(Ok(service::pack(
                     &session_id,
-                    PilotStreamBody::Status(SessionStatusEvent {
+                    PlannerStreamBody::Status(SessionStatusEvent {
                         session_id: session_id.clone(),
                         state: SessionState::Failed as u32,
                         message: "interrupted".to_string(),
@@ -1048,12 +1048,12 @@ pub async fn run_turn(
     }
 
     if task_is_session_end(task) {
-        info!("[pilot] session_end: invoking compact_memory if available");
-        memory::try_compact(executor, atlas, consumer_id).await;
+        info!("[planner] session_end: invoking compact_memory if available");
+        memory::try_compact(executor, src, consumer_id).await;
         let _ = tx
             .send(Ok(service::pack(
                 &session_id,
-                PilotStreamBody::Status(SessionStatusEvent {
+                PlannerStreamBody::Status(SessionStatusEvent {
                     session_id: session_id.clone(),
                     state: SessionState::Completed as u32,
                     message: String::new(),
@@ -1066,14 +1066,14 @@ pub async fn run_turn(
     // 1. Build stable system-prompt sections once per turn.
     let standing_prompt = build_system_prompt(load_agent_soul().as_deref());
 
-    // Pilot's capability catalog comes straight from atlas (filtered to
+    // Planner's capability catalog comes straight from src (filtered to
     // MCP transport — only those are LLM-callable). McpParams ride along
     // in Capability.params, no Connect needed.
     let _ = consumer_id; // currently unused; kept on the signature for future channel-tracked discovery
-    let initial_caps = discovery::discover(atlas)
+    let initial_caps = discovery::discover(src)
         .await
-        .map_err(|e| anyhow::anyhow!("atlas capability discovery failed: {e}"))?;
-    // Pilot binds to the canonical contract_id, not the LLM-facing tool
+        .map_err(|e| anyhow::anyhow!("src capability discovery failed: {e}"))?;
+    // Planner binds to the canonical contract_id, not the LLM-facing tool
     // name: the latter is just the contract_id leaf and a provider could
     // rename it freely. contract_id is the stable identity.
     let search_memory_target = initial_caps
@@ -1107,7 +1107,7 @@ pub async fn run_turn(
     // system prompt tiny while still giving the LLM full per-provider context
     // when relevant. Errors here are non-fatal — providers that didn't register
     // a path simply don't appear in the block.
-    let capability_docs_prompt = if let Ok(docs) = discovery::cap_md_index(atlas).await
+    let capability_docs_prompt = if let Ok(docs) = discovery::cap_md_index(src).await
         && !docs.is_empty()
     {
         let mut prompt = String::from(
@@ -1139,7 +1139,7 @@ pub async fn run_turn(
         String::new()
     };
 
-    // Voice-mode brevity hint. Liaison stamps `context_json.modality =
+    // Voice-mode brevity hint. Gateway stamps `context_json.modality =
     // "voice"` for every voice-path Task; in that case we ask the VLM
     // for a short reply because the user is going to *hear* it via TTS,
     // not read a Markdown wall. Threshold is intentionally tight (~30
@@ -1165,7 +1165,7 @@ pub async fn run_turn(
         let _ = tx
             .send(Ok(service::pack(
                 &session_id,
-                PilotStreamBody::TaskState(TaskStateEvent {
+                PlannerStreamBody::TaskState(TaskStateEvent {
                     goal: state.goal.clone(),
                     success_criterion: state.success_criterion.clone(),
                     status: state.status.clone(),
@@ -1177,7 +1177,7 @@ pub async fn run_turn(
     let max_rounds = max_tool_rounds();
     let mut round: u32 = 0;
 
-    // Pilot-assigned plan ids come from one process-global atomic counter.
+    // Planner-assigned plan ids come from one process-global atomic counter.
     // They are reserved only for normal RTDL trees, never for meta operations,
     // and are unique even when different sessions dispatch concurrently.
 
@@ -1218,7 +1218,7 @@ pub async fn run_turn(
                     let _ = tx
                         .send(Ok(service::pack(
                             &session_id,
-                            PilotStreamBody::FinalText(last_content.clone()),
+                            PlannerStreamBody::FinalText(last_content.clone()),
                         )))
                         .await;
                     break;
@@ -1338,7 +1338,7 @@ pub async fn run_turn(
                             let _ = tx
                                 .send(Ok(service::pack(
                                     &session_id,
-                                    PilotStreamBody::NodeState(ns),
+                                    PlannerStreamBody::NodeState(ns),
                                 )))
                                 .await;
                         }
@@ -1350,7 +1350,7 @@ pub async fn run_turn(
                             }
                             if requested_cancellation {
                                 history.push(Message::user(&format!(
-                                    "Pilot harness event: the requested cancellation of RTDL plan \
+                                    "Planner harness event: the requested cancellation of RTDL plan \
                                      {plan_id} is complete. Do not query or cancel that plan again. \
                                      Unrelated in-flight trees remain independent. If the current \
                                      interaction requested only this stop and has no successor action, \
@@ -1371,7 +1371,7 @@ pub async fn run_turn(
                             let _ = tx
                                 .send(Ok(service::pack(
                                     &session_id,
-                                    PilotStreamBody::BatchResult(batch),
+                                    PlannerStreamBody::BatchResult(batch),
                                 )))
                                 .await;
                             // Re-plan after natural completion or exactly once
@@ -1387,11 +1387,11 @@ pub async fn run_turn(
                                 if state.pending_done && forest.is_empty() && !state.control.has_saved() {
                                     state.status = "done".to_string();
                                     state.pending_done = false;
-                                    info!("[pilot/rtdl] applied deferred task_done after plan {plan_id} completed");
+                                    info!("[planner/rtdl] applied deferred task_done after plan {plan_id} completed");
                                     let _ = tx
                                         .send(Ok(service::pack(
                                             &session_id,
-                                            PilotStreamBody::TaskState(TaskStateEvent {
+                                            PlannerStreamBody::TaskState(TaskStateEvent {
                                                 goal: state.goal.clone(),
                                                 success_criterion: state.success_criterion.clone(),
                                                 status: state.status.clone(),
@@ -1438,15 +1438,15 @@ pub async fn run_turn(
         // the turn plans against a compact window instead of the full transcript.
         compact_history(history, vlm).await;
 
-        // Re-discover capabilities from atlas every round so providers that
+        // Re-discover capabilities from src every round so providers that
         // registered mid-turn are visible in the next call.
-        let cap_list = discovery::discover(atlas)
+        let cap_list = discovery::discover(src)
             .await
-            .map_err(|e| anyhow::anyhow!("atlas capability discovery failed: {e}"))?;
+            .map_err(|e| anyhow::anyhow!("src capability discovery failed: {e}"))?;
 
         let embodiment_block =
-            crate::soma_context::fetch_runtime_prompt_block(atlas, consumer_id).await;
-        let environment_block = state_context::collect(executor, atlas, &cap_list).await;
+            crate::robotdesc_context::fetch_runtime_prompt_block(src, consumer_id).await;
+        let environment_block = state_context::collect(executor, src, &cap_list).await;
 
         let display_caps = build_display_capabilities(&cap_list);
         let target_map = build_capability_target_map(&display_caps);
@@ -1478,7 +1478,7 @@ pub async fn run_turn(
         let _ = tx
             .send(Ok(service::pack(
                 &session_id,
-                PilotStreamBody::Status(SessionStatusEvent {
+                PlannerStreamBody::Status(SessionStatusEvent {
                     session_id: session_id.clone(),
                     state: SessionState::Active as u32,
                     message: "Planning the next step".to_string(),
@@ -1499,7 +1499,7 @@ pub async fn run_turn(
                 },
                 PromptSection {
                     name: "embodiment_static",
-                    content: soma_prompt_block,
+                    content: robotdesc_prompt_block,
                 },
                 PromptSection {
                     name: "memory",
@@ -1565,7 +1565,7 @@ pub async fn run_turn(
                 {
                     Ok(Ok(stream)) => stream,
                     Ok(Err(error)) if vlm_attempt == 0 => {
-                        warn!("[pilot/vlm] opening stream failed; retrying once: {error:#}");
+                        warn!("[planner/vlm] opening stream failed; retrying once: {error:#}");
                         vlm_attempt += 1;
                         continue;
                     }
@@ -1573,7 +1573,7 @@ pub async fn run_turn(
                         return Err(anyhow::anyhow!("VLM stream error: {error:#}"));
                     }
                     Err(_) if vlm_attempt == 0 => {
-                        warn!("[pilot/vlm] opening stream timed out; retrying once");
+                        warn!("[planner/vlm] opening stream timed out; retrying once");
                         vlm_attempt += 1;
                         continue;
                     }
@@ -1614,7 +1614,7 @@ pub async fn run_turn(
                                 VlmStreamItem::TextDelta(delta) => full_text.push_str(&delta),
                                 VlmStreamItem::ToolCall(tc) => tool_calls.push(tc),
                                 VlmStreamItem::Usage(usage) => info!(
-                                    "[pilot/prompt] {}",
+                                    "[planner/prompt] {}",
                                     serde_json::json!({
                                         "round": round,
                                         "provider_prompt_tokens": usage.prompt_tokens,
@@ -1633,11 +1633,11 @@ pub async fn run_turn(
 
                 if let Err(error) = receive_result {
                     if vlm_attempt == 0 {
-                        warn!("[pilot/vlm] {error:#}; retrying once");
+                        warn!("[planner/vlm] {error:#}; retrying once");
                         let _ = tx
                             .send(Ok(service::pack(
                                 &session_id,
-                                PilotStreamBody::Status(SessionStatusEvent {
+                                PlannerStreamBody::Status(SessionStatusEvent {
                                     session_id: session_id.clone(),
                                     state: SessionState::Active as u32,
                                     message: "VLM response delayed; retrying once".to_string(),
@@ -1672,7 +1672,7 @@ pub async fn run_turn(
             }
 
             let raw_content = content.unwrap_or_default();
-            debug!("[pilot/rtdl/raw] raw_content={raw_content}");
+            debug!("[planner/rtdl/raw] raw_content={raw_content}");
             let parsed = parse_rtdl_assistant_response(&raw_content).with_context(|| {
                 format!(
                     "parse RTDL assistant response: {}",
@@ -1687,13 +1687,13 @@ pub async fn run_turn(
             } = match parsed {
                 Ok(env) => env,
                 Err(e) if correction.is_none() => {
-                    warn!("[pilot/rtdl] parse failed round={round}, retrying once: {e:#}");
+                    warn!("[planner/rtdl] parse failed round={round}, retrying once: {e:#}");
                     correction = Some(build_rtdl_retry_prompt(&e, &raw_content, &display_caps));
                     continue;
                 }
                 Err(e) => {
                     warn!(
-                        "[pilot/rtdl] parse failed again round={round}, ending turn gracefully: {e:#}"
+                        "[planner/rtdl] parse failed again round={round}, ending turn gracefully: {e:#}"
                     );
                     let plan_id = String::new();
                     let graph = empty_sequence_plan(plan_id.clone(), session_id.clone(), round);
@@ -1710,7 +1710,7 @@ pub async fn run_turn(
             };
 
             debug!(
-                "[pilot/rtdl/raw] model_rtdl={}",
+                "[planner/rtdl/raw] model_rtdl={}",
                 serde_json::to_string(&rtdl).unwrap_or_else(|_| "<unserializable>".into())
             );
 
@@ -1728,13 +1728,13 @@ pub async fn run_turn(
                 }
                 Ok(None) => {}
                 Err(e) if correction.is_none() => {
-                    warn!("[pilot/rtdl] meta op invalid round={round}, retrying once: {e:#}");
+                    warn!("[planner/rtdl] meta op invalid round={round}, retrying once: {e:#}");
                     correction = Some(build_rtdl_retry_prompt(&e, &raw_content, &display_caps));
                     continue;
                 }
                 Err(e) => {
                     warn!(
-                        "[pilot/rtdl] meta op invalid again round={round}, ending turn gracefully: {e:#}"
+                        "[planner/rtdl] meta op invalid again round={round}, ending turn gracefully: {e:#}"
                     );
                     let plan_id = String::new();
                     let graph = empty_sequence_plan(plan_id.clone(), session_id.clone(), round);
@@ -1767,7 +1767,7 @@ pub async fn run_turn(
                     &mut graph, std::time::Instant::now(),
                 )?;
                 if corrected > 0 {
-                    info!("[pilot/navigation] generated {corrected} Scene-derived goal quaternion(s) from authoritative yaw");
+                    info!("[planner/navigation] generated {corrected} Scene-derived goal quaternion(s) from authoritative yaw");
                 }
                 Ok(graph)
             })
@@ -1788,12 +1788,12 @@ pub async fn run_turn(
                     );
                 }
                 Err(e) if correction.is_none() => {
-                    warn!("[pilot/rtdl] expand failed round={round}, retrying once: {e:#}");
+                    warn!("[planner/rtdl] expand failed round={round}, retrying once: {e:#}");
                     correction = Some(build_rtdl_retry_prompt(&e, &raw_content, &display_caps));
                 }
                 Err(e) => {
                     warn!(
-                        "[pilot/rtdl] expand failed again round={round}, ending turn gracefully: {e:#}"
+                        "[planner/rtdl] expand failed again round={round}, ending turn gracefully: {e:#}"
                     );
                     let plan_id = String::new();
                     let graph = empty_sequence_plan(plan_id.clone(), session_id.clone(), round);
@@ -1820,7 +1820,7 @@ pub async fn run_turn(
             let _ = tx
                 .send(Ok(service::pack(
                     &session_id,
-                    PilotStreamBody::FinalText(assistant_content),
+                    PlannerStreamBody::FinalText(assistant_content),
                 )))
                 .await;
             break;
@@ -1829,9 +1829,9 @@ pub async fn run_turn(
         if let Some(meta_op) = meta_op {
             let targets = meta_op.cancellation_targets(&forest);
             if let Some(target) = invalid_cancel_target(&targets, &forest, &cancel_requested) {
-                warn!("[pilot/harness] suppressed stale or duplicate meta op for plan {target}");
+                warn!("[planner/harness] suppressed stale or duplicate meta op for plan {target}");
                 history.push(Message::user(&format!(
-                    "Pilot harness feedback: plan-control target {target} is not active or is already stopping. Re-read In-flight trees and choose a currently listed plan_id. Do not retry a completed control operation."
+                    "Planner harness feedback: plan-control target {target} is not active or is already stopping. Re-read In-flight trees and choose a currently listed plan_id. Do not retry a completed control operation."
                 )));
                 history::trim(history, MAX_HISTORY);
                 should_plan = true;
@@ -1842,9 +1842,9 @@ pub async fn run_turn(
                     .get(plan_id)
                     .is_none_or(|meta| !meta.steps.iter().any(|step| step.op_id == *op_id))
             {
-                warn!("[pilot/harness] suppressed stop_at for unknown op {plan_id}/{op_id}");
+                warn!("[planner/harness] suppressed stop_at for unknown op {plan_id}/{op_id}");
                 history.push(Message::user(&format!(
-                    "Pilot harness feedback: RTDL plan {plan_id} has no listed target_op_id {op_id}. Copy an exact op_id from In-flight trees and do not guess which step is current."
+                    "Planner harness feedback: RTDL plan {plan_id} has no listed target_op_id {op_id}. Copy an exact op_id from In-flight trees and do not guess which step is current."
                 )));
                 history::trim(history, MAX_HISTORY);
                 should_plan = true;
@@ -1857,7 +1857,7 @@ pub async fn run_turn(
                     let _ = tx
                         .send(Ok(service::pack(
                             &session_id,
-                            PilotStreamBody::TaskState(TaskStateEvent {
+                            PlannerStreamBody::TaskState(TaskStateEvent {
                                 goal: state.goal.clone(),
                                 success_criterion: state.success_criterion.clone(),
                                 status: state.status.clone(),
@@ -1873,7 +1873,7 @@ pub async fn run_turn(
                 let _ = tx
                     .send(Ok(service::pack(
                         &session_id,
-                        PilotStreamBody::TextChunk(assistant_content),
+                        PlannerStreamBody::TextChunk(assistant_content),
                     )))
                     .await;
             }
@@ -1887,7 +1887,7 @@ pub async fn run_turn(
                     } => {
                         if let Err(error) = state.control.save(plan_id) {
                             history.push(Message::user(&format!(
-                                "Pilot harness feedback: {error}. No cancellation was submitted."
+                                "Planner harness feedback: {error}. No cancellation was submitted."
                             )));
                             should_plan = true;
                             continue 'supervisor;
@@ -1908,15 +1908,15 @@ pub async fn run_turn(
             round += 1;
             match result {
                 Ok(message) => {
-                    info!("[pilot/control] {message}");
+                    info!("[planner/control] {message}");
                     history.push(Message::user(&format!(
-                        "Pilot plan-control result: {message} This was an out-of-band meta operation, not an RTDL tree. Do not issue it again."
+                        "Planner plan-control result: {message} This was an out-of-band meta operation, not an RTDL tree. Do not issue it again."
                     )));
                     history::trim(history, MAX_HISTORY);
                     let _ = tx
                         .send(Ok(service::pack(
                             &session_id,
-                            PilotStreamBody::Status(SessionStatusEvent {
+                            PlannerStreamBody::Status(SessionStatusEvent {
                                 session_id: session_id.clone(),
                                 state: SessionState::Active as u32,
                                 message: "Plan control accepted".to_string(),
@@ -1928,7 +1928,7 @@ pub async fn run_turn(
                     should_plan = targets.is_empty();
                 }
                 Err(error) => {
-                    warn!("[pilot/control] meta operation failed: {error:#}");
+                    warn!("[planner/control] meta operation failed: {error:#}");
                     if let Some(state) = standing_task.as_mut() {
                         state.control.block();
                     }
@@ -1936,7 +1936,7 @@ pub async fn run_turn(
                         cancel_requested.remove(target);
                     }
                     history.push(Message::user(&format!(
-                        "Pilot plan-control failure: {error:#}. The operation was not accepted; inspect the current In-flight trees before deciding whether to retry."
+                        "Planner plan-control failure: {error:#}. The operation was not accepted; inspect the current In-flight trees before deciding whether to retry."
                     )));
                     history::trim(history, MAX_HISTORY);
                     should_plan = true;
@@ -1951,27 +1951,27 @@ pub async fn run_turn(
         let call_signatures = plan_call_signatures(&graph);
         let cancel_targets = plan_cancel_targets(&graph);
         if mixes_control_inspection_with_action(&graph) {
-            warn!("[pilot/harness] suppressed mixed control inspection and action tree");
+            warn!("[planner/harness] suppressed mixed control inspection and action tree");
             history.push(Message::user(
-                "Pilot harness feedback: legacy plan-control builtins cannot be mixed with business RTDL. Use a root cancel_plan, cancel_all, or stop_plan_at meta op instead; dispatch successor work only after control completion.",
+                "Planner harness feedback: legacy plan-control builtins cannot be mixed with business RTDL. Use a root cancel_plan, cancel_all, or stop_plan_at meta op instead; dispatch successor work only after control completion.",
             ));
             history::trim(history, MAX_HISTORY);
             should_plan = true;
             continue 'supervisor;
         }
         if let Some(target) = invalid_cancel_target(&cancel_targets, &forest, &cancel_requested) {
-            warn!("[pilot/harness] suppressed stale or duplicate cancel for plan {target}");
+            warn!("[planner/harness] suppressed stale or duplicate cancel for plan {target}");
             history.push(Message::user(
-                "Pilot harness feedback: that legacy cancel target is not cancellable now. Re-read In-flight trees and use one root plan-control meta op; do not retry a finished target or create a cancel RTDL tree.",
+                "Planner harness feedback: that legacy cancel target is not cancellable now. Re-read In-flight trees and use one root plan-control meta op; do not retry a finished target or create a cancel RTDL tree.",
             ));
             history::trim(history, MAX_HISTORY);
             should_plan = true;
             continue 'supervisor;
         }
         if let Some(duplicate) = duplicate_in_flight_signature(&call_signatures, &forest) {
-            warn!("[pilot/harness] suppressed duplicate in-flight call: {duplicate}");
+            warn!("[planner/harness] suppressed duplicate in-flight call: {duplicate}");
             history.push(Message::user(
-                "Pilot harness feedback: that exact capability call is already in flight. Do not dispatch or cancel it again; wait for its result.",
+                "Planner harness feedback: that exact capability call is already in flight. Do not dispatch or cancel it again; wait for its result.",
             ));
             history::trim(history, MAX_HISTORY);
             should_plan = false;
@@ -1988,7 +1988,7 @@ pub async fn run_turn(
             continue 'supervisor;
         }
         if calls > 0 && greeting_blocks(&greeting_state()) {
-            history.push(Message::user("Pilot harness feedback: greeting/conversation is still holding movement, or its completion is unconfirmed. No new tree was dispatched. Keep the request pending and wait for the greeting state to change; do not retry, resume, or bypass the restriction."));
+            history.push(Message::user("Planner harness feedback: greeting/conversation is still holding movement, or its completion is unconfirmed. No new tree was dispatched. Keep the request pending and wait for the greeting state to change; do not retry, resume, or bypass the restriction."));
             history::trim(history, MAX_HISTORY);
             should_plan = false;
             continue 'supervisor;
@@ -1998,7 +1998,7 @@ pub async fn run_turn(
                 state.control.blocks_actions() || state.control.repeats_completed(&call_signatures)
             })
         {
-            history.push(Message::user("Pilot harness feedback: retained work is blocked by a failure, or this would repeat a completed step. No action was dispatched. Explain the blocker and wait for a new user decision."));
+            history.push(Message::user("Planner harness feedback: retained work is blocked by a failure, or this would repeat a completed step. No action was dispatched. Explain the blocker and wait for a new user decision."));
             history::trim(history, MAX_HISTORY);
             should_plan = false;
             continue 'supervisor;
@@ -2009,7 +2009,7 @@ pub async fn run_turn(
         // dispatching work or while an older tree remains in flight.
         if let Some(updated) = task_update {
             info!(
-                "[pilot/rtdl] task_update goal='{}' status='{}'",
+                "[planner/rtdl] task_update goal='{}' status='{}'",
                 updated.goal, updated.status
             );
             let changed = apply_task_update(
@@ -2025,7 +2025,7 @@ pub async fn run_turn(
                 let _ = tx
                     .send(Ok(service::pack(
                         &session_id,
-                        PilotStreamBody::TaskState(TaskStateEvent {
+                        PlannerStreamBody::TaskState(TaskStateEvent {
                             goal: state.goal.clone(),
                             success_criterion: state.success_criterion.clone(),
                             status: state.status.clone(),
@@ -2052,14 +2052,14 @@ pub async fn run_turn(
             let _ = tx
                 .send(Ok(service::pack(
                     &session_id,
-                    PilotStreamBody::TaskState(TaskStateEvent {
+                    PlannerStreamBody::TaskState(TaskStateEvent {
                         goal: state.goal.clone(),
                         success_criterion: state.success_criterion.clone(),
                         status: state.status.clone(),
                     }),
                 )))
                 .await;
-            history.push(Message::user(&format!("Pilot harness event: temporary work succeeded and was verified. Continue only unfinished steps of this retained original request, rechecking current capability-specific preconditions. Never replay successful steps: {saved}")));
+            history.push(Message::user(&format!("Planner harness event: temporary work succeeded and was verified. Continue only unfinished steps of this retained original request, rechecking current capability-specific preconditions. Never replay successful steps: {saved}")));
             history::trim(history, MAX_HISTORY);
             scene_navigation_goals.clear();
             should_plan = true;
@@ -2090,7 +2090,7 @@ pub async fn run_turn(
             // resumes on the next user message.
             if forest.is_empty() {
                 if hit_cap && !(task_done || standing_task.is_none()) {
-                    warn!("[pilot] hit max tool rounds ({max_rounds}), stopping turn");
+                    warn!("[planner] hit max tool rounds ({max_rounds}), stopping turn");
                 }
                 let reply = if assistant_content.trim().is_empty() && !task_done {
                     "I need more information before I can continue.".to_string()
@@ -2100,7 +2100,7 @@ pub async fn run_turn(
                 let _ = tx
                     .send(Ok(service::pack(
                         &session_id,
-                        PilotStreamBody::FinalText(reply),
+                        PlannerStreamBody::FinalText(reply),
                     )))
                     .await;
                 break;
@@ -2111,19 +2111,19 @@ pub async fn run_turn(
             // relevant plan result before producing FinalText.
             if !assistant_content.trim().is_empty() {
                 let body = if task_done {
-                    PilotStreamBody::FinalText(assistant_content.clone())
+                    PlannerStreamBody::FinalText(assistant_content.clone())
                 } else {
-                    PilotStreamBody::TextChunk(assistant_content.clone())
+                    PlannerStreamBody::TextChunk(assistant_content.clone())
                 };
                 let _ = tx.send(Ok(service::pack(&session_id, body))).await;
                 if !task_done {
-                    // Status is the narration boundary consumed by Liaison:
+                    // Status is the narration boundary consumed by Gateway:
                     // display/TTS the complete progress text now without
                     // closing the SubmitTask stream.
                     let _ = tx
                         .send(Ok(service::pack(
                             &session_id,
-                            PilotStreamBody::Status(SessionStatusEvent {
+                            PlannerStreamBody::Status(SessionStatusEvent {
                                 session_id: session_id.clone(),
                                 state: SessionState::Active as u32,
                                 message: "Waiting for in-flight work".to_string(),
@@ -2133,7 +2133,7 @@ pub async fn run_turn(
                 }
             }
             if hit_cap {
-                warn!("[pilot] hit max tool rounds ({max_rounds}), stopping turn");
+                warn!("[planner] hit max tool rounds ({max_rounds}), stopping turn");
                 break;
             }
             // should_plan stays false: wait for a forest event, or for a steer
@@ -2145,7 +2145,7 @@ pub async fn run_turn(
             let _ = tx
                 .send(Ok(service::pack(
                     &session_id,
-                    PilotStreamBody::TextChunk(assistant_content.clone()),
+                    PlannerStreamBody::TextChunk(assistant_content.clone()),
                 )))
                 .await;
         }
@@ -2155,7 +2155,7 @@ pub async fn run_turn(
         let _ = tx
             .send(Ok(service::pack(
                 &session_id,
-                PilotStreamBody::Plan(graph.clone()),
+                PlannerStreamBody::Plan(graph.clone()),
             )))
             .await;
         cancel_requested.extend(cancel_targets);
@@ -2182,12 +2182,12 @@ pub async fn run_turn(
             Arc::clone(&forest_revision),
         ));
         info!(
-            "[pilot/forest] plan_id={plan_id} dispatched forest_size={}",
+            "[planner/forest] plan_id={plan_id} dispatched forest_size={}",
             forest.len()
         );
 
         if hit_cap {
-            warn!("[pilot] hit max tool rounds ({max_rounds}), stopping turn");
+            warn!("[planner] hit max tool rounds ({max_rounds}), stopping turn");
             break;
         }
         // should_plan stays false: wait for this tree (and any others) to report.
@@ -2197,7 +2197,7 @@ pub async fn run_turn(
     let _ = tx
         .send(Ok(service::pack(
             &session_id,
-            PilotStreamBody::Status(SessionStatusEvent {
+            PlannerStreamBody::Status(SessionStatusEvent {
                 session_id: session_id.clone(),
                 state: SessionState::Completed as u32,
                 message: String::new(),
@@ -2208,10 +2208,10 @@ pub async fn run_turn(
     Ok(())
 }
 
-/// Convert Atlas rows to provider-qualified model names and sort them so an
+/// Convert Src rows to provider-qualified model names and sort them so an
 /// unchanged catalog remains byte-identical even if discovery order varies.
 fn build_display_capabilities(
-    cap_list: &[(String, atlas_pb::Capability)],
+    cap_list: &[(String, src_pb::Capability)],
 ) -> Vec<DisplayCapability<'_>> {
     let mut display = cap_list
         .iter()
@@ -2258,7 +2258,7 @@ Nodes are exactly one of:
 - {"op":"sequence","op_id":0,"description":"...","children":[...]}
 - {"op":"parallel","op_id":0,"description":"...","children":[...]}
 - {"op":"do","op_id":0,"description":"...","cap":"<exact capability_name>","args":{...}}
-Write op_id=0; Pilot assigns IDs. Add no node fields. Batch known ordered steps in sequence, independent steps in parallel. With no new call, return an empty sequence.
+Write op_id=0; Planner assigns IDs. Add no node fields. Batch known ordered steps in sequence, independent steps in parallel. With no new call, return an empty sequence.
 
 Temporary work: cancel_plan with resume_after=true; default false replaces/stops. Wait for cancellation and greeting clearance. Return requires task_update.verified=true after actual success; failure/blockers use false.
 
@@ -2277,7 +2277,7 @@ fn rtdl_protocol(full: bool) -> &'static str {
     }
 }
 
-/// Hash the exact Atlas fields used by the prompt so registration changes
+/// Hash the exact Src fields used by the prompt so registration changes
 /// invalidate the rendered catalog without relying on provider list identity.
 fn capability_prompt_fingerprint(display_caps: &[DisplayCapability<'_>]) -> u64 {
     let mut hasher = DefaultHasher::new();
@@ -2286,7 +2286,7 @@ fn capability_prompt_fingerprint(display_caps: &[DisplayCapability<'_>]) -> u64 
         cap.provider_id.hash(&mut hasher);
         cap.cap.contract_id.hash(&mut hasher);
         cap.cap.description.hash(&mut hasher);
-        if let Some(atlas_pb::transport_params::Kind::Mcp(mcp)) = cap
+        if let Some(src_pb::transport_params::Kind::Mcp(mcp)) = cap
             .cap
             .params
             .as_ref()
@@ -2305,7 +2305,7 @@ fn render_capability_prompt(display_caps: &[DisplayCapability<'_>]) -> String {
     let mut prompt = String::from("\n## Available capabilities\n\n");
     for cap in display_caps {
         let c = cap.cap;
-        let Some(atlas_pb::transport_params::Kind::Mcp(mcp)) =
+        let Some(src_pb::transport_params::Kind::Mcp(mcp)) =
             c.params.as_ref().and_then(|params| params.kind.as_ref())
         else {
             continue;
@@ -2495,7 +2495,7 @@ fn build_rtdl_retry_prompt(
     display_caps: &[DisplayCapability<'_>],
 ) -> String {
     let mut p = format!(
-        "Your previous RTDL response could not be parsed or expanded by Pilot.\n\
+        "Your previous RTDL response could not be parsed or expanded by Planner.\n\
          Error: {err:#}\n\
          Previous response preview: {}\n\n\
          Fix the RTDL error and retry the same user request exactly once. If the error \
@@ -2547,9 +2547,9 @@ fn rtdl_recovery_final_text() -> String {
 }
 
 /// Process-wide monotonic source of node `op_id`s. The LLM-emitted RTDL does
-/// not carry a usable op_id (it defaults to 0), so pilot assigns one itself
+/// not carry a usable op_id (it defaults to 0), so planner assigns one itself
 /// while parsing: a globally-unique, auto-incrementing id starting at 1.
-/// "Global" = across every plan/round in this pilot process, so each node in
+/// "Global" = across every plan/round in this planner process, so each node in
 /// the live task-graph forest is uniquely addressable for steering and result
 /// correlation — not merely unique within one plan.
 static OP_ID_SEQ: AtomicU64 = AtomicU64::new(0);
@@ -2618,7 +2618,7 @@ fn pick_description(
 /// `required` lists the keys an operator must carry beyond `op` (e.g.
 /// `children` for sequence/parallel; `cap` + `args` for do). `op_id` and
 /// `description` are always optional — the model emits them (op_id defaults to
-/// 0, which pilot ignores and reassigns), but a reply that omits them still
+/// 0, which planner ignores and reassigns), but a reply that omits them still
 /// parses. Any other key (`out`, `id`, `plan_id`, …) is an error.
 fn reject_unknown_node_keys(
     obj: &serde_json::Map<String, serde_json::Value>,
@@ -2865,8 +2865,8 @@ fn compact_tool_result(contract_id: &str, value: &str, max_chars: usize) -> Stri
     }
 
     let projection = match contract_id {
-        "robonix/system/scene/list_objects" => Some(("objects", &["id", "label"][..])),
-        "robonix/system/scene/list_regions" => Some((
+        "robonix/system/world/list_objects" => Some(("objects", &["id", "label"][..])),
+        "robonix/system/world/list_regions" => Some((
             "regions",
             &["id", "kind", "name", "stale", "stale_reason"][..],
         )),
@@ -2985,16 +2985,16 @@ fn format_plan_summary(plan: &Plan) -> Vec<String> {
 /// Emit the compact plan-start log block for one expanded RTDL plan.
 fn log_plan_start(plan: &Plan, description: &str, round: u32, calls: usize) {
     info!(
-        "[pilot/rtdl] -- plan start plan_id={} round={} calls={} --",
+        "[planner/rtdl] -- plan start plan_id={} round={} calls={} --",
         plan.plan_id, round, calls
     );
     info!(
-        "[pilot/rtdl] rtdl_plan_description='{}'",
+        "[planner/rtdl] rtdl_plan_description='{}'",
         compact_preview(description, 240)
     );
-    info!("[pilot/rtdl] rtdl_plan:");
+    info!("[planner/rtdl] rtdl_plan:");
     for line in format_plan_summary(plan) {
-        info!("[pilot/rtdl] {line}");
+        info!("[planner/rtdl] {line}");
     }
 }
 
@@ -3018,7 +3018,7 @@ fn terminal_node_detail(ns: &RtdlNodeState) -> String {
 /// Emit one readable node-state event without numeric state or kind codes.
 fn log_node_state(plan_id: &str, ns: &RtdlNodeState) {
     let mut line = format!(
-        "[pilot/forest] plan_id={} node={} op_id={} state={} desc='{}'",
+        "[planner/forest] plan_id={} node={} op_id={} state={} desc='{}'",
         plan_id,
         ns.node_index,
         ns.op_id,
@@ -3060,7 +3060,7 @@ fn plan_completion_state(results: &[RtdlNodeState], any_failed: bool) -> String 
 fn log_plan_complete(plan_id: &str, results: &[RtdlNodeState], any_failed: bool) {
     let state = plan_completion_state(results, any_failed);
     let mut line = format!(
-        "[pilot/forest] plan_id={} complete state={} terminal_nodes={}",
+        "[planner/forest] plan_id={} complete state={} terminal_nodes={}",
         plan_id,
         state,
         results.len()
@@ -3127,13 +3127,13 @@ fn rtdl_result_to_messages(r: &CapabilityCallResult) -> history::ToolResultHisto
 }
 
 // ── System prompt + SOUL ──────────────────────────────────────────────────────
-// Optional `SOUL.md` (agent personality) is read from `$ROBONIX_PILOT_SOUL`,
+// Optional `SOUL.md` (agent personality) is read from `$ROBONIX_PLANNER_SOUL`,
 // then `~/.robonix/SOUL.md`. There is no skill index — skill providers surface as
 // regular tools through `executor.list_tools`, with descriptions sourced from
 // each provider's CAPABILITY.md.
 
 fn load_agent_soul() -> Option<String> {
-    if let Ok(p) = std::env::var("ROBONIX_PILOT_SOUL") {
+    if let Ok(p) = std::env::var("ROBONIX_PLANNER_SOUL") {
         let p = p.trim();
         if !p.is_empty() {
             return std::fs::read_to_string(p).ok();
@@ -3159,7 +3159,7 @@ fn build_system_prompt(soul: Option<&str>) -> String {
     }
     p.push_str(
         "\
-You are the Robonix Pilot — the reasoning and planning component of a robot system.
+You are the Robonix Planner — the reasoning and planning component of a robot system.
 You receive requests from a user or higher-level system and translate them into actions
 by planning capability calls available to you.
 
@@ -3245,7 +3245,7 @@ by planning capability calls available to you.
 - Some later messages may be labelled `Executor feedback for the current task`.
   Treat those as results of capability calls you already planned, not as new
   user requests.
-- `Pilot harness dispatch record` messages are the authoritative record of RTDL
+- `Planner harness dispatch record` messages are the authoritative record of RTDL
   calls already sent to Executor. Correlate each result by `plan_id` and
   `call_id`. When a recorded step succeeds, do not plan that same user-requested
   step again from newly observed state; use the recorded args and result to
@@ -3313,9 +3313,9 @@ mod tests {
         should_replan_after_plan_done, skip_memory_prefetch, start_or_resume_task,
         task_is_session_end,
     };
-    use crate::pb::pilot::{CapabilityCall, CapabilityCallResult, Plan, RtdlNode, Task};
+    use crate::pb::planner::{CapabilityCall, CapabilityCallResult, Plan, RtdlNode, Task};
     use crate::task_control::TaskControl;
-    use robonix_atlas::pb as atlas_pb;
+    use robonix_src::pb as src_pb;
     use serde_json::json;
     use std::collections::{HashMap, HashSet};
     use std::time::Duration;
@@ -3337,15 +3337,15 @@ mod tests {
         );
     }
 
-    fn test_capability(provider: &str, leaf: &str) -> (String, atlas_pb::Capability) {
+    fn test_capability(provider: &str, leaf: &str) -> (String, src_pb::Capability) {
         (
             provider.to_string(),
-            atlas_pb::Capability {
+            src_pb::Capability {
                 provider_id: provider.to_string(),
                 contract_id: format!("robonix/service/test/{leaf}"),
-                transport: atlas_pb::Transport::Mcp as i32,
-                params: Some(atlas_pb::TransportParams {
-                    kind: Some(atlas_pb::transport_params::Kind::Mcp(atlas_pb::McpParams {
+                transport: src_pb::Transport::Mcp as i32,
+                params: Some(src_pb::TransportParams {
+                    kind: Some(src_pb::transport_params::Kind::Mcp(src_pb::McpParams {
                         input_schema_json: format!(
                             r#"{{"type":"object","properties":{{"{leaf}":{{"type":"string"}}}}}}"#
                         ),
@@ -3429,7 +3429,7 @@ mod tests {
         .to_string();
         assert!(original.chars().count() > 4096);
 
-        let compact = compact_tool_result("robonix/system/scene/list_regions", &original, 4096);
+        let compact = compact_tool_result("robonix/system/world/list_regions", &original, 4096);
         let parsed: serde_json::Value = serde_json::from_str(&compact).unwrap();
         let compact_regions = parsed["regions"].as_array().unwrap();
         assert_eq!(compact_regions.len(), 24);
@@ -3472,7 +3472,7 @@ mod tests {
             "map_id": "demo",
         })
         .to_string();
-        let compact = compact_tool_result("robonix/system/scene/list_regions", &original, 4096);
+        let compact = compact_tool_result("robonix/system/world/list_regions", &original, 4096);
         serde_json::from_str::<serde_json::Value>(&compact).unwrap();
         assert!(compact.chars().count() <= 4096);
     }
@@ -3798,7 +3798,7 @@ mod tests {
             .filter_map(|message| message.content.as_deref())
             .collect::<Vec<_>>()
             .join("\n");
-        assert!(context.contains("Pilot harness dispatch record"));
+        assert!(context.contains("Planner harness dispatch record"));
         assert!(context.contains("\"plan_id\":\"5\""));
         assert!(context.contains("\"call_id\":\"5:0\""));
         assert!(context.contains(&original_target.to_string()));
@@ -4285,7 +4285,7 @@ mod tests {
                 "robonix/primitive/camera/snapshot".to_string(),
             ),
         );
-        // Every node carries op_id (always 0 — pilot reassigns) plus a
+        // Every node carries op_id (always 0 — planner reassigns) plus a
         // model-authored node-level description.
         let rtdl = json!({
             "op": "sequence",
@@ -4307,7 +4307,7 @@ mod tests {
             plan.nodes[1].description,
             "take a camera snapshot of the door"
         );
-        // The model's op_id=0 is ignored; pilot assigns non-empty unique ids.
+        // The model's op_id=0 is ignored; planner assigns non-empty unique ids.
         assert!(!plan.nodes[0].op_id.is_empty());
         assert_ne!(plan.nodes[0].op_id, plan.nodes[1].op_id);
     }

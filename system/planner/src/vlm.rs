@@ -25,7 +25,7 @@ use std::time::Duration;
 const MAX_OPEN_RETRIES: usize = 3;
 
 /// Compatibility fallback is only safe when a client-error response names an
-/// optional field that Pilot added. Unrelated 4xx responses must retain their
+/// optional field that Planner added. Unrelated 4xx responses must retain their
 /// original diagnosis instead of being retried with a misleading warning.
 fn rejects_optional_request_fields(status: reqwest::StatusCode, body: &str) -> bool {
     if status != reqwest::StatusCode::BAD_REQUEST
@@ -207,7 +207,7 @@ pub enum VlmStreamItem {
     Usage(VlmUsage),
     /// Stream complete. Finish reason ("stop" / "tool_calls" / "error") is
     /// not surfaced to consumers yet — add a field here when the planner or
-    /// downstream PilotEvent grows a use for it.
+    /// downstream PlannerEvent grows a use for it.
     Finish,
 }
 
@@ -308,15 +308,15 @@ impl VlmClient {
                 if !removed {
                     bail!("open VLM chat stream: HTTP {status}: {text}");
                 }
-                robonix_scribe::warn!(
-                    "[pilot/vlm] upstream rejected optional cache/usage fields with HTTP {status}; retrying without them"
+                robonix_log::warn!(
+                    "[planner/vlm] upstream rejected optional cache/usage fields with HTTP {status}; retrying without them"
                 );
                 compatibility_fallback_attempted = true;
                 continue;
             }
             if let Some(delay) = open_retry_delay(status, retry_after.as_deref(), retry_index) {
-                robonix_scribe::warn!(
-                    "[pilot/vlm] open stream HTTP {status}; retry {}/{} in {:.1}s",
+                robonix_log::warn!(
+                    "[planner/vlm] open stream HTTP {status}; retry {}/{} in {:.1}s",
                     retry_index + 1,
                     MAX_OPEN_RETRIES,
                     delay.as_secs_f64()
@@ -404,7 +404,7 @@ impl VlmClient {
                     return;
                 }
             }
-            let _ = finish; // surface to PilotEvent later if needed
+            let _ = finish; // surface to PlannerEvent later if needed
             let _ = tx.send(Ok(VlmStreamItem::Finish)).await;
         });
 

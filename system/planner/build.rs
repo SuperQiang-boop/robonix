@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MulanPSL-2.0
-// Pilot proto codegen: ROS IDL + contract TOML → .proto (via robonix-codegen
+// Planner proto codegen: ROS IDL + contract TOML → .proto (via robonix-codegen
 // as a library) → tonic Rust stubs. All artefacts in OUT_DIR; nothing is
-// committed to the tree. Atlas wire types are NOT regenerated here — pilot
-// reaches them via `robonix_atlas::pb` from the atlas crate.
+// committed to the tree. Src wire types are NOT regenerated here — planner
+// reaches them via `robonix_src::pb` from the src crate.
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;
@@ -11,7 +11,7 @@ use robonix_codegen::codegen::{contract_gen, msg_parser, proto_gen};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    // system/pilot → up 2 = repo root.
+    // system/planner → up 2 = repo root.
     let repo_root = manifest_dir
         .parent()
         .and_then(|p| p.parent())

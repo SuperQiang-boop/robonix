@@ -3,16 +3,16 @@
 //
 // `prefetch` runs before the first VLM call, `compact` on session_end.
 // Both build a one-call Plan and hand it to executor; the corresponding
-// memory provider is looked up via atlas the same way every other capability
+// memory provider is looked up via src the same way every other capability
 // is. Missing providers are silently tolerated — memory is never load-bearing.
 
 use crate::discovery;
 use crate::pb::executor::rtdl_event::RtdlEventEnum;
-use crate::pb::pilot::rtdl_node_state::RtdlNodeStateEnum;
-use crate::pb::pilot::{CapabilityCall, CapabilityCallResult, Plan, RtdlNode};
+use crate::pb::planner::rtdl_node_state::RtdlNodeStateEnum;
+use crate::pb::planner::{CapabilityCall, CapabilityCallResult, Plan, RtdlNode};
 use crate::planner::ExecutorConn;
-use robonix_atlas::client::AtlasClient;
-use robonix_scribe::debug;
+use robonix_log::debug;
+use robonix_src::client::SrcClient;
 use tonic::Request;
 use uuid::Uuid;
 
@@ -80,7 +80,7 @@ pub async fn prefetch(
             let r = executor_node_state_to_result(&submitted_plan, ns);
             let out = r.output;
             if r.success && !out.contains("No relevant memories") && !out.is_empty() {
-                debug!("[pilot] memory prefetch: {out}");
+                debug!("[planner] memory prefetch: {out}");
                 return Some(out);
             }
             return None;
@@ -91,11 +91,11 @@ pub async fn prefetch(
 
 /// Best-effort `compact_memory` on session teardown. Logs failures, never
 /// propagates errors (the provider may be absent entirely).
-pub async fn try_compact(executor: &mut ExecutorConn, atlas: &mut AtlasClient, _consumer_id: &str) {
-    let providers = match discovery::discover(atlas).await {
+pub async fn try_compact(executor: &mut ExecutorConn, src: &mut SrcClient, _consumer_id: &str) {
+    let providers = match discovery::discover(src).await {
         Ok(c) => c,
         Err(e) => {
-            debug!("[pilot] compact_memory: discovery failed: {e}");
+            debug!("[planner] compact_memory: discovery failed: {e}");
             return;
         }
     };
@@ -135,9 +135,9 @@ pub async fn try_compact(executor: &mut ExecutorConn, atlas: &mut AtlasClient, _
             let r = executor_node_state_to_result(&submitted_plan, ns);
             let out = r.output;
             if r.success {
-                debug!("[pilot] compact_memory: {out}");
+                debug!("[planner] compact_memory: {out}");
             } else {
-                debug!("[pilot] compact_memory failed: {out}");
+                debug!("[planner] compact_memory failed: {out}");
             }
             return;
         }
@@ -158,7 +158,7 @@ fn is_terminal_executor_state(state: u32) -> bool {
 /// carry a concrete capability result; operator detail is only a fallback.
 fn executor_node_state_to_result(
     plan: &Plan,
-    ns: crate::pb::pilot::RtdlNodeState,
+    ns: crate::pb::planner::RtdlNodeState,
 ) -> CapabilityCallResult {
     if let Some(result) = ns.leaf_result {
         return result;

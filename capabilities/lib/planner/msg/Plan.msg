@@ -1,4 +1,4 @@
-# Plan: structural payload pilot hands to executor for execution.
+# Plan: structural payload planner hands to executor for execution.
 # Encodes an RTDL execution tree as arena nodes. Empty plans are represented
 # as one sequence root node with no children.
 string plan_id

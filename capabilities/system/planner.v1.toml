@@ -1,0 +1,10 @@
+# ROS IDL: `lib/planner/srv/SubmitTask.srv`. Stream element type is **only** in this TOML.
+[contract]
+id      = "robonix/system/planner"
+version = "1"
+kind    = "service"
+idl     = "planner/srv/SubmitTask.srv"
+description = "Submit a task to Planner and stream planning events."
+
+[mode]
+type = "rpc_server_stream"

@@ -1,35 +1,35 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MulanPSL-2.0
-# Black-box Pilot test: natural-language steers must produce correctly scoped
+# Black-box Planner test: natural-language steers must produce correctly scoped
 # RTDL plans. The driver never constructs an RTDL Plan itself.
 set -euo pipefail
 
 ROOT="${ROBONIX_SOURCE_PATH:-$(cd "$(dirname "$0")/.." && pwd)}"
 DEPLOY_DIR="${ROBONIX_TEST_DEPLOY_DIR:-$HOME/robot-agilex-ranger_mini_v3}"
-ATLAS_ADDR="${RBNX_TEST_ATLAS_ADDR:-127.0.0.1:52051}"
+SRC_ADDR="${RBNX_TEST_SRC_ADDR:-127.0.0.1:52051}"
 EXECUTOR_ADDR="${RBNX_TEST_EXECUTOR_ADDR:-127.0.0.1:52061}"
-PILOT_ADDR="${RBNX_TEST_PILOT_ADDR:-127.0.0.1:52071}"
-ATLAS_BIN="${ROBONIX_ATLAS_BIN:-$(command -v robonix-atlas || true)}"
+PLANNER_ADDR="${RBNX_TEST_PLANNER_ADDR:-127.0.0.1:52071}"
+SRC_BIN="${ROBONIX_SRC_BIN:-$(command -v robonix-src || true)}"
 EXECUTOR_BIN="${ROBONIX_EXECUTOR_BIN:-$(command -v robonix-executor || true)}"
-PILOT_BIN="${ROBONIX_PILOT_BIN:-$(command -v robonix-pilot || true)}"
-WORK="$(mktemp -d /tmp/robonix-pilot-language.XXXXXX)"
+PLANNER_BIN="${ROBONIX_PLANNER_BIN:-$(command -v robonix-planner || true)}"
+WORK="$(mktemp -d /tmp/robonix-planner-language.XXXXXX)"
 TRACE="$WORK/timeline.log"
-ATLAS_LOG="$WORK/atlas.log"
+SRC_LOG="$WORK/src.log"
 EXECUTOR_LOG="$WORK/executor.log"
-PILOT_LOG="$WORK/pilot.log"
+PLANNER_LOG="$WORK/planner.log"
 
 cleanup() {
   local rc=$?
-  for pid in "${PILOT_PID:-}" "${EXECUTOR_PID:-}" "${ATLAS_PID:-}"; do
+  for pid in "${PLANNER_PID:-}" "${EXECUTOR_PID:-}" "${SRC_PID:-}"; do
     [[ -n "$pid" ]] && kill "$pid" 2>/dev/null || true
   done
-  for pid in "${PILOT_PID:-}" "${EXECUTOR_PID:-}" "${ATLAS_PID:-}"; do
+  for pid in "${PLANNER_PID:-}" "${EXECUTOR_PID:-}" "${SRC_PID:-}"; do
     [[ -n "$pid" ]] && wait "$pid" 2>/dev/null || true
   done
   if [[ $rc -ne 0 ]]; then
     echo "FAIL: artifacts retained at $WORK" >&2
-    echo "--- pilot log tail ---" >&2
-    tail -120 "$PILOT_LOG" >&2 || true
+    echo "--- planner log tail ---" >&2
+    tail -120 "$PLANNER_LOG" >&2 || true
     echo "--- executor log tail ---" >&2
     tail -80 "$EXECUTOR_LOG" >&2 || true
   else
@@ -39,9 +39,9 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-: "${ATLAS_BIN:?robonix-atlas is not on PATH; set ROBONIX_ATLAS_BIN}"
+: "${SRC_BIN:?robonix-src is not on PATH; set ROBONIX_SRC_BIN}"
 : "${EXECUTOR_BIN:?robonix-executor is not on PATH; set ROBONIX_EXECUTOR_BIN}"
-: "${PILOT_BIN:?robonix-pilot is not on PATH; set ROBONIX_PILOT_BIN}"
+: "${PLANNER_BIN:?robonix-planner is not on PATH; set ROBONIX_PLANNER_BIN}"
 
 if [[ ! -f "$DEPLOY_DIR/.env" ]]; then
   echo "missing $DEPLOY_DIR/.env" >&2
@@ -59,9 +59,9 @@ export ROBONIX_VLM_API_KEY="$VLM_API_KEY"
 export ROBONIX_VLM_MODEL="$VLM_MODEL"
 export ROBONIX_VLM_FORMAT=openai
 export ROBONIX_SOURCE_PATH="$ROOT"
-export ROBONIX_PILOT_MAX_TOOL_ROUNDS=64
-export SCRIBE_STDOUT_LEVEL=warn
-export SCRIBE_FILE_LEVEL=debug
+export ROBONIX_PLANNER_MAX_TOOL_ROUNDS=64
+export ROBONIX_LOG_STDOUT_LEVEL=warn
+export ROBONIX_LOG_FILE_LEVEL=debug
 
 wait_port() {
   python3 - "$1" <<'PY'
@@ -78,27 +78,27 @@ raise SystemExit(f"{sys.argv[1]} did not listen within 15s")
 PY
 }
 
-"$ATLAS_BIN" \
-  --listen "$ATLAS_ADDR" --capabilities "$ROOT/capabilities" \
-  >"$ATLAS_LOG" 2>&1 &
-ATLAS_PID=$!
-wait_port "$ATLAS_ADDR"
+"$SRC_BIN" \
+  --listen "$SRC_ADDR" --capabilities "$ROOT/capabilities" \
+  >"$SRC_LOG" 2>&1 &
+SRC_PID=$!
+wait_port "$SRC_ADDR"
 
 "$EXECUTOR_BIN" \
-  --atlas "$ATLAS_ADDR" --listen "$EXECUTOR_ADDR" --id executor \
+  --src "$SRC_ADDR" --listen "$EXECUTOR_ADDR" --id executor \
   >"$EXECUTOR_LOG" 2>&1 &
 EXECUTOR_PID=$!
 wait_port "$EXECUTOR_ADDR"
 
-"$PILOT_BIN" \
-  --atlas "$ATLAS_ADDR" --listen "$PILOT_ADDR" --id pilot \
-  >"$PILOT_LOG" 2>&1 &
-PILOT_PID=$!
-wait_port "$PILOT_ADDR"
+"$PLANNER_BIN" \
+  --src "$SRC_ADDR" --listen "$PLANNER_ADDR" --id planner \
+  >"$PLANNER_LOG" 2>&1 &
+PLANNER_PID=$!
+wait_port "$PLANNER_ADDR"
 
 PROTO_SOURCE="$(find "$ROOT/target" -path '*/out/robonix_contracts.proto' -printf '%T@ %h\n' 2>/dev/null | sort -nr | head -1 | cut -d' ' -f2-)"
 if [[ -z "$PROTO_SOURCE" || ! -d "$PROTO_SOURCE" ]]; then
-  echo "generated proto source not found; build Pilot first" >&2
+  echo "generated proto source not found; build Planner first" >&2
   exit 2
 fi
 PROTO_GEN="$WORK/proto_gen"
@@ -107,7 +107,7 @@ cp "$PROTO_SOURCE"/*.proto "$PROTO_GEN/"
 python3 -m grpc_tools.protoc -I "$PROTO_GEN" \
   --python_out="$PROTO_GEN" --grpc_python_out="$PROTO_GEN" "$PROTO_GEN"/*.proto
 
-PYTHONPATH="$PROTO_GEN${PYTHONPATH:+:$PYTHONPATH}" python3 - "$PILOT_ADDR" "$TRACE" <<'PY'
+PYTHONPATH="$PROTO_GEN${PYTHONPATH:+:$PYTHONPATH}" python3 - "$PLANNER_ADDR" "$TRACE" <<'PY'
 import asyncio
 import json
 import pathlib
@@ -117,13 +117,13 @@ import time
 import uuid
 
 import grpc
-import pilot_pb2
+import planner_pb2
 import robonix_contracts_pb2_grpc as contracts
 
 endpoint, trace_arg = sys.argv[1:3]
 trace = pathlib.Path(trace_arg)
 trace_q = shlex.quote(str(trace))
-session_id = f"pilot-language-{uuid.uuid4()}"
+session_id = f"planner-language-{uuid.uuid4()}"
 turn_id = f"turn-{uuid.uuid4()}"
 started = time.monotonic()
 plans = []
@@ -257,12 +257,12 @@ async def collect_stream(stream):
 
 async def submit_steer(stub, name: str):
     print(f"[{rel():6.2f}s] STEER {name}: {messages[name]}", flush=True)
-    task = pilot_pb2.Task(
+    task = planner_pb2.Task(
         task_id=f"steer-{name}-{uuid.uuid4()}",
         session_id=session_id,
         text=messages[name],
         context_json=json.dumps({
-            "client": "pilot-natural-language-test",
+            "client": "planner-natural-language-test",
             "interaction_mode": "steer",
             "steer": True,
             "expected_turn_id": turn_id,
@@ -275,13 +275,13 @@ async def submit_steer(stub, name: str):
 
 async def main():
     async with grpc.aio.insecure_channel(endpoint) as channel:
-        stub = contracts.RobonixSystemPilotStub(channel)
-        initial = pilot_pb2.Task(
+        stub = contracts.RobonixSystemPlannerStub(channel)
+        initial = planner_pb2.Task(
             task_id=turn_id,
             session_id=session_id,
             text=messages["initial"],
             context_json=json.dumps({
-                "client": "pilot-natural-language-test",
+                "client": "planner-natural-language-test",
                 "interaction_mode": "task",
             }),
         )
@@ -344,17 +344,17 @@ control_calls = [
     in {"cancel_plan", "cancel_all_plans", "stop_plan_at"}
 ]
 checks = {
-    "Pilot planned A1": plan_a1 is not None,
+    "Planner planned A1": plan_a1 is not None,
     "A1 completed": "A_RESTAURANT_END" in labels,
     "A2 never started": "A_MEETING_START" not in labels,
-    "Pilot planned independent greet": plan_b is not None,
+    "Planner planned independent greet": plan_b is not None,
     "greet produced all 60 heartbeats": len(ticks) == 60 and "B_GREET_END" in labels,
-    "Pilot planned open-area task C": plan_c is not None,
+    "Planner planned open-area task C": plan_c is not None,
     "C started but did not finish": "C_OPEN_START" in labels and "C_OPEN_END" not in labels,
-    "Pilot planned return task D": plan_d is not None,
+    "Planner planned return task D": plan_d is not None,
     "D completed": "D_315_END" in labels,
     "plan control never appeared as an RTDL node": not control_calls,
-    "Pilot reported out-of-band plan control": "Plan control accepted" in statuses,
+    "Planner reported out-of-band plan control": "Plan control accepted" in statuses,
     "targeted cancel left greet unaffected": "C_OPEN_END" not in labels and "B_GREET_END" in labels,
     "each RTDL plan had live natural-language feedback": len(text_chunks) >= len(plans),
     "no final reply was broadcast more than once": len({text for _, text in final_texts}) == len(final_texts),
@@ -378,7 +378,7 @@ if plan_a2 is not None and plan_a1 is not None and plan_a2["plan_id"] == plan_a1
 else:
     checks["latest steer suppressed undispatched A2"] = "A_MEETING_START" not in labels
 
-print("\n=== PILOT BLACK-BOX ASSERTIONS ===")
+print("\n=== PLANNER BLACK-BOX ASSERTIONS ===")
 for name, passed in checks.items():
     print(f"{'PASS' if passed else 'FAIL'}  {name}")
 if not all(checks.values()):
@@ -387,5 +387,5 @@ if not all(checks.values()):
     print("\n=== TRACE ===")
     print(trace.read_text() if trace.exists() else "<empty>")
     raise SystemExit(1)
-print(f"\nPASS: natural-language Pilot RTDL management verified in {rel():.2f}s")
+print(f"\nPASS: natural-language Planner RTDL management verified in {rel():.2f}s")
 PY
