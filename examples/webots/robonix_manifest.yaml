@@ -4,21 +4,21 @@ name: robonix-webots-example-deploy
 # Default Webots boot starts a fresh live SLAM session. The map/room UI
 # names and persists that session when the operator clicks Save; clicking
 # Load later switches mapping to localization mode and binds scene objects +
-# room annotations to the selected saved map. Do not set SCENE_MAP_ID here: a
+# room annotations to the selected saved map. Do not set WORLD_MAP_ID here: a
 # static default would make a first run look like a loaded map.
 
-# boot in sequence: system -> soma+scene -> execution -> interaction
+# boot in sequence: system -> robotdesc+scene -> execution -> interaction
 system:
   # basic layer
-  atlas:
+  src:
     listen: 0.0.0.0:50051
     log: info
-  soma:
-    # Empty when boot is invoked directly, so rbnx falls back to ./soma.yaml.
-    # examples/webots/boot.sh sets this to soma.full.yaml for the full model.
-    robot_yaml: ${ROBONIX_SOMA_ROBOT_YAML}
-  # soma+scene layer
-  scene:
+  robotdesc:
+    # Empty when boot is invoked directly, so rbnx falls back to ./robotdesc.yaml.
+    # examples/webots/boot.sh sets this to robotdesc.full.yaml for the full model.
+    robot_yaml: ${ROBONIX_ROBOTDESC_ROBOT_YAML}
+  # robotdesc+scene layer
+  world:
     log: info
     camera_frame: head_front_camera_rgb_optical_frame
   # execution layer
@@ -26,7 +26,7 @@ system:
     listen: 127.0.0.1:50061
     log: info
   # interaction layer
-  pilot:
+  planner:
     listen: 127.0.0.1:50071
     log: debug
     vlm:
@@ -35,10 +35,10 @@ system:
       model: ${VLM_MODEL}
       api_format: openai
   # health monitoring layer
-  vitals:
+  monitor:
     listen: 127.0.0.1:50093
     log: info
-  liaison:
+  gateway:
     listen: 0.0.0.0:50081
     log: info
     # Disabled until the operator enables it from robonix-client. The client
@@ -83,13 +83,13 @@ primitive:
       # example place holders
       update_rate: 10
       frame_id: lidar
-  # Deterministic simulated hardware telemetry consumed by Soma and Vitals.
+  # Deterministic simulated hardware telemetry consumed by Robotdesc and Monitor.
   # Keep scenario=normal for the current demo; the field is reserved as the
   # stable entry point for future fault-injection profiles.
   - name: tiago_health
     path: ./primitives/tiago_health
     config:
-      # Empty means lite; boot.sh sets full alongside soma.full.yaml.
+      # Empty means lite; boot.sh sets full alongside robotdesc.full.yaml.
       variant: ${ROBONIX_TIAGO_VARIANT}
       scenario: normal
       interval_s: 0.5
@@ -102,8 +102,8 @@ primitive:
     path: ./primitives/audio_driver
     config: {}
   # Reverse bridge for a robonix-client audio route. It advertises its
-  # endpoint through Atlas and waits for the client to connect, so neither
-  # this manifest nor Liaison stores a client IP.
+  # endpoint through Src and waits for the client to connect, so neither
+  # this manifest nor Gateway stores a client IP.
   - name: audio_client_bridge
     path: ./primitives/audio_client_bridge
     config:
@@ -122,7 +122,7 @@ service:
       backend: memgraph
 
   # memsearch — default reference long-term-memory service for the
-  # agent. Lives at services/memsearch in the robonix tree; pilot
+  # agent. Lives at services/memsearch in the robonix tree; planner
   # queries it for relevant past context when planning.
   - name: memory
     path: ${ROBONIX_SOURCE_PATH}/services/memsearch
@@ -130,7 +130,7 @@ service:
       backend: sqlite
 
   # speech — ASR + TTS. Provides robonix/service/speech/asr_stream + tts that
-  # liaison's voice loop connects to. The selected audio provider is supplied
+  # gateway's voice loop connects to. The selected audio provider is supplied
   # by the client for F2, voice steer, and hands-free turns.
   # disable_whisper => FunASR-only (Paraformer) streaming ASR path.
   - name: speech
@@ -144,7 +144,7 @@ service:
       default_speaker_provider_id: audio_driver
 
   # voiceprint — ECAPA-TDNN speaker identification. Provides
-  # robonix/service/voiceprint/{identify,enroll,list}: liaison's voice gate
+  # robonix/service/voiceprint/{identify,enroll,list}: gateway's voice gate
   # stamps each Task with the identified user_id, and `rbnx chat`'s user
   # modal enrolls/lists speakers. Config is env-driven (port 50092,
   # threshold 0.25, device auto) so the manifest block stays empty.
@@ -172,7 +172,7 @@ service:
 
   # nav2_wrapper_rbnx IS the navigation service for this deploy.
   #
-  # Wraps a standard Nav2 stack. Discovers its inputs through atlas — /map
+  # Wraps a standard Nav2 stack. Discovers its inputs through src — /map
   # (mapping/occupancy_grid), /odom (chassis/odom), /scan (lidar/lidar) —
   # and drives /cmd_vel via Nav2's navigate_to_pose action. Runs in the
   # `robonix-nav2` docker image (built by `rbnx build`, so the host needs

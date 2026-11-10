@@ -100,7 +100,7 @@ def create_app(
             bridge.stop()
 
     app = FastAPI(
-        title="Robonix Go2 Telemetry and Liaison Voice Dashboard",
+        title="Robonix Go2 Telemetry and Gateway Voice Dashboard",
         version=__version__,
         docs_url=None,
         redoc_url=None,

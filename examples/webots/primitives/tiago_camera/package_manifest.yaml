@@ -23,7 +23,7 @@ capabilities:
   - name: robonix/primitive/camera/depth_snapshot
   - name: robonix/primitive/camera/driver
   # ROS2 streams (data plane). Topic names are runtime-resolved
-  # through atlas — consumers (scene 3D fusion, mapping RGBD ingest)
+  # through src — consumers (scene 3D fusion, mapping RGBD ingest)
   # discover them via QueryCapabilities, they never read the topic
   # strings declared in the driver source.
   - name: robonix/primitive/camera/rgb

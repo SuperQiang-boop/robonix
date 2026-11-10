@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MulanPSL-2.0
 # mapping_rbnx start phase. Two execution shapes (same pattern as
-# system/scene/scripts/start.sh):
+# system/world/scripts/start.sh):
 #
 #   1. native  (jetson_orin, or any host with ROS 2 Humble + rtabmap_*
-#       installed natively) — runs scripts/start_native.sh: atlas_bridge
+#       installed natively) — runs scripts/start_native.sh: src_bridge
 #       + rtabmap launch as host processes, no docker. Preferred on the
 #       car (avoids the nvidia-container-runtime + DDS-namespace hops).
 #   2. docker  (default fallback) — docker run against `robonix-mapping`.
@@ -83,8 +83,8 @@ prepare_runtime_proto_gen() {
         echo "[mapping/start] cannot resolve Robonix runtime proto directory" >&2
         return 1
     }
-    [[ -d "$runtime_proto" && -f "$runtime_proto/atlas.proto" ]] || {
-        echo "[mapping/start] missing runtime atlas.proto: $runtime_proto" >&2
+    [[ -d "$runtime_proto" && -f "$runtime_proto/src.proto" ]] || {
+        echo "[mapping/start] missing runtime src.proto: $runtime_proto" >&2
         return 1
     }
     [[ -d "$proto_staging" ]] \
@@ -227,7 +227,7 @@ docker run --rm \
     --name "$CT" \
     --network host \
     --ipc=host \
-    -e ROBONIX_ATLAS="${ROBONIX_ATLAS:-127.0.0.1:50051}" \
+    -e ROBONIX_SRC="${ROBONIX_SRC:-127.0.0.1:50051}" \
     -e ROBONIX_PROVIDER_BIND_HOST="${ROBONIX_PROVIDER_BIND_HOST:-0.0.0.0}" \
     -e ROBONIX_ADVERTISE_HOST="${ROBONIX_ADVERTISE_HOST:-}" \
     -e ROBONIX_CAPABILITY_ID="${ROBONIX_CAPABILITY_ID:-mapping}" \

@@ -8,7 +8,7 @@ Backends:
 - `local` (default): Whisper one-shot ASR, FunASR streaming ASR, Edge TTS.
 - `tencent`: Tencent Cloud real-time ASR WebSocket and TextToVoice TTS API.
 - `custom`: load ASR/TTS backend classes from `module:Class` environment
-  variables without changing Liaison or speech capability contracts.
+  variables without changing Gateway or speech capability contracts.
 
 Tencent Cloud mode:
 
@@ -57,7 +57,7 @@ modes so existing audio speaker primitives can play the response directly.
 
 ## Wake word
 
-Wake-word recognition is part of the Speech package, not Liaison. The default
+Wake-word recognition is part of the Speech package, not Gateway. The default
 phrase is the bundled Mandarin wake phrase (YAML `\u7f57\u4f2f\u7279`); it is
 selected because the bundled KWS model recognizes it from a 16 kHz Tencent TTS
 test stream. A deployment can replace it without
@@ -77,7 +77,7 @@ Speech build downloads the KWS model; runtime does not download model weights.
 
 ## Adding a new ASR/TTS algorithm
 
-Liaison depends only on the speech service capabilities:
+Gateway depends only on the speech service capabilities:
 
 - `robonix/service/speech/asr`
 - `robonix/service/speech/asr_stream`
@@ -129,7 +129,7 @@ Streaming ASR yields event dictionaries; one-shot ASR returns a dictionary with
 `text` and `confidence`. TTS must return or yield 16 kHz mono `pcm_s16le` bytes.
 
 The backend may call any implementation internally: a local model, a cloud API,
-or an existing gRPC stub. Do not change Liaison for algorithm swaps.
+or an existing gRPC stub. Do not change Gateway for algorithm swaps.
 
 ## G1 built-in speech
 
@@ -148,7 +148,7 @@ finished; destroying the client immediately afterward can interrupt speech.
 Backend replacement and service shutdown close and reap the helper. IPC errors
 and timeouts are reported without replaying possibly accepted text; the next
 independent request can reconnect. Rebuild `g1_audio` and restart Speech after
-updating this helper protocol. No new Liaison build is needed for this fix.
+updating this helper protocol. No new Gateway build is needed for this fix.
 
 A successful response confirms SDK acceptance, not audible completion.
 The backend cannot export PCM through `tts` / `tts_stream`; those requests

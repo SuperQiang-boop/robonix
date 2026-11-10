@@ -9,7 +9,7 @@ MCP tools (registered under robonix/service/memory/ alongside memsearch):
   - robonix/service/memory/promote        — promote short-term → long-term
 
 Runs in parallel with memsearch (save/search/compact) under the same
-robonix/service/memory/ namespace so Pilot discovers both sets of tools.
+robonix/service/memory/ namespace so Planner discovers both sets of tools.
 
 Phase1: JSON-over-std_msgs/String (avoids protobuf codegen changes).
 Phase2: structured IDL when contract schema is frozen.
@@ -30,7 +30,7 @@ from pathlib import Path
 from .scribe_log import setup_scribe_logging  # noqa: E402
 
 _LOG_LEVEL = os.environ.get("MEMORY_LOG_LEVEL", "INFO").upper()
-_LOG_DIR = os.environ.get("SCRIBE_LOG_DIR",
+_LOG_DIR = os.environ.get("ROBONIX_LOG_DIR",
                            os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs"))
 
 log = setup_scribe_logging(log_dir=_LOG_DIR, tag="service_memory", level=_LOG_LEVEL)
@@ -281,7 +281,7 @@ if _MCP_AVAILABLE:
         """Write a structured memory node into the CKG (Causal Knowledge Graph).
 
         Observations are saved AUTOMATICALLY — when scene.list_objects detects
-        objects, the Scene service captures the camera frame and saves
+        objects, the World service captures the camera frame and saves
         everything to memory.  Do NOT call remember after list_objects
         or camera_snapshot — it is already handled for you.
 
@@ -647,7 +647,7 @@ def _start_scene_hook_server() -> None:
         def log_message(self, fmt, *args):
             log.debug("scene_hook: %s", fmt % args)
 
-    port = int(os.environ.get("SCENE_HOOK_PORT", "37798"))
+    port = int(os.environ.get("WORLD_HOOK_PORT", "37798"))
     try:
         server = HTTPServer(("0.0.0.0", port), _HookHandler)
     except OSError as e:

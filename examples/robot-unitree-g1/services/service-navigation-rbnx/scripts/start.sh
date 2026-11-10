@@ -6,7 +6,7 @@
 #   1. docker  (default) — `docker run` against `robonix-nav2`, which
 #       bundles ROS2 Humble + nav2_bringup. Works on any host with docker
 #       even when the host has NO ROS2 (x86 dev boxes, the webots CI box).
-#   2. native  — scripts/start_native.sh: the atlas bridge as a host
+#   2. native  — scripts/start_native.sh: the src bridge as a host
 #       process against a host-installed ROS2 + Nav2. Preferred on a robot
 #       whose host already runs ROS2 (avoids the container hop).
 #
@@ -93,8 +93,8 @@ prepare_runtime_proto_gen() {
         echo "[nav2/start] cannot resolve Robonix runtime proto directory" >&2
         return 1
     }
-    [[ -d "$runtime_proto" && -f "$runtime_proto/atlas.proto" ]] || {
-        echo "[nav2/start] missing runtime atlas.proto: $runtime_proto" >&2
+    [[ -d "$runtime_proto" && -f "$runtime_proto/src.proto" ]] || {
+        echo "[nav2/start] missing runtime src.proto: $runtime_proto" >&2
         return 1
     }
     [[ -d "$proto_staging" ]] \
@@ -189,12 +189,12 @@ if [[ -n "${ROBONIX_GREETING_STATE_PATH:-}" ]]; then
 fi
 
 # config arrives via Driver(CMD_INIT) over gRPC; the container's bridge
-# binds NAV2_DRIVER_PORT and registers with atlas at ROBONIX_ATLAS.
+# binds NAV2_DRIVER_PORT and registers with src at ROBONIX_SRC.
 exec docker run --rm \
     --name "$CT" \
     --network host \
     --ipc=host \
-    -e ROBONIX_ATLAS="${ROBONIX_ATLAS:-127.0.0.1:50051}" \
+    -e ROBONIX_SRC="${ROBONIX_SRC:-127.0.0.1:50051}" \
     -e ROBONIX_PROVIDER_BIND_HOST="${ROBONIX_PROVIDER_BIND_HOST:-0.0.0.0}" \
     -e ROBONIX_ADVERTISE_HOST="${ROBONIX_ADVERTISE_HOST:-}" \
     -e ROBONIX_CAPABILITY_ID="${ROBONIX_CAPABILITY_ID:-nav2}" \

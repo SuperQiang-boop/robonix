@@ -25,12 +25,12 @@ Robonix. Read once at session start; obey throughout.
 Robonix is an **embodied AI operating system**: a monorepo with Rust system
 components, Python packages, capability contracts, IDL libraries, examples, and
 documentation. The Rust workspace lives at the repository root in `Cargo.toml`;
-current Rust members are `system/{atlas,executor,liaison,pilot}` and
+current Rust members are `system/{src,executor,gateway,planner}` and
 `tools/{rbnx,codegen}`. The twelve system component directories live under
 `system/`; several are documentation/planning components today, while
-`system/scene` is a Python package managed by uv. Python workspace packages are
+`system/world` is a Python package managed by uv. Python workspace packages are
 listed in the root `pyproject.toml`: shared libraries in `pylib/*`, reference
-services in `services/*`, and `system/scene`. Capability contracts are TOML
+services in `services/*`, and `system/world`. Capability contracts are TOML
 files under `capabilities/{primitive,service,system}/`; reusable message and
 service IDL libraries live under `capabilities/lib/`. End-to-end and Webots
 examples live in `examples/`, Docker packaging in `docker/`, repo scripts in
@@ -52,7 +52,7 @@ Run Rust commands from the repository root unless noted:
 
 - `make build`: build all Rust workspace crates in debug mode.
 - `make release`: build all Rust crates with `--release`.
-- `make install`: install `rbnx`, Atlas, Pilot, Executor, Liaison, and Codegen
+- `make install`: install `rbnx`, Src, Planner, Executor, Gateway, and Codegen
   to `~/.cargo/bin`.
 - `make check`: run `cargo fmt --all -- --check` and clippy with warnings
   denied.
@@ -98,7 +98,7 @@ diagnostics, or maintainability outside the test.
 - `cargo fmt --all && cargo clippy --workspace --all-targets -- -D warnings`
   must be clean before any commit that touches Rust.
 - Don't commit without an end-to-end run when the change crosses process
-  boundaries (atlas wire, Driver lifecycle, pylib singleton). "It compiles +
+  boundaries (src wire, Driver lifecycle, pylib singleton). "It compiles +
   clippy clean" is not enough.
 
 ## Review before commit

@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MulanPSL-2.0
 # explore_rbnx build phase — runs `rbnx codegen` (emits proto_gen for
-# both atlas-side stubs and the package's own srv definitions under
+# both src-side stubs and the package's own srv definitions under
 # capabilities/srv/), then `docker build`. Same shape as mapping_rbnx
-# and system/scene.
+# and system/world.
 #
 # RBNX_BUILD_CLEAN=1 wipes rbnx-build/ and rebuilds without docker cache.
 set -euo pipefail
@@ -25,7 +25,7 @@ if [[ "$CLEAN" == "1" ]]; then
 fi
 mkdir -p "$BUILD/data"
 
-# ── 1. Codegen (atlas proto stubs + this package's capabilities/srv/*.srv) ──
+# ── 1. Codegen (src proto stubs + this package's capabilities/srv/*.srv) ──
 if command -v rbnx >/dev/null 2>&1; then
     FLAGS=(--mcp)
     [[ "$CLEAN" == "1" ]] && FLAGS+=(--clean)

@@ -92,17 +92,17 @@ class TestMemoryService:
         # Earlier tasks
         asyncio.run(self.svc.remember_from_log(
             session_id="sess-1", plan_id="plan-fetch",
-            level="Info", tag="pilot",
+            level="Info", tag="planner",
             msg="executed fetch task: brought the red cup to user",
         ))
         asyncio.run(self.svc.remember_from_log(
             session_id="sess-1", plan_id="plan-build",
-            level="Info", tag="pilot",
+            level="Info", tag="planner",
             msg="executed build task: crafted a wooden plank",
         ))
         asyncio.run(self.svc.remember_from_log(
             session_id="sess-1", plan_id="plan-explore",
-            level="Info", tag="pilot",
+            level="Info", tag="planner",
             msg="executed explore task: scanned the living room",
         ))
 
@@ -221,7 +221,7 @@ class TestMemoryService:
         )))
         ids.append(asyncio.run(svc1.remember_from_log(
             session_id="sess-reboot", plan_id="plan-3",
-            level="Info", tag="pilot",
+            level="Info", tag="planner",
             msg="crafted stone axe in the workshop",
             objects=[("scene.obj.axe_001", "stone axe", 7.1, 8.1, 1.0)],
             spatial_origin="fixture_frame",

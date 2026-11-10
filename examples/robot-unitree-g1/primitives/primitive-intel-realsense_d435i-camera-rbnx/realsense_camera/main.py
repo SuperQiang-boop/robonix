@@ -4,7 +4,7 @@
 (capability_id=realsense_camera).
 
 Owns `robonix/primitive/camera/*`. The D435i has an internal IMU but
-we deliberately do NOT atlas-route it under `primitive/imu/imu`
+we deliberately do NOT src-route it under `primitive/imu/imu`
 (MID-360 IMU is canonical for the ranger). Subscribers needing the
 camera IMU directly can read /<camera_name>/imu.
 
@@ -29,7 +29,7 @@ Config (from manifest):
     rgb_profile        default "640x480x30"
     depth_profile      default "848x480x30"
     align_depth        default true
-    enable_imu         default true   (published, NOT atlas-routed)
+    enable_imu         default true   (published, NOT src-routed)
     enable_sync        default true
     sentinel_timeout_s default 30.0
 """
@@ -58,7 +58,7 @@ cap = Primitive(id="realsense_camera", namespace="robonix/primitive/camera")
 
 
 def _pump_output(stream, tag: str) -> None:
-    """Forward a child process's merged stdout/stderr into scribe via the
+    """Forward a child process's merged stdout/stderr into the log facade via the
     package logger — one unified log stream, no side-car *.log file."""
     for raw in iter(stream.readline, b""):
         line = raw.decode(errors="replace").rstrip()
@@ -304,7 +304,7 @@ def _publish_extrinsics_when_ready(
     base_frame: str, camera_frame: str, topic: str,
     publisher, stop_event: threading.Event,
 ) -> None:
-    """Publish the static robot-to-camera TF as the Atlas extrinsics contract.
+    """Publish the static robot-to-camera TF as the Src extrinsics contract.
 
     Retry in a daemon thread until TF becomes available or shutdown is requested.
     Log the specific TF failure at most once every ten seconds.

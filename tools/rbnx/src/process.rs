@@ -4,7 +4,7 @@
 // Process management for robonix-cli (start/stop/monitor processes)
 
 use anyhow::{Context, Result};
-use robonix_scribe::{info, warn};
+use robonix_log::{info, warn};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -102,7 +102,7 @@ fn derive_state_file_path(log_dir: &Path) -> PathBuf {
 /// Manager for processes running capabilities and skills
 pub struct ProcessManager {
     processes: Arc<Mutex<HashMap<String, ProcessInfo>>>, // key: "{package_type}::{std_name}"
-    /// Per-package log directory for Scribe structured logs.
+    /// Per-package log directory for Log structured logs.
     log_dir: PathBuf,
     state_file: PathBuf,
     hostname: String,
@@ -320,8 +320,8 @@ impl ProcessManager {
     }
 
     /// Start a process; blocks until it exits.  Stdout / stderr are captured
-    /// line-by-line and written to Scribe structured logs under
-    /// `$SCRIBE_LOG_DIR/{tag}.log` (tag = `std_name`, e.g.
+    /// line-by-line and written to Log structured logs under
+    /// `$ROBONIX_LOG_DIR/{tag}.log` (tag = `std_name`, e.g.
     /// `"com.robonix.service.mapping"`).  Lines are NOT forwarded to the
     /// terminal — `rbnx boot` owns the display and raw package output would
     /// drown out the boot progress lines.  Use `rbnx logs -f` for live
@@ -377,7 +377,7 @@ impl ProcessManager {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .env("PYTHONUNBUFFERED", "1")
-            .env("SCRIBE_LOG_DIR", &self.log_dir);
+            .env("ROBONIX_LOG_DIR", &self.log_dir);
         #[cfg(unix)]
         if std::env::var_os("RBNX_DEPLOY_MANAGED").is_none() {
             // A standalone `rbnx start` owns a group for its package. When
@@ -412,13 +412,13 @@ impl ProcessManager {
         }
         self.save_state()?;
 
-        // Pipe stdout / stderr through Scribe so structured logs land in
-        // $SCRIBE_LOG_DIR/{tag}.log.  Do NOT forward to the terminal —
+        // Pipe stdout / stderr through Log so structured logs land in
+        // $ROBONIX_LOG_DIR/{tag}.log.  Do NOT forward to the terminal —
         // `rbnx boot` owns the display and raw package output would
         // drown out the boot progress lines.
         let stdout = child.stdout.take().expect("stdout not piped");
         let stderr = child.stderr.take().expect("stderr not piped");
-        // Scribe tag + log-file stem = `std_name` (the provider_id) verbatim,
+        // Log tag + log-file stem = `std_name` (the provider_id) verbatim,
         // matching `deploy::log_path`. No name mangling.
         let tag = std_name.to_string();
 
@@ -426,7 +426,7 @@ impl ProcessManager {
             let reader = tokio::io::BufReader::new(stdout);
             let mut lines = reader.lines();
             while let Ok(Some(line)) = lines.next_line().await {
-                robonix_scribe::ingest(&tag, &line);
+                robonix_log::ingest(&tag, &line);
             }
         });
 
@@ -439,7 +439,7 @@ impl ProcessManager {
                 // WARNING messages to stderr — use `info` rather than
                 // `warn` so the level in the file doesn't misrepresent
                 // the actual severity.
-                robonix_scribe::ingest(&tag2, &line);
+                robonix_log::ingest(&tag2, &line);
             }
         });
 

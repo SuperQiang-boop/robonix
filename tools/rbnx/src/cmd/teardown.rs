@@ -9,7 +9,7 @@
 // then TERM/KILL of the wrapper process group.
 //
 // Boot also doesn't currently kill its children on the `?`-error path,
-// leaking atlas/pilot/executor as orphans. Persisted state + a separate
+// leaking src/planner/executor as orphans. Persisted state + a separate
 // `rbnx shutdown` command lets the user (or boot's own error path)
 // always reach the same teardown helper.
 
@@ -24,7 +24,7 @@ pub struct BootState {
     pub manifest_path: String,
     pub boot_pid: u32,
     pub started_at_ms: u64,
-    pub atlas_endpoint: String,
+    pub src_endpoint: String,
     pub components: Vec<ComponentRecord>,
 }
 
@@ -54,13 +54,13 @@ pub fn read_state(path: &Path) -> Result<BootState> {
 
 /// Stop each component with the canonical runtime order. Idempotent: missing
 /// providers, stop hooks, or PGIDs are treated as best-effort shutdown noise.
-pub async fn teardown(atlas_endpoint: Option<&str>, components: &[ComponentRecord]) {
-    // Reverse order so services/skills/primitives die before pilot/atlas.
+pub async fn teardown(src_endpoint: Option<&str>, components: &[ComponentRecord]) {
+    // Reverse order so services/skills/primitives die before planner/src.
     for c in components.iter().rev() {
         robonix_cli::output::sub_step(&format!(
             "[shutdown] {} stopping (pid={}, pgid={})",
             c.name, c.pid, c.pgid
         ));
-        shutdown_package_runtime(atlas_endpoint, c, Duration::from_secs(30)).await;
+        shutdown_package_runtime(src_endpoint, c, Duration::from_secs(30)).await;
     }
 }

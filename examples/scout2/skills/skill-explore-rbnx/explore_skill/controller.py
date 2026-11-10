@@ -16,11 +16,11 @@ Threading:
   - rclpy thread (ExploreController._spin_thread): hosts the /map
     subscriber and tf2 buffer.
   - task thread (per explore() invocation): runs the frontier loop.
-  - heartbeat thread (in atlas_bridge): unrelated.
+  - heartbeat thread (in src_bridge): unrelated.
 
 Nav integration:
   The skill calls service/navigation/navigate and its status/cancel controls as
-  gRPC RPCs against the endpoints atlas resolved at startup. We do
+  gRPC RPCs against the endpoints src resolved at startup. We do
   NOT subscribe to /goal_pose or /cmd_vel — that would skip the nav
   service's contract surface and break the abstraction.
 """
@@ -117,7 +117,7 @@ class ExploreController:
                  scene_list_objects_endpoint: Optional[str] = None):
         self.map_topic = map_topic
         # All three nav endpoints typically point at the same FastMCP
-        # server (http://host:port/mcp/) — atlas hands us the URL each
+        # server (http://host:port/mcp/) — src hands us the URL each
         # tool registered under. Keep separate fields so a future
         # multi-endpoint nav setup (e.g. nav2-wrapper for some modes,
         # simple_nav for others) still works.
@@ -126,7 +126,7 @@ class ExploreController:
             "status":   nav_status_endpoint,
             "cancel":   nav_cancel_endpoint,
         }
-        # Scene service endpoint for glass door detection (optional)
+        # World service endpoint for glass door detection (optional)
         self._scene_endpoint = scene_list_objects_endpoint
         self._lock = threading.Lock()
         self._latest_map: Any = None     # latest OccupancyGrid msg
@@ -608,7 +608,7 @@ class ExploreController:
 
     # ── Nav RPC over MCP HTTP ──────────────────────────────────────
     # simple_nav exposes navigate/status/cancel as MCP tools, so we
-    # call them via FastMCP's client. atlas_bridge resolved the MCP
+    # call them via FastMCP's client. src_bridge resolved the MCP
     # endpoint URL for each contract; in practice all three point at
     # the same FastMCP server, but we keep them separate so a future
     # multi-nav setup still works.
@@ -663,7 +663,7 @@ class ExploreController:
         sibling `status` tool until terminal or timeout."""
         # Navigate.srv carries a PoseStamped (`goal`) — encode xy in
         # position and the optional yaw as a unit quaternion in
-        # orientation. simple_nav's atlas_bridge interprets the
+        # orientation. simple_nav's src_bridge interprets the
         # identity quat (z=0, w=1) as "no yaw constraint", so for
         # legs that don't care about heading we leave it identity.
         if yaw is not None:

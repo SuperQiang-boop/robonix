@@ -91,7 +91,7 @@ def _setup_can(cfg: dict) -> None:
 
 
 def _pump_output(stream) -> None:
-    """Forward the ranger driver's merged stdout/stderr into scribe via the
+    """Forward the ranger driver's merged stdout/stderr into the log facade via the
     package logger — one unified log stream, no side-car ranger.log file."""
     for raw in iter(stream.readline, b""):
         line = raw.decode(errors="replace").rstrip()
@@ -172,7 +172,7 @@ def _wait_for_odom(topic: str, timeout_s: float) -> bool:
         log.warning("rclpy unavailable (%s); skipping sentinel wait", e)
         return True
     rclpy.init(args=None)
-    node = Node("ranger_atlas_sentinel")
+    node = Node("ranger_src_sentinel")
     qos = QoSProfile(
         reliability=ReliabilityPolicy.RELIABLE,
         durability=DurabilityPolicy.VOLATILE,

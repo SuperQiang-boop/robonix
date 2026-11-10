@@ -3073,29 +3073,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "robonix-atlas"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "prost",
- "protoc-bin-vendored",
- "robonix-codegen",
- "robonix-scribe",
- "serde",
- "serde_json",
- "tokio",
- "tokio-stream",
- "toml",
- "tonic",
- "tonic-build",
- "tonic-prost",
- "tonic-prost-build",
- "uuid",
- "walkdir",
-]
-
-[[package]]
 name = "robonix-cli"
 version = "0.1.0"
 dependencies = [
@@ -3112,9 +3089,9 @@ dependencies = [
  "protoc-bin-vendored",
  "ratatui",
  "resvg",
- "robonix-atlas",
  "robonix-codegen",
- "robonix-scribe",
+ "robonix-log",
+ "robonix-src",
  "serde",
  "serde_json",
  "serde_yaml",
@@ -3134,7 +3111,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
- "robonix-scribe",
+ "robonix-log",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
@@ -3151,9 +3128,9 @@ dependencies = [
  "prost",
  "protoc-bin-vendored",
  "rmcp",
- "robonix-atlas",
  "robonix-codegen",
- "robonix-scribe",
+ "robonix-log",
+ "robonix-src",
  "serde",
  "serde_json",
  "serde_yaml",
@@ -3167,7 +3144,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "robonix-liaison"
+name = "robonix-gateway"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -3176,9 +3153,9 @@ dependencies = [
  "prost",
  "protoc-bin-vendored",
  "rmcp",
- "robonix-atlas",
  "robonix-codegen",
- "robonix-scribe",
+ "robonix-log",
+ "robonix-src",
  "serde",
  "serde_json",
  "tokio",
@@ -3192,20 +3169,27 @@ dependencies = [
 ]
 
 [[package]]
-name = "robonix-pilot"
+name = "robonix-log"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
+name = "robonix-monitor"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-openai",
  "clap",
- "futures-util",
+ "env_logger",
+ "log",
  "prost",
  "protoc-bin-vendored",
- "reqwest 0.13.4",
- "rmcp",
- "robonix-atlas",
  "robonix-codegen",
- "robonix-scribe",
+ "robonix-src",
  "serde",
  "serde_json",
  "serde_yaml",
@@ -3219,17 +3203,34 @@ dependencies = [
 ]
 
 [[package]]
-name = "robonix-scribe"
+name = "robonix-planner"
 version = "0.1.0"
 dependencies = [
- "libc",
+ "anyhow",
+ "async-openai",
+ "clap",
+ "futures-util",
+ "prost",
+ "protoc-bin-vendored",
+ "reqwest 0.13.4",
+ "rmcp",
+ "robonix-codegen",
+ "robonix-log",
+ "robonix-src",
  "serde",
  "serde_json",
- "tempfile",
+ "serde_yaml",
+ "tokio",
+ "tokio-stream",
+ "tonic",
+ "tonic-build",
+ "tonic-prost",
+ "tonic-prost-build",
+ "uuid",
 ]
 
 [[package]]
-name = "robonix-soma"
+name = "robonix-robotdesc"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -3237,10 +3238,10 @@ dependencies = [
  "nix 0.31.3",
  "prost",
  "protoc-bin-vendored",
- "robonix-atlas",
  "robonix-cli",
  "robonix-codegen",
- "robonix-scribe",
+ "robonix-log",
+ "robonix-src",
  "roxmltree 0.21.1",
  "serde",
  "serde_json",
@@ -3256,27 +3257,26 @@ dependencies = [
 ]
 
 [[package]]
-name = "robonix-vitals"
+name = "robonix-src"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
- "env_logger",
- "log",
  "prost",
  "protoc-bin-vendored",
- "robonix-atlas",
  "robonix-codegen",
+ "robonix-log",
  "serde",
  "serde_json",
- "serde_yaml",
  "tokio",
  "tokio-stream",
+ "toml",
  "tonic",
  "tonic-build",
  "tonic-prost",
  "tonic-prost-build",
  "uuid",
+ "walkdir",
 ]
 
 [[package]]

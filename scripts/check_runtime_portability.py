@@ -11,7 +11,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE_ROOTS = ("system", "services", "tools", "pylib", "capabilities")
 SOURCE_SUFFIXES = {".py", ".rs", ".sh", ".toml", ".yaml", ".yml", ".json", ".proto"}
-RUNTIME_MARKDOWN = {"system/pilot/rtdl_protocol.md"}
+RUNTIME_MARKDOWN = {"system/planner/rtdl_protocol.md"}
 EXCLUDED_PARTS = {
     "tests",
     "test",
@@ -34,27 +34,27 @@ RULES: tuple[tuple[str, re.Pattern[str], tuple[str, ...] | None], ...] = (
         None,
     ),
     (
-        "fixed Scene robot geometry",
+        "fixed World robot geometry",
         re.compile(
             r"Tiago-sized|_GOAL_NEAR_ROBOT_RADIUS_M|cam_offset_z|"
             r"circumscribed_radius_m\)\s*\|\|\s*0\.3"
         ),
-        ("system/scene/scene_service",),
+        ("system/world/world_service",),
     ),
     (
-        "guessed Scene coordinate frame",
+        "guessed World coordinate frame",
         re.compile(
             r'lookup_xy_yaw\("base_link",\s*"map"\)|'
             r'frame_id\s*=\s*["\']map["\']|'
             r'origin["\']?\s*:\s*["\']world["\']|'
             r'lambda:\s*["\']map["\']'
         ),
-        ("system/scene/scene_service",),
+        ("system/world/world_service",),
     ),
     (
-        "generic Pilot prompt names one robot provider",
+        "generic Planner prompt names one robot provider",
         re.compile(r"tiago_camera\.camera_snapshot"),
-        ("system/pilot/src/planner.rs", "system/pilot/rtdl_protocol.md"),
+        ("system/planner/src/planner.rs", "system/planner/rtdl_protocol.md"),
     ),
     (
         "generic chassis contract names one robot driver setting",

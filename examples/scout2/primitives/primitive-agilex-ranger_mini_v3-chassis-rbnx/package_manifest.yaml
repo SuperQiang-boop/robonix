@@ -8,10 +8,10 @@
 #
 # Owns the `primitive/chassis/*` namespace.
 #
-# Lifecycle: start.sh launches the atlas bridge ONLY (no ROS spawn).
+# Lifecycle: start.sh launches the src bridge ONLY (no ROS spawn).
 # `rbnx boot` then calls `Driver(CMD_INIT, config_json)` — the handler
 # spawns the appropriate launch file (ranger or scout), waits for the first
-# /odom message, and only THEN declares the data interfaces on atlas.
+# /odom message, and only THEN declares the data interfaces on src.
 #
 # Supported chassis models:
 #   ranger_mini_v1   — through ranger_ros2

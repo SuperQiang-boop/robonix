@@ -12,8 +12,8 @@ examples/webots/
 │   ├── start.sh               compose stack (Webots + eaios_webots).
 │   └── ...                    Bring up FIRST, before anything else.
 ├── boot.sh                    Variant-aware wrapper around rbnx boot.
-├── soma.yaml                  TIAGo Lite body description (default).
-├── soma.full.yaml             Full single-arm TIAGo body description.
+├── robotdesc.yaml                  TIAGo Lite body description (default).
+├── robotdesc.full.yaml             Full single-arm TIAGo body description.
 ├── primitives/                One device = one package.
 │   ├── tiago_chassis/         /amcl_pose + /cmd_vel  → chassis/{state, move}
 │   ├── tiago_camera/          /head_front_camera/*   → camera/{snapshot, depth_snapshot}
@@ -43,7 +43,7 @@ bash examples/webots/boot.sh
 
 `rbnx boot` from `examples/webots/` remains equivalent to the default Lite
 command. The wrapper is required when selecting the full variant because it
-keeps Soma and simulated health on the same robot description.
+keeps Robotdesc and simulated health on the same robot description.
 
 ## TIAGo variants
 
@@ -116,39 +116,39 @@ the cache.
 | `kitchen.wbt`<br>![kitchen](sim/thumbnails/kitchen.jpg) |  |
 
 Then a third terminal for `rbnx chat`. `rbnx caps` lists the
-capabilities atlas knows about; `rbnx tools` lists the MCP tools
+capabilities src knows about; `rbnx tools` lists the MCP tools
 the LLM agent can call.
 
 ## Simulated hardware health
 
-`rbnx boot` starts `tiago_health` during Soma stage 1. The primitive publishes
-nominal battery, wheel, camera, lidar, and audio readings every 500 ms; Soma
-maps those readings onto the component tree in `soma.yaml`. With the `full`
+`rbnx boot` starts `tiago_health` during Robotdesc stage 1. The primitive publishes
+nominal battery, wheel, camera, lidar, and audio readings every 500 ms; Robotdesc
+maps those readings onto the component tree in `robotdesc.yaml`. With the `full`
 variant it also publishes all seven arm joints and the gripper against
-`soma.full.yaml`.
+`robotdesc.full.yaml`.
 
-The deployment manifest declares Vitals as a built-in system component, so
-`rbnx boot` starts it automatically after Soma and Pilot. Soma uses `50091`
-and voiceprint uses `50092` in this deployment, so Vitals listens on `50093`.
+The deployment manifest declares Monitor as a built-in system component, so
+`rbnx boot` starts it automatically after Robotdesc and Planner. Robotdesc uses `50091`
+and voiceprint uses `50092` in this deployment, so Monitor listens on `50093`.
 
-Confirm that Atlas sees it as active:
+Confirm that Src sees it as active:
 
 ```bash
-rbnx caps -v | rg vitals
+rbnx caps -v | rg monitor
 ```
 
 Query the normalized result:
 
 ```bash
 cd /path/to/robonix
-PROTO_DIR=$(ls -td target/debug/build/robonix-vitals-*/out | head -n1)
+PROTO_DIR=$(ls -td target/debug/build/robonix-monitor-*/out | head -n1)
 
 grpcurl -plaintext \
   -import-path "$PROTO_DIR" \
   -proto robonix_contracts.proto \
   -d '{}' \
   127.0.0.1:50093 \
-  robonix.contracts.RobonixSystemVitalsGet/GetVitals | jq
+  robonix.contracts.RobonixSystemMonitorGet/GetMonitor | jq
 ```
 
 Expected power values are approximately `82%` and `24.8 V`; both wheels are
@@ -187,14 +187,14 @@ The deploy manifest references these via `${VLM_*}`.
 ## What `rbnx boot` does
 
 1. Reads `robonix_manifest.yaml`, brings up the `system:` block (including
-   Vitals) and the implicitly required Soma process using their installed
+   Monitor) and the implicitly required Robotdesc process using their installed
    binaries. Listen addresses, log levels, and VLM settings come from the
    manifest.
 2. For each `primitive:` / `service:` entry, in declaration order:
    - Spawns the package via `rbnx start -p <path>` (which runs that
      package's `scripts/start.sh` — for tiago drivers that's a
      `docker exec` into the sim container that runs the Python driver).
-   - Polls atlas until the package registers its first capability.
+   - Polls src until the package registers its first capability.
    - If the new provider declared a `*/driver` gRPC capability, also calls
      `LifecycleDriver.Driver(CMD_INIT, config_json)` to initialize it.
      Providers without a `*/driver` capability are deployed as soon as they
@@ -203,7 +203,7 @@ The deploy manifest references these via `${VLM_*}`.
 
 ## How the LLM picks tools
 
-After `rbnx boot` is up, pilot's system prompt lists each provider's
+After `rbnx boot` is up, planner's system prompt lists each provider's
 `CAPABILITY.md` path; the LLM uses the executor's `read_file` builtin
 to lazy-load the docs it needs (e.g. `read_file("/path/to/tiago_chassis/CAPABILITY.md")`).
 
@@ -212,7 +212,7 @@ collisions (camera and lidar both have a `snapshot` leaf — the LLM
 sees `camera_snapshot` and `lidar_snapshot`). The MCP server inside
 each driver still registers tools by leaf name.
 
-The pilot's persistence prompt instructs the LLM to keep iterating
+The planner's persistence prompt instructs the LLM to keep iterating
 tools-then-reason until the task is *verifiably* done — taking a
 fresh `camera/snapshot` after every physical action to confirm
 progress.

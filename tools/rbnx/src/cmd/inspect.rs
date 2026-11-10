@@ -1,34 +1,32 @@
 // SPDX-License-Identifier: MulanPSL-2.0
-// `rbnx caps / describe / tools / channels / inspect` — atlas introspection.
+// `rbnx caps / describe / tools / channels / inspect` — src introspection.
 //
-// All these are read-only views over `AtlasClient::query_capabilities` and
-// `AtlasClient::inner().inspect_atlas`. No state mutation, no Connect.
+// All these are read-only views over `SrcClient::query_capabilities` and
+// `SrcClient::inner().inspect_src`. No state mutation, no Connect.
 
 use anyhow::{Context, Result};
 use colored::*;
-use robonix_atlas::client::AtlasClient;
-use robonix_atlas::pb as atlas_pb;
+use robonix_src::client::SrcClient;
+use robonix_src::pb as src_pb;
 use serde_json::Value;
 
 fn transport_name(t: i32) -> &'static str {
-    match atlas_pb::Transport::try_from(t).unwrap_or(atlas_pb::Transport::Unspecified) {
-        atlas_pb::Transport::Grpc => "grpc",
-        atlas_pb::Transport::Ros2 => "ros2",
-        atlas_pb::Transport::Mcp => "mcp",
-        atlas_pb::Transport::Unspecified => "?",
+    match src_pb::Transport::try_from(t).unwrap_or(src_pb::Transport::Unspecified) {
+        src_pb::Transport::Grpc => "grpc",
+        src_pb::Transport::Ros2 => "ros2",
+        src_pb::Transport::Mcp => "mcp",
+        src_pb::Transport::Unspecified => "?",
     }
 }
 
 fn state_name(s: i32) -> &'static str {
-    match atlas_pb::LifecycleState::try_from(s)
-        .unwrap_or(atlas_pb::LifecycleState::StateUnspecified)
-    {
-        atlas_pb::LifecycleState::StateRegistered => "REGISTERED",
-        atlas_pb::LifecycleState::StateInactive => "INACTIVE",
-        atlas_pb::LifecycleState::StateActive => "ACTIVE",
-        atlas_pb::LifecycleState::StateError => "ERROR",
-        atlas_pb::LifecycleState::StateTerminated => "TERMINATED",
-        atlas_pb::LifecycleState::StateUnspecified => "?",
+    match src_pb::LifecycleState::try_from(s).unwrap_or(src_pb::LifecycleState::StateUnspecified) {
+        src_pb::LifecycleState::StateRegistered => "REGISTERED",
+        src_pb::LifecycleState::StateInactive => "INACTIVE",
+        src_pb::LifecycleState::StateActive => "ACTIVE",
+        src_pb::LifecycleState::StateError => "ERROR",
+        src_pb::LifecycleState::StateTerminated => "TERMINATED",
+        src_pb::LifecycleState::StateUnspecified => "?",
     }
 }
 
@@ -37,28 +35,26 @@ fn state_name(s: i32) -> &'static str {
 /// nothing's driving it yet, red=problem, dim=quiescent.
 fn state_tag(s: i32) -> colored::ColoredString {
     let label = format!("[{}]", state_name(s));
-    match atlas_pb::LifecycleState::try_from(s)
-        .unwrap_or(atlas_pb::LifecycleState::StateUnspecified)
-    {
-        atlas_pb::LifecycleState::StateActive => label.green().bold(),
-        atlas_pb::LifecycleState::StateInactive => label.yellow(),
-        atlas_pb::LifecycleState::StateRegistered => label.blue(),
-        atlas_pb::LifecycleState::StateTerminated => label.dimmed(),
-        atlas_pb::LifecycleState::StateError => label.red().bold(),
-        atlas_pb::LifecycleState::StateUnspecified => label.dimmed(),
+    match src_pb::LifecycleState::try_from(s).unwrap_or(src_pb::LifecycleState::StateUnspecified) {
+        src_pb::LifecycleState::StateActive => label.green().bold(),
+        src_pb::LifecycleState::StateInactive => label.yellow(),
+        src_pb::LifecycleState::StateRegistered => label.blue(),
+        src_pb::LifecycleState::StateTerminated => label.dimmed(),
+        src_pb::LifecycleState::StateError => label.red().bold(),
+        src_pb::LifecycleState::StateUnspecified => label.dimmed(),
     }
 }
 
-async fn connect(endpoint: &str) -> Result<AtlasClient> {
-    AtlasClient::connect(endpoint)
+async fn connect(endpoint: &str) -> Result<SrcClient> {
+    SrcClient::connect(endpoint)
         .await
-        .with_context(|| format!("connect to atlas at '{endpoint}'"))
+        .with_context(|| format!("connect to src at '{endpoint}'"))
 }
 
 pub async fn providers(endpoint: &str, json: bool, verbose: bool) -> Result<()> {
-    let mut atlas = connect(endpoint).await?;
-    let providers = atlas
-        .query_capabilities("", "", atlas_pb::Transport::Unspecified)
+    let mut src = connect(endpoint).await?;
+    let providers = src
+        .query_capabilities("", "", src_pb::Transport::Unspecified)
         .await?;
     if json {
         let serialised: Vec<_> = providers
@@ -147,17 +143,17 @@ pub async fn providers(endpoint: &str, json: bool, verbose: bool) -> Result<()> 
 }
 
 pub async fn describe(endpoint: &str, provider_id: Option<&str>, json: bool) -> Result<()> {
-    let mut atlas = connect(endpoint).await?;
+    let mut src = connect(endpoint).await?;
     let cap_filter = provider_id.unwrap_or("");
-    let providers = atlas
-        .query_capabilities(cap_filter, "", atlas_pb::Transport::Unspecified)
+    let providers = src
+        .query_capabilities(cap_filter, "", src_pb::Transport::Unspecified)
         .await?;
     if providers.is_empty() {
         println!("{} no matching providers", "[describe]".yellow().bold());
         return Ok(());
     }
     for provider in &providers {
-        // Atlas only stores the CAPABILITY.md path; consumers read the
+        // Src only stores the CAPABILITY.md path; consumers read the
         // file off the local filesystem themselves.
         let md = if provider.capability_md_path.is_empty() {
             String::new()
@@ -208,18 +204,18 @@ pub async fn describe(endpoint: &str, provider_id: Option<&str>, json: bool) -> 
 
 pub async fn tools(endpoint: &str, json: bool) -> Result<()> {
     // "Tools" in Robonix-speak = MCP-transport capabilities (LLM-callable providers).
-    let mut atlas = connect(endpoint).await?;
-    let providers = atlas
-        .query_capabilities("", "", atlas_pb::Transport::Mcp)
+    let mut src = connect(endpoint).await?;
+    let providers = src
+        .query_capabilities("", "", src_pb::Transport::Mcp)
         .await?;
     let mut entries: Vec<(String, String, String, String)> = Vec::new();
     for provider in &providers {
         for cap in &provider.capabilities {
-            if cap.transport != atlas_pb::Transport::Mcp as i32 {
+            if cap.transport != src_pb::Transport::Mcp as i32 {
                 continue;
             }
             let schema = match cap.params.as_ref().and_then(|p| p.kind.as_ref()) {
-                Some(atlas_pb::transport_params::Kind::Mcp(m)) => m.input_schema_json.clone(),
+                Some(src_pb::transport_params::Kind::Mcp(m)) => m.input_schema_json.clone(),
                 _ => String::new(),
             };
             let description = cap.description.clone();
@@ -267,12 +263,12 @@ pub async fn tools(endpoint: &str, json: bool) -> Result<()> {
 }
 
 pub async fn channels(endpoint: &str) -> Result<()> {
-    let atlas = connect(endpoint).await?;
-    let raw = atlas
+    let src = connect(endpoint).await?;
+    let raw = src
         .inner()
-        .inspect_atlas(atlas_pb::InspectAtlasRequest {})
+        .inspect_src(src_pb::InspectSrcRequest {})
         .await
-        .context("InspectAtlas RPC")?
+        .context("InspectSrc RPC")?
         .into_inner()
         .json;
     let v: Value = serde_json::from_str(&raw).context("parse inspect json")?;
@@ -317,10 +313,10 @@ pub async fn contracts(
     json: bool,
     verbose: bool,
 ) -> Result<()> {
-    let atlas = connect(endpoint).await?;
-    let resp = atlas
+    let src = connect(endpoint).await?;
+    let resp = src
         .inner()
-        .list_contracts(atlas_pb::ListContractsRequest {
+        .list_contracts(src_pb::ListContractsRequest {
             namespace_prefix: prefix.unwrap_or("").to_string(),
         })
         .await
@@ -433,12 +429,12 @@ pub async fn contracts(
 }
 
 pub async fn inspect(endpoint: &str) -> Result<()> {
-    let atlas = connect(endpoint).await?;
-    let raw = atlas
+    let src = connect(endpoint).await?;
+    let raw = src
         .inner()
-        .inspect_atlas(atlas_pb::InspectAtlasRequest {})
+        .inspect_src(src_pb::InspectSrcRequest {})
         .await
-        .context("InspectAtlas RPC")?
+        .context("InspectSrc RPC")?
         .into_inner()
         .json;
     println!("{raw}");

@@ -4,10 +4,10 @@
 # compose `world ← base ← camera_optical` without going through tf2.
 #
 # Why this is a contract and not a tf2 lookup:
-#   tf2 is a global ROS side-channel — atlas can't see it, `rbnx caps`
+#   tf2 is a global ROS side-channel — src can't see it, `rbnx caps`
 #   can't list it, `rbnx channels` can't audit it. Deployments with
 #   different camera mount geometries need different extrinsics, and
-#   routing the value through atlas means
+#   routing the value through src means
 #   the consumer asks for `primitive/camera/extrinsics` and gets the
 #   right transform regardless of which robot is wired in. tf2 stays
 #   available for raw ROS tooling (rviz, ros2 echo) but is not on the

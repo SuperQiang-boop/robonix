@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MulanPSL-2.0
 // Per-call async capability detection via required status/cancel sub-contracts.
 
-use robonix_atlas::client::AtlasClient;
-use robonix_atlas::pb as atlas_pb;
+use robonix_src::client::SrcClient;
+use robonix_src::pb as src_pb;
 
 #[derive(Debug, Clone)]
 pub struct AsyncGroup {
@@ -22,7 +22,7 @@ fn contract_leaf(contract_id: &str) -> &str {
 /// `<contract_id>/cancel`; registering only one is a provider configuration
 /// error surfaced to the caller before dispatching the initial run call.
 pub async fn resolve_async_group(
-    atlas: &mut AtlasClient,
+    src: &mut SrcClient,
     provider_id: &str,
     contract_id: &str,
 ) -> Result<Option<AsyncGroup>, String> {
@@ -32,8 +32,8 @@ pub async fn resolve_async_group(
     let status_contract = format!("{contract_id}/status");
     let cancel_contract = format!("{contract_id}/cancel");
 
-    let providers = atlas
-        .query_capabilities(provider_id, "", atlas_pb::Transport::Mcp)
+    let providers = src
+        .query_capabilities(provider_id, "", src_pb::Transport::Mcp)
         .await
         .map_err(|e| format!("query_capabilities({provider_id}) failed: {e:#}"))?;
     let Some(provider) = providers.into_iter().find(|p| p.id == provider_id) else {

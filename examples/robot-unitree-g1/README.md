@@ -27,6 +27,112 @@ bash start.sh --no-motion
 bash start.sh
 ```
 
+## Source tree and Src protocol migration
+
+After moving the checkout or migrating to Src, register the current repository
+root and regenerate each deployed Python package's protocol code, including
+remote primitives under `rbnx-boot/cache/`. From the repository root:
+
+```bash
+rbnx setup .
+rbnx path robonix-api
+rbnx path runtime-proto
+rbnx codegen -p examples/robot-unitree-g1/packages/g1_chassis --python python3
+```
+
+Repeat codegen for the other deployed packages using a generator compatible
+with their runtime Python interpreters. Regenerating protobuf code does not
+require `--clean`; that flag also removes generated ROS overlays and their
+build outputs. The API and runtime-proto paths must resolve inside the same
+checkout, with the latter pointing to `system/src/proto`.
+
+`RegisterPrimitive` / `DeclareCapability` returning `UNIMPLEMENTED` can mean
+the package still loads the old API or protocol stubs; increasing Robotdesc's
+stage-1 timeout does not resolve that mismatch. Independent packages under
+`third_party/`, including mapping and Nav2, require their own source migration
+and protocol regeneration; updating this checkout alone does not update them.
+
+The G1 `third_party/service-map-rbnx` and
+`third_party/service-navigation-rbnx` source copies now use `robonix_api.SRC`,
+the `src.proto` / `src_pb2` protocol, `ROBONIX_SRC`, and `src_bridge` entry
+points. Their native/container launch checks and package test expectations
+were updated together. The local submodule working trees retain independent
+upstream changes; publish the corresponding changes to each service repository
+and update its pinned revision before using a fresh deployment checkout.
+
+### 2026-11-04 boot follow-up
+
+RealSense and the cached Mid-360 IMU still loaded Python 3.13 ROS overlays
+after leaving Conda. Their old CMake caches selected
+`/home/szh/miniforge3/bin/python3`; importing `Parameter` alone succeeded, but
+importing native type support failed. The recovery backs up only generated
+`build`, `install`, and `log` directories, then rebuilds the RealSense workspace
+and the two IDL workspaces' native dependencies with system Python and both
+CMake interpreter variables set to `/usr/bin/python3`. For these topic bridges,
+`--packages-up-to sensor_msgs geometry_msgs rcl_interfaces` selects the needed
+ROS messages without compiling unrelated generated packages. Source, protocol
+outputs, and data stay intact. The local backup and build logs are under
+`/tmp/robonix-ros-py310-rebuild.JfVOOj/`.
+
+RealSense now pins system Python in its build, codegen, and start scripts.
+The cached IMU's upstream source is unchanged; keep Conda disabled and pass
+`-DPython3_EXECUTABLE=/usr/bin/python3 -DPYTHON_EXECUTABLE=/usr/bin/python3`
+to colcon when rebuilding its overlay. These local generated outputs do not
+survive `rbnx clean --cache`.
+
+The chassis config is aligned with its existing parser: `odom_source: sdk_pose`
+and `state_timeout_s: 0.15`. Motion gates, speed limits, and TF ownership are
+unchanged. Validation uses offline config checks and native ROS type-support
+imports; full boot and physical-device acceptance must be operator-supervised.
+The six RealSense tests and seven targeted chassis tests pass. Both rebuilt
+packages also pass actual SDK node creation and sentinel subscription checks
+on loopback ROS domain 219, without launching a camera, connecting to the robot,
+or invoking a provider Driver. These checks do not establish camera-frame or
+robot-state availability during a full boot.
+
+The next operator boot passed IMU and both cameras, but the chassis adapter
+reported `Connection refused` before its SDK daemon opened the Unix socket.
+The provider previously accepted an old socket path as ready. It now starts the
+adapter without that file-existence gate; the adapter retries actual
+`SOCK_SEQPACKET` connection startup for up to 3 s using fresh descriptors and
+preserves the last connection error. No readiness probe consumes the daemon's
+single-controller slot or triggers its disconnect safety behavior, and an
+established connection is never automatically reconnected. Startup failures
+identify the failed process and clean up both children. Motion gates, limits,
+and the requirement for measured odometry remain unchanged. Regression checks
+use temporary fake IPC peers only; no robot daemon or Driver is started.
+The adapter was rebuilt and installed with the ROS Humble environment and
+system Python. All 37 offline C++ cases (544 assertions) and nine targeted
+Python checks pass. The isolated-domain ROS smoke tests pass delayed socket
+replacement, 50 Hz odometry/TF, freshness and motion-fault guards, and transforms
+for 29 joints / 44 links. Actual adapter subprocesses also exit in about 3.14 s
+for both missing and stale sockets with the original error preserved. Full
+hardware boot remains operator-supervised; this deployment still explicitly
+sets `G1_ALLOW_MOTION: "true"`.
+
+### 2026-11-05 build follow-up
+
+The later deployment build selected `services/service-map-rbnx` and
+`services/service-navigation-rbnx` instead of the earlier `third_party` copies.
+The rebuilt Nav2 image contains `SettledGoalChecker`, `PersistentRotationShim`,
+and both Python-final-approach plugins in its sourced terminal overlay; existing
+containers continue using their old image until restarted by the operator.
+No navigation profile or motion setting was changed during this check.
+
+RealSense's 23:36 build failed because `--symlink-install` tried to replace a
+directory produced by the earlier copy installation. Its build script now
+consistently uses copy installation and explicitly resets
+`AMENT_CMAKE_SYMLINK_INSTALL=OFF` in existing CMake caches. This avoids deleting
+the workspace, data, or the already repaired Python 3.10 overlays. The full
+rebuild log is `/tmp/robonix-g1-build-followup/realsense-build.log`.
+The full build completes with both RealSense packages and all 42 generated
+ROS interface packages. A second camera-workspace incremental build also
+passes; its log is `realsense-incremental.log` in the same directory. The six
+hardware-independent package tests pass, including native ROS type support.
+The Speech summary reports only exit code 1; its first actual build error is
+still needed before selecting a dependency, model, or codegen repair. Speech
+backend configuration and dependencies have not been changed.
+
 ## RViz local costmap
 
 Use a Map display on `/local_costmap/costmap` with Reliable / Transient Local
@@ -197,9 +303,9 @@ check header timestamps and reject overly separated frames.
 The deployment sets the camera primitive's `launch_realsense: false`: run the
 HTTP-to-ROS publisher before `rbnx boot`, or the primitive's RGB, aligned-depth
 and color-CameraInfo startup checks will time out. It declares locally
-republished RGB, aligned depth and color CameraInfo through Atlas. The HTTP
+republished RGB, aligned depth and color CameraInfo through Src. The HTTP
 bridge does **not** carry
-`/camera/extrinsics` or `/tf_static`; Scene needs a measured mount transform
+`/camera/extrinsics` or `/tf_static`; World needs a measured mount transform
 (`extrinsics` in the camera primitive config) or a valid local TF tree.
 Do not guess a camera mount transform. Avoid mixing the original remote DDS
 publishers and the local bridge on the same topic: isolate the laptop ROS graph
@@ -231,7 +337,7 @@ from the G1 graph when using this bridge.
 | File | Purpose |
 |---|---|
 | `robonix_manifest.yaml` | Top-level deployment manifest |
-| `soma.yaml` | Robot body description, component tree, capabilities |
+| `robotdesc.yaml` | Robot body description, component tree, capabilities |
 | `config/nav2_params_g1.yaml` | Nav2 planner, controller, and costmap parameters |
 | `config/rtabmap_params.yaml` | RTAB-Map mapping parameters |
 | `config/navigate.xml` | Nav2 BT behavior tree for navigation goals |

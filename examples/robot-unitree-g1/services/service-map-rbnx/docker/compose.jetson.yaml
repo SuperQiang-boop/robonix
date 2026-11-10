@@ -5,7 +5,7 @@ services:
       dockerfile: docker/Dockerfile.jetson
     image: mapping_rbnx:jetson
 
-  atlas-bridge:
+  src-bridge:
     build:
       dockerfile: docker/Dockerfile.jetson
       target: runtime

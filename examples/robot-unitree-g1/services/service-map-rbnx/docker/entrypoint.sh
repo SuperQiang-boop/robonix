@@ -3,7 +3,7 @@
 # mapping_rbnx container entrypoint.
 #
 # Two processes run in this container:
-#   1. atlas_bridge               — Python: registers cap with atlas,
+#   1. src_bridge               — Python: registers cap with src,
 #                                   queries sensor primitives, writes
 #                                   resolved.yaml, declares own outputs.
 #   2. SLAM engine                — rtabmap (default) / dlio / fastlio2
@@ -59,7 +59,7 @@ cd /mapping
 # host-generated proto_gen. Emit a focused error before Python's descriptor
 # compatibility traceback obscures the deployment problem.
 PROTO_GEN=/mapping/rbnx-build/codegen/proto_gen
-if [ ! -f "$PROTO_GEN/atlas_pb2.py" ] \
+if [ ! -f "$PROTO_GEN/src_pb2.py" ] \
     || [ ! -f "$PROTO_GEN/map_pb2.py" ] \
     || [ ! -f "$PROTO_GEN/robonix_contracts_pb2_grpc.py" ]; then
     echo "[entrypoint] missing runtime-compatible protobuf stubs in $PROTO_GEN; rebuild and restart mapping" >&2
@@ -68,7 +68,7 @@ fi
 
 # Codegen output lives under <pkg>/rbnx-build/codegen/ per v0.1 (matches
 # `rbnx codegen` default + `robonix_api.codegen.ensure_proto_gen` walks).
-# atlas_bridge needs the generated atlas_pb2 etc., so prepend the
+# src_bridge needs the generated src_pb2 etc., so prepend the
 # proto_gen + robonix_mcp_types subdirs.
 export PYTHONPATH="/mapping/src:/mapping/rbnx-build/codegen/proto_gen:/mapping/rbnx-build/codegen/robonix_mcp_types:${PYTHONPATH:-}"
 if [ -d /robonix-api ]; then
@@ -81,11 +81,11 @@ ZENOHD_PID=
 BRIDGE_PID=
 
 ENGINE_PID=
-ATLAS_PID=
+SRC_PID=
 
 cleanup() {
     [ -n "$ENGINE_PID" ] && kill -TERM "$ENGINE_PID" 2>/dev/null || true
-    [ -n "$ATLAS_PID" ]  && kill -TERM "$ATLAS_PID"  2>/dev/null || true
+    [ -n "$SRC_PID" ]  && kill -TERM "$SRC_PID"  2>/dev/null || true
     kill -TERM "$BRIDGE_PID" 2>/dev/null || true
     kill -TERM "$ZENOHD_PID" 2>/dev/null || true
 }
@@ -93,13 +93,13 @@ trap cleanup EXIT INT TERM
 
 sleep 1
 
-# ── 3. atlas_bridge ─────────────────────────────────────────────────────────
-python3 -m mapping_rbnx.atlas_bridge 2>&1 | sed 's/^/[bridge] /' &
-ATLAS_PID=$!
+# ── 3. src_bridge ─────────────────────────────────────────────────────────
+python3 -m mapping_rbnx.src_bridge 2>&1 | sed 's/^/[bridge] /' &
+SRC_PID=$!
 
-# Wait for atlas_bridge to choose an algo + write resolved config.
-# atlas_bridge writes /tmp/mapping_algo (one-line algo name) once
-# config is parsed AND /tmp/<algo>_resolved.yaml when atlas-discovered
+# Wait for src_bridge to choose an algo + write resolved config.
+# src_bridge writes /tmp/mapping_algo (one-line algo name) once
+# config is parsed AND /tmp/<algo>_resolved.yaml when src-discovered
 # topics are available. Both are gating signals for start_engine.sh.
 for _ in $(seq 1 30); do
     [ -f /tmp/mapping_algo ] && break

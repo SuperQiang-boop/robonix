@@ -145,8 +145,8 @@ impl Config {
             // contract TOMLs (e.g. `[io.srv].srv = "demo/srv/Hello"`) have a
             // single, unambiguous base.
             SourcePathKey::InterfacesLib => root.join("capabilities").join("lib"),
-            // Atlas proto lives inside the atlas system component.
-            SourcePathKey::RuntimeProto => root.join("system").join("atlas").join("proto"),
+            // Src proto lives inside the src system component.
+            SourcePathKey::RuntimeProto => root.join("system").join("src").join("proto"),
             SourcePathKey::RobonixApi => root.join("pylib").join("robonix-api"),
         };
         if !abs.exists() {
@@ -171,7 +171,7 @@ pub enum SourcePathKey {
     Capabilities,
     /// `<root>/rust/crates/robonix-interfaces/lib` (ROS IDL source).
     InterfacesLib,
-    /// `<root>/rust/crates/robonix-atlas/proto` (atlas proto).
+    /// `<root>/rust/crates/robonix-src/proto` (src proto).
     RuntimeProto,
     /// `<root>/pylib/robonix-api` — shared Python helper lib.
     /// Carries `mcp_contract` (codegen IO class → FastMCP tool wrapper).

@@ -6,7 +6,7 @@ description: Multi-waypoint patrol with photo capture — navigate to a sequence
 
 Drives the robot through a user-specified sequence of waypoints using
 nav2 navigation, captures a photo at each stop via the camera primitive,
-and saves images to disk. User-invocable via the LLM/pilot.
+and saves images to disk. User-invocable via the LLM/planner.
 
 ## Interface (3 MCP tools)
 
@@ -93,10 +93,10 @@ Passing an empty `run_id` uses the most recent patrol task.
 - No collision avoidance (navigation service handles that).
 - No image analysis (photos are saved raw; use VLM/scene for analysis).
 
-All sensor/actuator access is through atlas-resolved contracts; no
+All sensor/actuator access is through src-resolved contracts; no
 hardcoded inter-package topic names.
 
-## Dependencies it Resolves on atlas at startup
+## Dependencies it Resolves on src at startup
 
 | key            | contract                                 | transport |
 |----------------|------------------------------------------|-----------|

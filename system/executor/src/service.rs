@@ -15,12 +15,12 @@ use crate::pb::executor::{
 use crate::pb::module_health::{
     GetModuleHealthRequest, GetModuleHealthResponse, ModuleHealth, ModuleHealthReport,
 };
-use crate::pb::pilot::rtdl_node_state::RtdlNodeStateEnum;
-use crate::pb::pilot::{CapabilityCall, CapabilityCallResult, Plan};
+use crate::pb::planner::rtdl_node_state::RtdlNodeStateEnum;
+use crate::pb::planner::{CapabilityCall, CapabilityCallResult, Plan};
 use crate::plan_runtime::{PlanRuntime, StopWhen};
 use crate::rtdl_wire::{self, NodeEventContext};
-use robonix_atlas::client::AtlasClient;
-use robonix_scribe::{info, warn};
+use robonix_log::{info, warn};
+use robonix_src::client::SrcClient;
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::pin::Pin;
@@ -36,13 +36,13 @@ const MODULE_HEALTH_SCHEMA_VERSION: u32 = 1;
 const MODULE_HEALTH_OK: u32 = 0;
 const MODULE_HEALTH_TTL_MS: u32 = 5000;
 
-/// `AtlasClient` is cheap to clone — each Execute RPC clones it so per-plan
+/// `SrcClient` is cheap to clone — each Execute RPC clones it so per-plan
 /// dispatch runs without serialising on a single mutex.
 #[derive(Clone)]
 pub struct ExecutorServiceImpl {
-    atlas: AtlasClient,
+    src: SrcClient,
     /// Executor's own provider_id. Two roles:
-    ///   1. consumer_id passed to atlas on every ConnectCapability so the
+    ///   1. consumer_id passed to src on every ConnectCapability so the
     ///      channel record reflects who is using each downstream provider.
     ///   2. self-detection: when a CapabilityCall in the plan targets this
     ///      provider_id, dispatch short-circuits to the in-process builtin
@@ -52,9 +52,9 @@ pub struct ExecutorServiceImpl {
 }
 
 impl ExecutorServiceImpl {
-    pub fn new(atlas: AtlasClient, provider_id: String) -> Self {
+    pub fn new(src: SrcClient, provider_id: String) -> Self {
         Self {
-            atlas,
+            src,
             provider_id,
             runtime: PlanRuntime::default(),
         }
@@ -72,7 +72,7 @@ impl RobonixSystemExecutorExecute for ExecutorServiceImpl {
         let plan = request.into_inner();
         validate_plan(&plan).map_err(Status::invalid_argument)?;
         let (tx, rx) = tokio::sync::mpsc::channel(64);
-        let atlas = self.atlas.clone();
+        let src = self.src.clone();
         let provider_id = self.provider_id.clone();
         let runtime = self.runtime.clone();
 
@@ -86,7 +86,7 @@ impl RobonixSystemExecutorExecute for ExecutorServiceImpl {
                 Arc::clone(&plan),
                 plan.root_index as usize,
                 tx.clone(),
-                atlas,
+                src,
                 provider_id,
                 runtime.clone(),
             )
@@ -112,7 +112,7 @@ fn execute_node(
     plan: Arc<Plan>,
     node_index: usize,
     tx: Sender<Result<RtdlEvent, Status>>,
-    atlas: AtlasClient,
+    src: SrcClient,
     provider_id: String,
     runtime: PlanRuntime,
 ) -> ExecuteNodeFuture {
@@ -137,14 +137,14 @@ fn execute_node(
             .should_stop_at(&plan.plan_id, &op_id, StopWhen::OnEnter)
             .await
         {
-            let mut atlas = atlas;
+            let mut src = src;
             runtime
-                .trigger_stop(&plan.plan_id, &provider_id, &mut atlas)
+                .trigger_stop(&plan.plan_id, &provider_id, &mut src)
                 .await;
             send_stop_on_enter(&tx, &node_ctx, &runtime).await;
             return true;
         }
-        let mut atlas_after = atlas.clone();
+        let mut src_after = src.clone();
         let failed = match node.node_kind {
             RTDL_SEQUENCE => {
                 let mut any_failed = false;
@@ -198,7 +198,7 @@ fn execute_node(
                             patched,
                             node_ctx,
                             tx.clone(),
-                            atlas.clone(),
+                            src.clone(),
                             provider_id.clone(),
                             runtime.clone(),
                         )
@@ -208,7 +208,7 @@ fn execute_node(
                             Arc::clone(&plan),
                             child_index,
                             tx.clone(),
-                            atlas.clone(),
+                            src.clone(),
                             provider_id.clone(),
                             runtime.clone(),
                         )
@@ -259,8 +259,7 @@ fn execute_node(
                                 // proactively query the scene service for the
                                 // latest approach pose of the target object.
                                 if let Some(approach_output) =
-                                    query_scene_approach(&call.args_json, &atlas, &provider_id)
-                                        .await
+                                    query_scene_approach(&call.args_json, &src, &provider_id).await
                                 {
                                     let leaf = call
                                         .contract_id
@@ -302,7 +301,7 @@ fn execute_node(
                 for child in &node.children {
                     let child_plan = Arc::clone(&plan);
                     let child_tx = tx.clone();
-                    let child_atlas = atlas.clone();
+                    let child_src = src.clone();
                     let child_provider_id = provider_id.clone();
                     let child_runtime = runtime.clone();
                     let child_index = *child as usize;
@@ -311,7 +310,7 @@ fn execute_node(
                             child_plan,
                             child_index,
                             child_tx,
-                            child_atlas,
+                            child_src,
                             child_provider_id,
                             child_runtime,
                         )
@@ -355,7 +354,7 @@ fn execute_node(
                     call,
                     node_ctx,
                     tx,
-                    atlas,
+                    src,
                     provider_id.clone(),
                     runtime.clone(),
                 )
@@ -374,7 +373,7 @@ fn execute_node(
             .await
         {
             runtime
-                .trigger_stop(&plan.plan_id, &provider_id, &mut atlas_after)
+                .trigger_stop(&plan.plan_id, &provider_id, &mut src_after)
                 .await;
         }
         failed
@@ -463,38 +462,38 @@ fn patch_navigate_args(original: &CapabilityCall, scene_output: &str) -> Option<
 /// tool output string (JSON with x, y, yaw, reachable) or None.
 async fn query_scene_approach(
     args_json: &str,
-    atlas: &AtlasClient,
+    src: &SrcClient,
     consumer_id: &str,
 ) -> Option<String> {
     // Parse the object_id from the goal_near args.
     let args: serde_json::Value = serde_json::from_str(args_json).ok()?;
     let object_id = args.get("object_id")?.as_str()?;
 
-    // Find the scene goal_near capability via atlas.
-    let contract_id = "robonix/system/scene/goal_near";
-    let mut atlas_mut = atlas.clone();
-    let recs = atlas_mut
-        .query_capabilities("", contract_id, robonix_atlas::pb::Transport::Mcp)
+    // Find the scene goal_near capability via src.
+    let contract_id = "robonix/system/world/goal_near";
+    let mut src_mut = src.clone();
+    let recs = src_mut
+        .query_capabilities("", contract_id, robonix_src::pb::Transport::Mcp)
         .await
         .unwrap_or_default();
     if recs.is_empty() {
-        warn!("[executor/patch] scene goal_near capability not found in atlas");
+        warn!("[executor/patch] scene goal_near capability not found in src");
         return None;
     }
     let cap = &recs[0];
 
     // Connect to the MCP endpoint.
-    let (channel_id, endpoint, _params) = atlas_mut
+    let (channel_id, endpoint, _params) = src_mut
         .connect_capability(
             consumer_id,
             &cap.id,
             contract_id,
-            robonix_atlas::pb::Transport::Mcp,
+            robonix_src::pb::Transport::Mcp,
         )
         .await
         .ok()?;
     if endpoint.trim().is_empty() {
-        let _ = atlas_mut.disconnect_capability(&channel_id).await;
+        let _ = src_mut.disconnect_capability(&channel_id).await;
         return None;
     }
 
@@ -506,7 +505,7 @@ async fn query_scene_approach(
         args_json: serde_json::json!({"object_id": object_id, "approach_yaw": 0.0}).to_string(),
     };
     let result = crate::dispatch::mcp::execute(&call, &endpoint).await;
-    let _ = atlas_mut.disconnect_capability(&channel_id).await;
+    let _ = src_mut.disconnect_capability(&channel_id).await;
 
     if !result.success || result.output.is_empty() {
         warn!(
@@ -587,7 +586,7 @@ async fn execute_call(
     call: &CapabilityCall,
     node: NodeEventContext,
     tx: Sender<Result<RtdlEvent, Status>>,
-    mut atlas: AtlasClient,
+    mut src: SrcClient,
     provider_id: String,
     runtime: PlanRuntime,
 ) -> bool {
@@ -619,7 +618,7 @@ async fn execute_call(
     let async_group = if call.provider_id == provider_id {
         Ok(None)
     } else {
-        async_registry::resolve_async_group(&mut atlas, &call.provider_id, &call.contract_id).await
+        async_registry::resolve_async_group(&mut src, &call.provider_id, &call.contract_id).await
     };
 
     let result = match async_group {
@@ -649,7 +648,7 @@ async fn execute_call(
                 call,
                 &group,
                 &provider_id,
-                &mut atlas,
+                &mut src,
                 &tx,
                 &node,
                 &runtime,
@@ -658,7 +657,7 @@ async fn execute_call(
         }
         Ok(None) => {
             let r =
-                crate::dispatch::dispatch(call, &provider_id, &mut atlas, &runtime, &node.plan_id)
+                crate::dispatch::dispatch(call, &provider_id, &mut src, &runtime, &node.plan_id)
                     .await;
             let cancelled = runtime.is_cancelled(&node.plan_id).await;
             let state = leaf_terminal_state(r.success, cancelled);
@@ -697,10 +696,10 @@ impl RobonixSystemExecutorCancelAllPlans for ExecutorServiceImpl {
         &self,
         _request: Request<crate::pb::executor::CancelAllRequest>,
     ) -> Result<Response<CancelAllResponse>, Status> {
-        let mut atlas = self.atlas.clone();
+        let mut src = self.src.clone();
         let success = self
             .runtime
-            .cancel_all_plans(&self.provider_id, &mut atlas)
+            .cancel_all_plans(&self.provider_id, &mut src)
             .await;
         Ok(Response::new(CancelAllResponse { success }))
     }
@@ -727,7 +726,7 @@ impl RobonixSystemExecutorControlPlan for ExecutorServiceImpl {
         request: Request<crate::pb::executor::ControlPlanRequest>,
     ) -> Result<Response<ControlPlanResponse>, Status> {
         let request = request.into_inner();
-        let mut atlas = self.atlas.clone();
+        let mut src = self.src.clone();
         let response = match request.action.as_str() {
             "cancel" => {
                 let wait_ms = if request.wait_ms == 0 {
@@ -737,7 +736,7 @@ impl RobonixSystemExecutorControlPlan for ExecutorServiceImpl {
                 };
                 let (completed, message) = self
                     .runtime
-                    .cancel_plan_control(&request.plan_id, wait_ms, &self.provider_id, &mut atlas)
+                    .cancel_plan_control(&request.plan_id, wait_ms, &self.provider_id, &mut src)
                     .await;
                 ControlPlanResponse {
                     success: true,
@@ -754,7 +753,7 @@ impl RobonixSystemExecutorControlPlan for ExecutorServiceImpl {
                 };
                 let (target_count, completed) = self
                     .runtime
-                    .cancel_all_plans_except(&self.provider_id, &mut atlas, None, wait_ms)
+                    .cancel_all_plans_except(&self.provider_id, &mut src, None, wait_ms)
                     .await;
                 ControlPlanResponse {
                     success: true,
@@ -929,7 +928,7 @@ mod tests {
         leaf_terminal_state, send_operator_terminal, send_stop_on_enter, validate_plan,
     };
     use crate::pb::executor::rtdl_event::RtdlEventEnum;
-    use crate::pb::pilot::{CapabilityCall, Plan, RtdlNode};
+    use crate::pb::planner::{CapabilityCall, Plan, RtdlNode};
     use crate::rtdl_wire::NodeEventContext;
 
     fn call(id: &str) -> CapabilityCall {

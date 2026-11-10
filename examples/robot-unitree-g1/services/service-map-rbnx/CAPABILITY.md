@@ -12,7 +12,7 @@ can re-localize against a previously-built map across restarts.
 The active SLAM engine is config-selectable (`algo`); consumers never see
 which engine runs — they only bind the `robonix/service/map/*` contracts.
 
-## Provides (declared on atlas)
+## Provides (declared on src)
 
 | contract | transport | payload | notes |
 |---|---|---|---|
@@ -31,11 +31,11 @@ Every `algo` backs this **same** surface (an adapter node is spawned when an
 engine can't natively publish a contract), so `scene` / `nav` are
 engine-agnostic.
 
-## Consumes (via atlas discovery)
+## Consumes (via src discovery)
 
 Resolved at `Driver(CMD_INIT)` from `sensor_providers` — only bound roles are
 looked up. Topic names are **never** hardcoded; they come from the selected
-Atlas provider.
+Src provider.
 
 | config flag | contract | role |
 |---|---|---|
@@ -46,7 +46,7 @@ Atlas provider.
 | `rgb` | `robonix/primitive/camera/rgb` | rgb image |
 | `odom` | `robonix/primitive/chassis/odom` | wheel/external odom (else rtabmap runs its own icp_odometry) |
 
-If a sensor isn't on atlas yet when INIT lands, the launch disables that
+If a sensor isn't on src yet when INIT lands, the launch disables that
 subscription rather than blocking.
 
 ## Config (`config:` block → `Driver(CMD_INIT, config_json)`)
@@ -66,16 +66,16 @@ config:
 ```
 
 `sensor_providers` is the only required sensor-selection block. Its keys enable
-roles and its values pin Atlas provider IDs. Copy
+roles and its values pin Src provider IDs. Copy
 [`config/rtabmap_params.template.yaml`](config/rtabmap_params.template.yaml) to
 the robot deployment and reference that copy with `params_file`. The upstream
 template is never loaded at runtime. Inline `rtabmap_params` applies last.
 
 ### Sensor provider roles
 
-Each key maps to an Atlas contract. Include both `rgb` and `depth` for RGB-D.
+Each key maps to an Src contract. Include both `rgb` and `depth` for RGB-D.
 
-| key       | atlas contract                      | feeds rtabmap   |
+| key       | src contract                      | feeds rtabmap   |
 | --------- | ----------------------------------- | --------------- |
 | `lidar2d` | `robonix/primitive/lidar/lidar`     | `scan` (2D)     |
 | `lidar3d` | `robonix/primitive/lidar/lidar3d`   | `scan_cloud`    |
@@ -88,7 +88,7 @@ The legacy `sensors` boolean block remains accepted for migration, but new
 deployments should use only `sensor_providers`.
 
 `occupancy_sources` is a separate policy. It accepts `lidar`, `depth`, or both,
-and fails initialization if Atlas did not resolve a requested source. Omitting
+and fails initialization if Src did not resolve a requested source. Omitting
 it preserves the legacy automatic choice for existing deployments.
 
 `deskew_lidar: true` requires a per-point `t`, `time`, `stamps`, or `timestamp`
@@ -98,7 +98,7 @@ uses its motion estimate.
 ## Map operations (`save_map` / `load_map` / `pose_estimate`)
 
 Runtime RPC+MCP controls for managing maps without re-deploying. All three are
-callable any time after init, by gRPC (scene / programmatic) or MCP (pilot /
+callable any time after init, by gRPC (scene / programmatic) or MCP (planner /
 LLM). Maps live under `{MAPPING_MAPS_DIR}/<map_id>/` (rtabmap.db + occupancy
 pgm/png + cloud pcd + meta), one directory per `map_id` — the same id scene
 keys its semantic objects to.

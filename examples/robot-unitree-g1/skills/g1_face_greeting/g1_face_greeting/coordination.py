@@ -1,4 +1,4 @@
-"""Deployment-local greeting facts shared with Pilot and navigation.
+"""Deployment-local greeting facts shared with Planner and navigation.
 
 No face events are consumed here. Only the existing greeting worker writes this
 snapshot; atomic replacement keeps readers from seeing partial updates.
@@ -12,12 +12,12 @@ import time
 import uuid
 from pathlib import Path
 
-from robonix_api import ATLAS
-from robonix_api.atlas_types import Transport
+from robonix_api import SRC
+from robonix_api.src_types import Transport
 
 STATE_ENV = "ROBONIX_GREETING_STATE_PATH"
 EXECUTOR = "robonix/system/executor/list_active_plans"
-VOICE = "robonix/system/liaison/voice"
+VOICE = "robonix/system/gateway/voice"
 
 
 def enabled() -> bool:
@@ -49,10 +49,10 @@ def initialize() -> None:
 
 
 def connect(runtime, contract: str):
-    """Discover existing gRPC contracts through Atlas, without fixed ports."""
+    """Discover existing gRPC contracts through Src, without fixed ports."""
     import grpc
 
-    found = ATLAS.find_capability(contract_id=contract, transport=Transport.GRPC)
+    found = SRC.find_capability(contract_id=contract, transport=Transport.GRPC)
     if len(found) != 1:
         raise RuntimeError(f"expected one gRPC capability for {contract}, found {len(found)}")
     connection = runtime.skill.connect_capability(found[0], contract, Transport.GRPC)
@@ -104,13 +104,13 @@ def stop_requested(facts: dict) -> bool:
 
 
 def listen(runtime, facts: dict) -> bool:
-    """Use Liaison's complete authenticated voice pipeline exactly once.
+    """Use Gateway's complete authenticated voice pipeline exactly once.
 
     Keep draining after admission: its stream includes the entire task, not just
     ASR. A missing admission/empty-transcript result leaves movement inhibited.
     """
-    from liaison_pb2 import StartVoiceSession_Request
-    from robonix_contracts_pb2_grpc import RobonixSystemLiaisonVoiceStub
+    from gateway_pb2 import StartVoiceSession_Request
+    from robonix_contracts_pb2_grpc import RobonixSystemGatewayVoiceStub
 
     ready = threading.Event()
     result = {}
@@ -125,10 +125,10 @@ def listen(runtime, facts: dict) -> bool:
                 session_id=facts["session_id"], record_seconds=15, language="zh-CN",
                 tts_enabled=True, mic_node_id="g1_audio", speaker_node_id="g1_audio",
                 context_json=json.dumps({"greeting_event_id": facts["event_id"]}))
-            stream = RobonixSystemLiaisonVoiceStub(channel).StartVoiceSession(request)
+            stream = RobonixSystemGatewayVoiceStub(channel).StartVoiceSession(request)
             streams.append(stream)
             for event in stream:
-                if event.event_kind == 6:  # Pilot accepted this same-session voice turn.
+                if event.event_kind == 6:  # Planner accepted this same-session voice turn.
                     result["submitted"] = True
                     ready.set()
                 elif event.event_kind == 10:
@@ -166,7 +166,7 @@ def listen(runtime, facts: dict) -> bool:
 
 
 def greet(runtime, event: dict) -> dict:
-    """Stop, greet, listen, and hand completion to Pilot without resuming a goal."""
+    """Stop, greet, listen, and hand completion to Planner without resuming a goal."""
     if runtime._valid_level(event.get("intimacy_level", 1)) is None:
         return {"accepted": False, "detail": "invalid intimacy level"}
     person_id = int(event.get("person_id", -1))
@@ -230,7 +230,7 @@ def greet(runtime, event: dict) -> dict:
         if runtime._stop.is_set():
             raise RuntimeError("skill stopped during conversation")
         facts.update(state="SUCCEEDED", active=False, movement_allowed=True, listening=False,
-                     detail="voice task submitted to the original session" if submitted else "no voice request; Pilot may continue the original task")
+                     detail="voice task submitted to the original session" if submitted else "no voice request; Planner may continue the original task")
         publish(facts)
         result["detail"] += "; " + facts["detail"]
         return result

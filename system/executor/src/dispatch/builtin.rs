@@ -3,10 +3,10 @@
 //
 // dispatch/builtin.rs — built-in tool implementations
 
-use crate::pb::pilot::CapabilityCallResult;
+use crate::pb::planner::CapabilityCallResult;
 use crate::plan_runtime::PlanRuntime;
-use robonix_atlas::client::AtlasClient;
-use robonix_atlas::pb as atlas_pb;
+use robonix_src::client::SrcClient;
+use robonix_src::pb as src_pb;
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 
@@ -59,7 +59,7 @@ fn safe_resolve(user_path: &str) -> anyhow::Result<PathBuf> {
     Ok(resolved)
 }
 
-use crate::pb::pilot::CapabilityCall;
+use crate::pb::planner::CapabilityCall;
 
 /// One in-process builtin (no network, runs in executor's own process).
 /// `call.contract_id`'s last segment names the operation —
@@ -68,7 +68,7 @@ pub async fn execute(
     call: &CapabilityCall,
     runtime: &PlanRuntime,
     self_provider_id: &str,
-    atlas: &mut AtlasClient,
+    src: &mut SrcClient,
     plan_id: &str,
 ) -> CapabilityCallResult {
     let op = call
@@ -78,7 +78,7 @@ pub async fn execute(
         .unwrap_or(call.contract_id.as_str());
     if op == "cancel_plan" {
         return runtime
-            .cancel_plan_builtin(call, self_provider_id, atlas)
+            .cancel_plan_builtin(call, self_provider_id, src)
             .await;
     }
     if op == "stop_plan_at" {
@@ -91,7 +91,7 @@ pub async fn execute(
         return runtime.get_all_plans_builtin(call).await;
     }
     if op == "read_capability_doc" {
-        return read_capability_doc(call, atlas).await;
+        return read_capability_doc(call, src).await;
     }
 
     let result = run(op, &call.args_json, runtime, plan_id).await;
@@ -131,7 +131,7 @@ async fn run(
 }
 
 /// Static metadata for the builtin ops. Used by main.rs to declare them
-/// against atlas at startup so pilot can discover them like any other provider.
+/// against src at startup so planner can discover them like any other provider.
 pub struct BuiltinSpec {
     pub op: &'static str,
     pub description: &'static str,
@@ -197,17 +197,14 @@ struct DocArgs {
 }
 
 /// Apply the `read_capability_doc` builtin: fetch a provider's registered
-/// CAPABILITY.md *content* from atlas and return it as markdown text.
+/// CAPABILITY.md *content* from src and return it as markdown text.
 ///
-/// Unlike `read_file`, this never touches the filesystem — atlas serves the
+/// Unlike `read_file`, this never touches the filesystem — src serves the
 /// content the provider sent at registration, so it works regardless of the
 /// provider's (possibly containerised) mount layout. Errors when the provider
 /// is unknown or registered no doc; output is truncated to keep prompt size
 /// bounded.
-async fn read_capability_doc(
-    call: &CapabilityCall,
-    atlas: &mut AtlasClient,
-) -> CapabilityCallResult {
+async fn read_capability_doc(call: &CapabilityCall, src: &mut SrcClient) -> CapabilityCallResult {
     let mut out = CapabilityCallResult {
         call_id: call.call_id.clone(),
         provider_id: call.provider_id.clone(),
@@ -225,8 +222,8 @@ async fn read_capability_doc(
         out.error = "read_capability_doc: provider_id is required".to_string();
         return out;
     }
-    match atlas
-        .query_capabilities(&provider_id, "", atlas_pb::Transport::Unspecified)
+    match src
+        .query_capabilities(&provider_id, "", src_pb::Transport::Unspecified)
         .await
     {
         Ok(providers) => match providers.iter().find(|p| p.id == provider_id) {
@@ -238,11 +235,11 @@ async fn read_capability_doc(
                 out.error = format!("provider '{provider_id}' registered no CAPABILITY.md");
             }
             None => {
-                out.error = format!("no provider '{provider_id}' registered in atlas");
+                out.error = format!("no provider '{provider_id}' registered in src");
             }
         },
         Err(e) => {
-            out.error = format!("atlas query for '{provider_id}' failed: {e}");
+            out.error = format!("src query for '{provider_id}' failed: {e}");
         }
     }
     out
@@ -420,7 +417,7 @@ fn terminate_command_group(pgid: u32, signal: nix::sys::signal::Signal) {
     use nix::unistd::Pid;
     match killpg(Pid::from_raw(pgid as i32), signal) {
         Ok(()) | Err(nix::errno::Errno::ESRCH) => {}
-        Err(error) => robonix_scribe::warn!(
+        Err(error) => robonix_log::warn!(
             "[executor] signal {:?} command pgid {} failed: {}",
             signal,
             pgid,

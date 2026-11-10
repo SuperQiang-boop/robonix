@@ -6,7 +6,7 @@ BUILD_DIR="${ROOT_DIR}/rbnx-build"
 VENV_DIR="${BUILD_DIR}/venv"
 RBNX_BIN="${RBNX_BIN:-rbnx}"
 
-echo "[go2-dashboard] building read-only telemetry + optional Liaison voice UI"
+echo "[go2-dashboard] building read-only telemetry + optional Gateway voice UI"
 PYTHONPATH="${ROOT_DIR}${PYTHONPATH:+:${PYTHONPATH}}" \
   PYTHONDONTWRITEBYTECODE=1 \
   python3 -m unittest discover -s "${ROOT_DIR}/tests" -v

@@ -2,7 +2,7 @@
 // Package database for system-installed packages (~/.robonix/packages)
 
 use anyhow::{Context, Result};
-use robonix_scribe::{info, warn};
+use robonix_log::{info, warn};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};

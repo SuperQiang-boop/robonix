@@ -186,7 +186,7 @@ provider = {provider_class}(id="{name}", namespace="robonix/{ns_kind}/{name}")
 
 @provider.on_init
 def init(cfg: dict):
-    # TODO: initialise hardware / resources; declare capabilities to atlas.
+    # TODO: initialise hardware / resources; declare capabilities to src.
     return Ok()
 
 

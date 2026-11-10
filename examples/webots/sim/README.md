@@ -36,8 +36,8 @@ bash examples/webots/sim/start.sh --tiago-variant full
 The launcher enables the official Webots R2025a asset download automatically
 for `full`. The first download is about 661 MB; the persistent cache makes
 subsequent starts skip it. Set `ROBONIX_WEBOTS_DOWNLOAD_ALL_ASSETS=0` only to
-opt out explicitly. In the Robonix terminal use the same selection so Soma and
-Vitals expose the matching body:
+opt out explicitly. In the Robonix terminal use the same selection so Robotdesc and
+Monitor expose the matching body:
 
 ```bash
 bash examples/webots/boot.sh --tiago-variant full

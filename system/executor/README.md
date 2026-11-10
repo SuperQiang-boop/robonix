@@ -1,8 +1,8 @@
 # robonix-executor
 
 `robonix-executor` is the RTDL plan execution service for Robonix. It receives
-Pilot `Plan` messages, validates the RTDL node arena, and dispatches each `do`
-node to a primitive, service, or skill provider through Atlas.
+Planner `Plan` messages, validates the RTDL node arena, and dispatches each `do`
+node to a primitive, service, or skill provider through Src.
 
 ## Build
 
@@ -20,14 +20,14 @@ by `make build` and `make install` respectively.
 Manual launch:
 
 ```sh
-robonix-executor --atlas 127.0.0.1:50051 --listen 127.0.0.1:50072
+robonix-executor --src 127.0.0.1:50051 --listen 127.0.0.1:50072
 ```
 
 Important configuration:
 
-- `--atlas` / `ROBONIX_ATLAS_ENDPOINT`: Atlas endpoint. Defaults to `127.0.0.1:50051`.
+- `--src` / `ROBONIX_SRC_ENDPOINT`: Src endpoint. Defaults to `127.0.0.1:50051`.
 - `--listen` / `ROBONIX_EXECUTOR_LISTEN`: Executor gRPC listen address. Defaults to `127.0.0.1:50072`.
-- `--id` / `ROBONIX_EXECUTOR_PROVIDER_ID`: provider id registered with Atlas. Defaults to `executor`.
+- `--id` / `ROBONIX_EXECUTOR_PROVIDER_ID`: provider id registered with Src. Defaults to `executor`.
 - `--log`: env_logger filter. Falls back to `RUST_LOG`, then `robonix_executor=info`.
 
 ## RTDL Execution
@@ -52,7 +52,7 @@ state across branches, and the target plan still emits `plan_complete` with
 
 Executor declares two gRPC contracts:
 
-- `robonix/system/executor/execute`: Pilot submits one `Plan` and receives an
+- `robonix/system/executor/execute`: Planner submits one `Plan` and receives an
   `RtdlEvent` stream.
 - `robonix/system/executor/cancel_all_plans`: cancels every active RTDL plan.
 
@@ -67,7 +67,7 @@ The Execute stream emits `RtdlEvent` messages:
 In `parallel` branches, result events are emitted in completion order, not RTDL
 order. The final `RtdlPlanComplete` event contains `any_failed=true` when at
 least one capability call failed. For `do` nodes, terminal events carry the
-concrete `pilot/CapabilityCallResult` in `RtdlNodeState.leaf_result` and leave
+concrete `planner/CapabilityCallResult` in `RtdlNodeState.leaf_result` and leave
 `operator_detail` empty. Non-leaf `sequence` and `parallel` nodes emit one
 terminal event with `leaf_result` unset and an English `operator_detail`
 summary.
@@ -98,13 +98,13 @@ returns, as before.
 ## Builtin capabilities
 
 Executor declares builtin MCP capabilities under
-`robonix/system/executor/builtin/*`. They execute in-process when Pilot routes a
+`robonix/system/executor/builtin/*`. They execute in-process when Planner routes a
 `do` node back to the Executor provider id.
 
 - `read_file`, `write_file`, `patch_file`, `list_dir`, `run_command`: workspace
   file and shell helpers.
 - `read_capability_doc`: read the generated capability documentation for a
-  registered contract so Pilot can inspect the abstract interface before use.
+  registered contract so Planner can inspect the abstract interface before use.
 - `cancel_plan`: best-effort cancellation for an in-flight RTDL plan. Args:
   `plan_id` (required) and `wait_ms` (optional, default 5000). Async capability
   calls receive cancel requests through `<contract_id>/cancel`; synchronous

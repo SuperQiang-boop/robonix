@@ -1,5 +1,5 @@
 # Event emitted by the speech dialog service during a voice interaction session.
-# Streamed back to the caller (e.g. Liaison) over the dialog RPC stream.
+# Streamed back to the caller (e.g. Gateway) over the dialog RPC stream.
 
 uint64 timestamp_ns       # nanoseconds since epoch
 string session_id

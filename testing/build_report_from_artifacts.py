@@ -104,7 +104,7 @@ def main() -> int:
         ("testing/logs", "testing/logs"),
         ("boot_logs", "examples/webots/rbnx-boot/logs"),
         ("provider_logs", "examples/webots/logs"),
-        ("scene_logs", "system/scene/logs"),
+        ("world_logs", "system/world/logs"),
         ("cache_provider_logs", "cache-provider-logs"),
         ("sim_logs", "sim-logs"),
     ]:

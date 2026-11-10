@@ -22,16 +22,16 @@ jobs:
           script: |
             // keyword -> { label, owner }. owner "" = label only (e.g. chronos).
             const ROUTES = [
-              ["atlas",        { label: "comp:atlas",        owner: "enkerewpo" }],
+              ["src",        { label: "comp:src",        owner: "enkerewpo" }],
               ["executor",     { label: "comp:executor",     owner: "KouweiLee" }],
               ["rtdl",         { label: "comp:executor",     owner: "KouweiLee" }],
-              ["pilot",        { label: "comp:pilot",        owner: "enkerewpo" }],
-              ["liaison",      { label: "comp:liaison",      owner: "kaileliu" }],
-              ["scene",        { label: "comp:scene",        owner: "HeartLinked" }],
-              ["soma",         { label: "comp:soma",         owner: "Chenyantt" }],
+              ["planner",        { label: "comp:planner",        owner: "enkerewpo" }],
+              ["gateway",      { label: "comp:gateway",      owner: "kaileliu" }],
+              ["world",        { label: "comp:world",        owner: "HeartLinked" }],
+              ["robotdesc",         { label: "comp:robotdesc",         owner: "Chenyantt" }],
               ["sentinel",     { label: "comp:sentinel",     owner: "HustWolfzzb" }],
-              ["scribe",       { label: "comp:scribe",       owner: "ohhhHwH" }],
-              ["vitals",       { label: "comp:vitals",       owner: "AuYang261" }],
+              ["log",       { label: "comp:log",       owner: "ohhhHwH" }],
+              ["monitor",       { label: "comp:monitor",       owner: "AuYang261" }],
               ["keystone",     { label: "comp:keystone",     owner: "kaileliu" }],
               ["nexus",        { label: "comp:nexus",        owner: "ZZJJWarth" }],
               ["chronos",      { label: "comp:chronos",      owner: "" }],
@@ -55,7 +55,7 @@ jobs:
             const labels = new Set();
             const owners = new Set();
             for (const [kw, route] of ROUTES) {
-              // word-boundary match so "atlas" doesn't fire inside "atlast"
+              // word-boundary match so "src" doesn't fire inside "srct"
               const re = new RegExp(`(^|[^a-z0-9_])${kw}([^a-z0-9_]|$)`);
               if (re.test(text)) {
                 labels.add(route.label);

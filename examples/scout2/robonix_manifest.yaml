@@ -1,6 +1,6 @@
 # Scout2 real-robot deployment manifest
 #
-# boot in sequence: system -> soma+soma+scene -> execution -> interaction
+# boot in sequence: system -> robotdesc+robotdesc+world -> execution -> interaction
 manifestVersion: 1
 
 catalog:
@@ -17,7 +17,7 @@ env:
   # Docker wrappers resolve these relative to this deployment directory.
   RELOCALIZATION_COORDINATION_DIR: .runtime/relocalization
   RELOCALIZATION_PACKAGE_ROOT: services/service-relocalization
-  SCENE_RESTORE_ON_START: "true"
+  WORLD_RESTORE_ON_START: "true"
   ROS_DOMAIN_ID: "42"
   RMW_IMPLEMENTATION: rmw_fastrtps_cpp
   # Sensor drivers may run under a different Linux user. Fast DDS shared
@@ -26,27 +26,27 @@ env:
 
 system:
   # basic layer
-  atlas:
+  src:
     listen: 0.0.0.0:50051
     log: info
-  # soma+scene layer
-  soma:
+  # robotdesc+world layer
+  robotdesc:
     listen: 0.0.0.0:50091
     log: info
-  vitals:
+  monitor:
     listen: 0.0.0.0:50092
     log: info
-  scene:
+  world:
     log: info
     web_host: 0.0.0.0
-    # Scout2 camera optical frame for scene 3D fusion
+    # Scout2 camera optical frame for world 3D fusion
     camera_frame: camera_color_optical_frame
   # execution layer
   executor:
     listen: 0.0.0.0:50061
     log: info
   # interaction layer
-  pilot:
+  planner:
     listen: 0.0.0.0:50071
     log: debug
     vlm:
@@ -54,7 +54,7 @@ system:
       api_key: ${VLM_API_KEY}
       model: ${VLM_MODEL}
       api_format: openai
-  liaison:
+  gateway:
     listen: 0.0.0.0:50081
     log: info
     handsfree_enabled: false

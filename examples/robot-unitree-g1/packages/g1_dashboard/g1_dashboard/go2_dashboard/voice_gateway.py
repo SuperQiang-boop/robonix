@@ -1,8 +1,8 @@
-"""Fail-closed browser-audio handoff to the Robonix Liaison voice contract.
+"""Fail-closed browser-audio handoff to the Robonix Gateway voice contract.
 
 The dashboard never performs ASR and never talks to ROS, Nav2, or Unitree from
 this module.  When explicitly enabled, it temporarily acts as the local client
-of the already-deployed ``audio_client_bridge`` and asks Liaison to run its
+of the already-deployed ``audio_client_bridge`` and asks Gateway to run its
 normal voice session with that primitive pinned as the microphone provider.
 
 Browser audio is accepted only as bounded 16 kHz mono PCM-in-WAV, retained in
@@ -98,10 +98,10 @@ def _loopback_grpc_endpoint(value: str) -> str:
     endpoint = str(value).strip()
     match = re.fullmatch(r"127\.0\.0\.1:([0-9]{1,5})", endpoint)
     if match is None:
-        raise ValueError("Liaison endpoint must be literal loopback IPv4 host:port")
+        raise ValueError("Gateway endpoint must be literal loopback IPv4 host:port")
     port = int(match.group(1))
     if not 1 <= port <= 65535:
-        raise ValueError("Liaison endpoint port is out of range")
+        raise ValueError("Gateway endpoint port is out of range")
     return endpoint
 
 
@@ -135,7 +135,7 @@ class VoiceConfig:
 
     enabled: bool = False
     execution_mode: str = "preview"
-    liaison_endpoint: str = "127.0.0.1:50081"
+    gateway_endpoint: str = "127.0.0.1:50081"
     audio_bridge_url: str = "ws://127.0.0.1:60002/client"
     mic_provider_id: str = "audio_client_bridge"
     max_upload_bytes: int = 300_000
@@ -151,7 +151,7 @@ class VoiceConfig:
         object.__setattr__(
             self, "execution_mode", _execution_mode(self.execution_mode)
         )
-        _loopback_grpc_endpoint(self.liaison_endpoint)
+        _loopback_grpc_endpoint(self.gateway_endpoint)
         _loopback_bridge_url(self.audio_bridge_url)
         if _PROVIDER_ID.fullmatch(self.mic_provider_id) is None:
             raise ValueError("invalid browser microphone provider id")
@@ -185,8 +185,8 @@ class VoiceConfig:
             env.get("GO2_DASHBOARD_BROWSER_VOICE_ENABLED"),
             "GO2_DASHBOARD_BROWSER_VOICE_ENABLED",
         )
-        liaison = _loopback_grpc_endpoint(
-            env.get("GO2_DASHBOARD_LIAISON_ENDPOINT", cls.liaison_endpoint)
+        gateway = _loopback_grpc_endpoint(
+            env.get("GO2_DASHBOARD_GATEWAY_ENDPOINT", cls.gateway_endpoint)
         )
         bridge = _loopback_bridge_url(
             env.get("GO2_DASHBOARD_AUDIO_BRIDGE_URL", cls.audio_bridge_url)
@@ -222,7 +222,7 @@ class VoiceConfig:
                     cls.execution_mode,
                 )
             ),
-            liaison_endpoint=liaison,
+            gateway_endpoint=gateway,
             audio_bridge_url=bridge,
             mic_provider_id=provider,
             max_upload_bytes=_bounded_int(
@@ -379,35 +379,35 @@ def _event_status(event: Mapping[str, Any]) -> tuple[str, str, str]:
     status_message = str(event.get("status_message") or "").strip()[:400]
     error = str(event.get("error") or "").strip()[:400]
     if kind == 0:
-        return "liaison", status_message or "Liaison 会话已建立", ""
+        return "gateway", status_message or "Gateway 会话已建立", ""
     if kind == 1:
-        return "recording", "正在把浏览器音频转交 Liaison", ""
+        return "recording", "正在把浏览器音频转交 Gateway", ""
     if kind in {2, 3}:
         return "asr", text or status_message or "中文语音识别中", text
     if kind == 4:
         return "recognized", text or "语音识别完成", text
     if kind == 5:
-        return "authorized", status_message or "Liaison 身份/访问门已完成", ""
+        return "authorized", status_message or "Gateway 身份/访问门已完成", ""
     if kind == 6:
-        return "pilot", text or status_message or "Pilot 正在处理任务", ""
+        return "planner", text or status_message or "Planner 正在处理任务", ""
     if kind in {7, 8}:
-        return "pilot", status_message or "Liaison 响应处理中", ""
+        return "planner", status_message or "Gateway 响应处理中", ""
     if kind == 9:
-        return "completed", status_message or "Liaison 会话完成", ""
+        return "completed", status_message or "Gateway 会话完成", ""
     if kind == 10:
-        return "failed", error or status_message or "Liaison 会话失败", ""
-    return "liaison", status_message or f"Liaison 事件 {kind}", ""
+        return "failed", error or status_message or "Gateway 会话失败", ""
+    return "gateway", status_message or f"Gateway 事件 {kind}", ""
 
 
-def _pilot_payload(pilot: Any) -> dict[str, Any]:
-    """Copy bounded display-only fields from one nested Pilot event.
+def _planner_payload(planner: Any) -> dict[str, Any]:
+    """Copy bounded display-only fields from one nested Planner event.
 
     This intentionally does not deserialize RTDL arguments or connect to any
     capability.  Counting call-bearing plan leaves gives the preview UI a
-    fail-closed tripwire if Pilot ever returns an executable plan.
+    fail-closed tripwire if Planner ever returns an executable plan.
     """
 
-    kind = int(getattr(pilot, "event_kind", -1))
+    kind = int(getattr(planner, "event_kind", -1))
     result: dict[str, Any] = {
         "event_kind": kind,
         "text": "",
@@ -418,9 +418,9 @@ def _pilot_payload(pilot: Any) -> dict[str, Any]:
         "capability_calls": 0,
     }
     if kind == 0:
-        result["text"] = str(getattr(pilot, "text_chunk", "") or "").strip()[:300]
+        result["text"] = str(getattr(planner, "text_chunk", "") or "").strip()[:300]
     elif kind == 1:
-        plan = getattr(pilot, "plan", None)
+        plan = getattr(planner, "plan", None)
         nodes = list(getattr(plan, "nodes", ()) or ())
         result["capability_calls"] = sum(
             1
@@ -431,12 +431,12 @@ def _pilot_payload(pilot: Any) -> dict[str, Any]:
             )
         )
     elif kind == 3:
-        status = getattr(pilot, "status", None)
+        status = getattr(planner, "status", None)
         result["text"] = str(getattr(status, "message", "") or "").strip()[:300]
     elif kind == 4:
-        result["text"] = str(getattr(pilot, "final_text", "") or "").strip()[:300]
+        result["text"] = str(getattr(planner, "final_text", "") or "").strip()[:300]
     elif kind == 6:
-        task = getattr(pilot, "task_state", None)
+        task = getattr(planner, "task_state", None)
         goal = str(getattr(task, "goal", "") or "").strip()[:300]
         criterion = str(
             getattr(task, "success_criterion", "") or ""
@@ -466,39 +466,39 @@ def _voice_event_payload(event: Any) -> dict[str, Any]:
         "error": str(getattr(event, "error", "") or "").strip()[:400],
     }
     if result["kind"] == 6:
-        result["pilot"] = _pilot_payload(getattr(event, "pilot", None))
+        result["planner"] = _planner_payload(getattr(event, "planner", None))
     return result
 
 
 def _event_update(event: Mapping[str, Any], execution_mode: str) -> dict[str, Any]:
-    """Translate one Liaison event into display-only state fields."""
+    """Translate one Gateway event into display-only state fields."""
 
     status, message, transcript = _event_status(event)
     result: dict[str, Any] = {"status": status, "message": message}
     if transcript:
         result["transcript"] = transcript
-    pilot = event.get("pilot")
-    if not isinstance(pilot, Mapping):
+    planner = event.get("planner")
+    if not isinstance(planner, Mapping):
         return result
 
-    pilot_kind = int(pilot.get("event_kind", -1))
-    pilot_text = str(pilot.get("text") or "").strip()[:300]
-    if pilot_text:
-        result["message"] = pilot_text
-    calls = int(pilot.get("capability_calls", 0) or 0)
+    planner_kind = int(planner.get("event_kind", -1))
+    planner_text = str(planner.get("text") or "").strip()[:300]
+    if planner_text:
+        result["message"] = planner_text
+    calls = int(planner.get("capability_calls", 0) or 0)
     result["capability_calls_observed"] = calls
-    if pilot_kind == 6:
-        target = str(pilot.get("intent_target") or "").strip()[:128]
-        goal = str(pilot.get("task_goal") or "").strip()[:300]
-        task_status = str(pilot.get("task_status") or "").strip()[:64]
-        criterion = str(pilot.get("success_criterion") or "").strip()[:500]
+    if planner_kind == 6:
+        target = str(planner.get("intent_target") or "").strip()[:128]
+        goal = str(planner.get("task_goal") or "").strip()[:300]
+        task_status = str(planner.get("task_status") or "").strip()[:64]
+        criterion = str(planner.get("success_criterion") or "").strip()[:500]
         if goal:
             result["intent_summary"] = goal
         if target:
             result["intent_target"] = target
-            result["message"] = f"Pilot 已解析语义目标：{target}（未执行）"
+            result["message"] = f"Planner 已解析语义目标：{target}（未执行）"
         if task_status:
-            result["pilot_task_status"] = task_status
+            result["planner_task_status"] = task_status
         if _execution_mode(execution_mode) == "preview" and criterion:
             result["blocked_reason"] = criterion
     return result
@@ -511,20 +511,20 @@ def _grpc_voice_worker(
     emit_event: Callable[[dict[str, Any]], None],
     cancel: threading.Event,
 ) -> None:
-    """Consume the official Liaison server stream on a bounded worker."""
+    """Consume the official Gateway server stream on a bounded worker."""
 
     import grpc  # type: ignore
-    import liaison_pb2  # type: ignore
+    import gateway_pb2  # type: ignore
     import robonix_contracts_pb2_grpc  # type: ignore
 
-    channel = grpc.insecure_channel(config.liaison_endpoint)
+    channel = grpc.insecure_channel(config.gateway_endpoint)
     call = None
     try:
         grpc.channel_ready_future(channel).result(
             timeout=config.bridge_open_timeout_s
         )
-        stub = robonix_contracts_pb2_grpc.RobonixSystemLiaisonVoiceStub(channel)
-        request = liaison_pb2.StartVoiceSession_Request(
+        stub = robonix_contracts_pb2_grpc.RobonixSystemGatewayVoiceStub(channel)
+        request = gateway_pb2.StartVoiceSession_Request(
             session_id=session_id,
             client_user_id="",
             record_seconds=record_seconds,
@@ -603,7 +603,7 @@ async def _run_network_session(
 
         loop.call_soon_threadsafe(put)
 
-    update(status="connecting", message="正在连接本机音频桥和 Liaison")
+    update(status="connecting", message="正在连接本机音频桥和 Gateway")
     record_seconds = max(1, min(10, int(math.ceil(duration_s)) + 1))
     deadline = loop.time() + config.session_timeout_s
     mic_deadline = loop.time() + config.mic_start_timeout_s
@@ -622,7 +622,7 @@ async def _run_network_session(
         max_queue=8,
         compression=None,
     ) as websocket:
-        update(status="liaison", message="音频桥已连接，正在启动 Liaison voice")
+        update(status="gateway", message="音频桥已连接，正在启动 Gateway voice")
         grpc_task = asyncio.create_task(
             asyncio.to_thread(
                 _grpc_voice_worker,
@@ -641,7 +641,7 @@ async def _run_network_session(
                     raise VoiceGatewayError("voice session canceled during shutdown")
                 now = loop.time()
                 if now >= deadline:
-                    raise TimeoutError("Liaison voice session exceeded its deadline")
+                    raise TimeoutError("Gateway voice session exceeded its deadline")
                 if not mic_started and now >= mic_deadline:
                     raise TimeoutError("audio bridge did not request microphone audio")
 
@@ -662,7 +662,7 @@ async def _run_network_session(
                     message = receive_task.result()
                     if isinstance(message, bytes):
                         raise VoiceGatewayError(
-                            "unexpected speaker audio from TTS-disabled Liaison session"
+                            "unexpected speaker audio from TTS-disabled Gateway session"
                         )
                     try:
                         control = json.loads(message)
@@ -684,7 +684,7 @@ async def _run_network_session(
                         mic_started = True
                         update(
                             status="recording",
-                            message="浏览器音频正在转交 Liaison（内存中，不落盘）",
+                            message="浏览器音频正在转交 Gateway（内存中，不落盘）",
                         )
                         sender = asyncio.create_task(
                             _send_pcm(websocket, pcm, stream_id, cancel)
@@ -709,7 +709,7 @@ async def _run_network_session(
                         and int(event_update.get("capability_calls_observed", 0)) > 0
                     ):
                         raise VoiceGatewayError(
-                            "预览安全策略违规：Pilot 返回了可执行 capability 计划，"
+                            "预览安全策略违规：Planner 返回了可执行 capability 计划，"
                             "会话已阻断"
                         )
                     if event_update["status"] == "failed":
@@ -725,7 +725,7 @@ async def _run_network_session(
                     grpc_task.result()
                     if not terminal:
                         raise VoiceGatewayError(
-                            "Liaison stream ended without SESSION_DONE"
+                            "Gateway stream ended without SESSION_DONE"
                         )
                     return
         finally:
@@ -740,7 +740,7 @@ async def _run_network_session(
                     pass
 
 
-def run_liaison_session(
+def run_gateway_session(
     config: VoiceConfig,
     session_id: str,
     pcm: bytearray,
@@ -748,7 +748,7 @@ def run_liaison_session(
     update: Callable[..., None],
     cancel: threading.Event,
 ) -> None:
-    """Run one official Liaison voice turn; suitable for a daemon worker."""
+    """Run one official Gateway voice turn; suitable for a daemon worker."""
 
     if not _SESSION_ID.fullmatch(session_id):
         raise VoiceGatewayError("invalid internal session id")
@@ -758,14 +758,14 @@ def run_liaison_session(
 
 
 class BrowserVoiceGateway:
-    """Own at most one transient browser-audio Liaison session."""
+    """Own at most one transient browser-audio Gateway session."""
 
     def __init__(
         self,
         state: DashboardState,
         config: VoiceConfig,
         *,
-        runner: Callable[..., None] = run_liaison_session,
+        runner: Callable[..., None] = run_gateway_session,
     ) -> None:
         self._state = state
         self.config = config
@@ -800,23 +800,23 @@ class BrowserVoiceGateway:
             self._state.update_voice(
                 session_id=session_id,
                 status="accepted",
-                message="音频已通过严格校验，等待转交 Liaison",
+                message="音频已通过严格校验，等待转交 Gateway",
                 transcript="",
                 active=True,
                 intent_target="",
                 intent_summary="",
                 blocked_reason="",
-                pilot_task_status="",
+                planner_task_status="",
                 capability_calls_observed=0,
             )
             # One successful handoff consumes the browser nonce. The page
             # fetches a fresh value before the next capture, so replaying the
-            # previous POST cannot start another Liaison turn.
+            # previous POST cannot start another Gateway turn.
             self._nonce = secrets.token_urlsafe(32)
             self._thread = threading.Thread(
                 target=self._run,
                 args=(session_id, pcm, float(duration_s), self._cancel),
-                name="go2-dashboard-liaison-voice",
+                name="go2-dashboard-gateway-voice",
                 daemon=True,
             )
             self._thread.start()
@@ -837,7 +837,7 @@ class BrowserVoiceGateway:
             intent_target: str | None = None,
             intent_summary: str | None = None,
             blocked_reason: str | None = None,
-            pilot_task_status: str | None = None,
+            planner_task_status: str | None = None,
             capability_calls_observed: int | None = None,
         ) -> None:
             self._state.update_voice(
@@ -849,7 +849,7 @@ class BrowserVoiceGateway:
                 intent_target=intent_target,
                 intent_summary=intent_summary,
                 blocked_reason=blocked_reason,
-                pilot_task_status=pilot_task_status,
+                planner_task_status=planner_task_status,
                 capability_calls_observed=capability_calls_observed,
             )
 
@@ -864,7 +864,7 @@ class BrowserVoiceGateway:
             )
             current = self._state.voice_status()
             if current["status"] not in _TERMINAL_VOICE_STATES:
-                update(status="completed", message="Liaison 会话完成")
+                update(status="completed", message="Gateway 会话完成")
         except Exception as error:  # noqa: BLE001 - fail closed at worker boundary
             update(status="failed", message=str(error)[:400] or "语音会话失败")
         finally:

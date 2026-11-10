@@ -43,13 +43,13 @@ env:
   LOG: "INFO"
 
 system:
-  atlas:
+  src:
     listen: 127.0.0.1:50051
     log: info
   executor:
     listen: 127.0.0.1:50061
     log: info
-  pilot:
+  planner:
     listen: 127.0.0.1:50071
     log: info
     vlm:
@@ -57,7 +57,7 @@ system:
       api_key: ${{VLM_API_KEY}}
       model: ${{VLM_MODEL}}
       api_format: openai
-  liaison:
+  gateway:
     listen: 0.0.0.0:50081
     log: info
 

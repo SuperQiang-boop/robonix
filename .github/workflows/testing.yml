@@ -351,10 +351,10 @@ jobs:
       AUDIO_SPEAKER_DEVICE: "null"
       # CI should not depend on external Tencent/FunASR credentials or quota.
       SPEECH_BACKEND: "mock"
-      # Keep build-time ECAPA verification off the GPU reserved for Webots and Scene.
+      # Keep build-time ECAPA verification off the GPU reserved for Webots and World.
       VOICEPRINT_DEVICE: "cpu"
-      SCENE_GRAPH_INTERVAL_SEC: "1"
-      SCENE_GRAPH_MIN_OBSERVATIONS: "1"
+      WORLD_GRAPH_INTERVAL_SEC: "1"
+      WORLD_GRAPH_MIN_OBSERVATIONS: "1"
       ROBONIX_SIM_NETWORK: "bridge"
       ROBONIX_SIM_IPC: "private"
       WEBOTS_HEADLESS_MODE: "nvidia"
@@ -399,7 +399,7 @@ jobs:
             examples/webots/rbnx-boot/logs \
             examples/webots/rbnx-boot/processes.json \
             examples/webots/logs \
-            system/scene/logs; do
+            system/world/logs; do
             target="$GITHUB_WORKSPACE/$relative"
             [ -e "$target" ] || continue
             sudo -n chown -R "$(id -u):$(id -g)" "$target" 2>/dev/null || true
@@ -630,36 +630,36 @@ jobs:
             exit 1
           fi
 
-          atlas_port=$((19000 + suffix))
+          src_port=$((19000 + suffix))
           executor_port=$((20000 + suffix))
-          pilot_port=$((21000 + suffix))
-          liaison_port=$((22000 + suffix))
+          planner_port=$((21000 + suffix))
+          gateway_port=$((22000 + suffix))
           fake_vlm_port=$((18000 + suffix))
           stream_port=$((23000 + suffix))
           viewer_port=$((24000 + suffix))
           mapping_port=$((25000 + suffix))
           nav2_port=$((26000 + suffix))
-          scene_web_port=$((27000 + suffix))
-          soma_port=$((28000 + suffix))
+          world_web_port=$((27000 + suffix))
+          robotdesc_port=$((28000 + suffix))
           ros_domain_id=$((90 + (suffix % 100)))
           runtime_dir="$RUNNER_TEMP/robonix-ci-${RUN_KEY}"
           rm -rf "$runtime_dir"
           mkdir -p "$runtime_dir"
 
-          echo "run isolation slot: suffix=${suffix} xdisplay=:${xdisplay} ports=${fake_vlm_port},${atlas_port},${executor_port},${pilot_port},${liaison_port},${stream_port},${viewer_port},${mapping_port},${nav2_port},${scene_web_port},${soma_port} ros_domain_id=${ros_domain_id} runtime_dir=${runtime_dir}"
+          echo "run isolation slot: suffix=${suffix} xdisplay=:${xdisplay} ports=${fake_vlm_port},${src_port},${executor_port},${planner_port},${gateway_port},${stream_port},${viewer_port},${mapping_port},${nav2_port},${world_web_port},${robotdesc_port} ros_domain_id=${ros_domain_id} runtime_dir=${runtime_dir}"
 
           {
-            echo "ATLAS_PORT=$atlas_port"
+            echo "SRC_PORT=$src_port"
             echo "EXECUTOR_PORT=$executor_port"
-            echo "PILOT_PORT=$pilot_port"
-            echo "LIAISON_PORT=$liaison_port"
-            echo "SOMA_PORT=$soma_port"
+            echo "PLANNER_PORT=$planner_port"
+            echo "GATEWAY_PORT=$gateway_port"
+            echo "ROBOTDESC_PORT=$robotdesc_port"
             echo "FAKE_VLM_PORT=$fake_vlm_port"
             echo "MAPPING_GRPC_PORT=$mapping_port"
             echo "NAV2_DRIVER_PORT=$nav2_port"
-            echo "SCENE_WEB_PORT=$scene_web_port"
-            echo "ROBONIX_CI_ATLAS=127.0.0.1:$atlas_port"
-            echo "ROBONIX_ATLAS=127.0.0.1:$atlas_port"
+            echo "WORLD_WEB_PORT=$world_web_port"
+            echo "ROBONIX_CI_SRC=127.0.0.1:$src_port"
+            echo "ROBONIX_SRC=127.0.0.1:$src_port"
             echo "ROBONIX_SIM_STREAM_PORT=$stream_port"
             echo "ROBONIX_SIM_VIEWER_PORT=$viewer_port"
             echo "ROBONIX_SIM_CONTAINER=ci-${RUN_KEY}-sim"
@@ -669,12 +669,12 @@ jobs:
             echo "ROBONIX_MAPPING_CONTAINER=ci-${RUN_KEY}-mapping"
             echo "ROBONIX_NAV2_CONTAINER=ci-${RUN_KEY}-nav2"
             echo "ROBONIX_EXPLORE_CONTAINER=ci-${RUN_KEY}-explore"
-            echo "ROBONIX_SCENE_CONTAINER=ci-${RUN_KEY}-scene"
+            echo "ROBONIX_WORLD_CONTAINER=ci-${RUN_KEY}-world"
             echo "ROBONIX_CI_RUNTIME_DIR=$runtime_dir"
             echo "AGENT_MEMORY_DIR=$runtime_dir/agent_memory"
             echo "AGENT_MILVUS_URI=$runtime_dir/agent_milvus.db"
             echo "MAPPING_MAPS_DIR=$runtime_dir/mapping-maps"
-            echo "SCENE_DATA_DIR=$runtime_dir/scene-data"
+            echo "WORLD_DATA_DIR=$runtime_dir/world-data"
             echo "ROS_DOMAIN_ID=$ros_domain_id"
             echo "ROBONIX_DRIVER_INIT_TIMEOUT_S=${ROBONIX_DRIVER_INIT_TIMEOUT_S}"
             echo "ROBONIX_GPU_ID=${ROBONIX_GPU_ID}"
@@ -827,7 +827,7 @@ jobs:
           if [ "$sim_network_mode" = "host" ]; then
             sim_gateway="127.0.0.1"
             sim_ip="127.0.0.1"
-            sim_atlas_host="127.0.0.1"
+            sim_src_host="127.0.0.1"
             zenoh_router_host="127.0.0.1"
           else
             sim_gateway=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{if .Gateway}}{{println .Gateway}}{{end}}{{end}}' "$ROBONIX_SIM_CONTAINER" | head -n1)
@@ -840,11 +840,11 @@ jobs:
               echo "::error::cannot determine sim bridge IP (network_mode=$sim_network_mode, ip=$sim_ip)"
               exit 1
             fi
-            sim_atlas_host="$sim_gateway"
+            sim_src_host="$sim_gateway"
             zenoh_router_host="$sim_ip"
           fi
           {
-            echo "ROBONIX_SIM_ATLAS=${sim_atlas_host}:${ATLAS_PORT}"
+            echo "ROBONIX_SIM_SRC=${sim_src_host}:${SRC_PORT}"
             echo "ROBONIX_ZENOH_ROUTER=tcp/${zenoh_router_host}:7447"
             echo "ROBONIX_ZENOH_MODE=client"
             echo "ROBONIX_ZENOH_LISTEN=tcp/${sim_gateway}:0"
@@ -852,15 +852,15 @@ jobs:
             echo "no_proxy=127.0.0.1,localhost,${sim_gateway},${sim_ip}"
           } >> "$GITHUB_ENV"
           echo "sim network mode: $sim_network_mode"
-          echo "sim atlas: ${sim_atlas_host}:${ATLAS_PORT}"
+          echo "sim src: ${sim_src_host}:${SRC_PORT}"
           echo "sim zenoh router: tcp/${zenoh_router_host}:7447"
 
       - name: Start deterministic VLM planner
         working-directory: examples/webots
         run: |
           set -euo pipefail
-          # OpenAI-compatible endpoint that scripts pilot's planning via the RTDL
-          # envelope. Bound to a per-run localhost port; pilot dials it instead
+          # OpenAI-compatible endpoint that scripts planner's planning via the RTDL
+          # envelope. Bound to a per-run localhost port; planner dials it instead
           # of a real VLM.
           python3 "$GITHUB_WORKSPACE/testing/fake_vlm/server.py" \
             --port "$FAKE_VLM_PORT" >"$RUNNER_TEMP/fake_vlm.log" 2>&1 &
@@ -878,7 +878,7 @@ jobs:
         run: |
           set -euo pipefail
           export VLM_BASE_URL="http://127.0.0.1:${FAKE_VLM_PORT}/v1"
-          mkdir -p "$AGENT_MEMORY_DIR" "$MAPPING_MAPS_DIR" "$SCENE_DATA_DIR"
+          mkdir -p "$AGENT_MEMORY_DIR" "$MAPPING_MAPS_DIR" "$WORLD_DATA_DIR"
           python3 - <<'PY'
           import os
           from pathlib import Path
@@ -886,19 +886,19 @@ jobs:
           import yaml
 
           env_keys = [
-              "ROBONIX_SIM_ATLAS",
+              "ROBONIX_SIM_SRC",
               "ROBONIX_SIM_CONTAINER",
               "ROBONIX_MAPPING_CONTAINER",
               "ROBONIX_NAV2_CONTAINER",
               "ROBONIX_EXPLORE_CONTAINER",
-              "ROBONIX_SCENE_CONTAINER",
+              "ROBONIX_WORLD_CONTAINER",
               "MAPPING_GRPC_PORT",
               "NAV2_DRIVER_PORT",
-              "SCENE_WEB_PORT",
+              "WORLD_WEB_PORT",
               "AGENT_MEMORY_DIR",
               "AGENT_MILVUS_URI",
               "MAPPING_MAPS_DIR",
-              "SCENE_DATA_DIR",
+              "WORLD_DATA_DIR",
               "ROS_DOMAIN_ID",
               "CUDA_VISIBLE_DEVICES",
               "ROBONIX_GPU_ID",
@@ -906,8 +906,8 @@ jobs:
               "AUDIO_MIC_DEVICE",
               "AUDIO_SPEAKER_DEVICE",
               "SPEECH_BACKEND",
-              "SCENE_GRAPH_INTERVAL_SEC",
-              "SCENE_GRAPH_MIN_OBSERVATIONS",
+              "WORLD_GRAPH_INTERVAL_SEC",
+              "WORLD_GRAPH_MIN_OBSERVATIONS",
               "RMW_IMPLEMENTATION",
               "ROBONIX_ZENOH_ROUTER",
               "ROBONIX_ZENOH_MODE",
@@ -922,30 +922,30 @@ jobs:
           for key in env_keys:
               env[key] = os.environ[key]
           system = manifest.setdefault("system", {})
-          system.setdefault("atlas", {})["listen"] = f"0.0.0.0:{os.environ['ATLAS_PORT']}"
+          system.setdefault("src", {})["listen"] = f"0.0.0.0:{os.environ['SRC_PORT']}"
           system.setdefault("executor", {})["listen"] = f"127.0.0.1:{os.environ['EXECUTOR_PORT']}"
-          system.setdefault("soma", {})["listen"] = f"127.0.0.1:{os.environ['SOMA_PORT']}"
-          system.setdefault("pilot", {})["listen"] = f"127.0.0.1:{os.environ['PILOT_PORT']}"
-          system.setdefault("pilot", {}).setdefault("vlm", {}).update({
+          system.setdefault("robotdesc", {})["listen"] = f"127.0.0.1:{os.environ['ROBOTDESC_PORT']}"
+          system.setdefault("planner", {})["listen"] = f"127.0.0.1:{os.environ['PLANNER_PORT']}"
+          system.setdefault("planner", {}).setdefault("vlm", {}).update({
               "upstream": os.environ["VLM_BASE_URL"],
               "api_key": os.environ["VLM_API_KEY"],
               "model": os.environ["VLM_MODEL"],
               "api_format": "openai",
           })
-          system.setdefault("liaison", {})["listen"] = f"127.0.0.1:{os.environ['LIAISON_PORT']}"
+          system.setdefault("gateway", {})["listen"] = f"127.0.0.1:{os.environ['GATEWAY_PORT']}"
           Path("robonix_manifest.ci.generated.yaml").write_text(
               yaml.safe_dump(manifest, sort_keys=False)
           )
           PY
           # boot is the deploy supervisor (foreground); run it detached and poll
-          # atlas until the expected providers register. ROS talks to the sim
+          # src until the expected providers register. ROS talks to the sim
           # container over the isolated bridge network from the bringup step.
           nohup rbnx boot -f robonix_manifest.ci.generated.yaml >"$RUNNER_TEMP/rbnx-boot.log" 2>&1 &
           echo "RBNX_BOOT_PID=$!" >> "$GITHUB_ENV"
-          required_caps='robonix/primitive/camera/snapshot robonix/primitive/lidar/snapshot robonix/primitive/audio/list_devices robonix/primitive/audio/select_device robonix/primitive/audio/mic robonix/primitive/audio/speaker robonix/system/scene/list_objects robonix/system/scene/goal_near robonix/service/navigation/navigate robonix/service/navigation/navigate/status robonix/service/navigation/navigate/cancel robonix/skill/explore/explore robonix/skill/explore/explore/status robonix/skill/explore/explore/cancel robonix/service/map/save_map robonix/service/memory/save robonix/service/memory/search robonix/service/speech/speak robonix/service/voiceprint/list'
-          required_active='scene tiago_camera tiago_lidar audio_driver mapping nav2 memory speech voiceprint'
+          required_caps='robonix/primitive/camera/snapshot robonix/primitive/lidar/snapshot robonix/primitive/audio/list_devices robonix/primitive/audio/select_device robonix/primitive/audio/mic robonix/primitive/audio/speaker robonix/system/world/list_objects robonix/system/world/goal_near robonix/service/navigation/navigate robonix/service/navigation/navigate/status robonix/service/navigation/navigate/cancel robonix/skill/explore/explore robonix/skill/explore/explore/status robonix/skill/explore/explore/cancel robonix/service/map/save_map robonix/service/memory/save robonix/service/memory/search robonix/service/speech/speak robonix/service/voiceprint/list'
+          required_active='world tiago_camera tiago_lidar audio_driver mapping nav2 memory speech voiceprint'
           for i in $(seq 1 120); do
-            if rbnx caps -v --server "$ROBONIX_CI_ATLAS" >"$RUNNER_TEMP/caps.wait.txt" 2>&1; then
+            if rbnx caps -v --server "$ROBONIX_CI_SRC" >"$RUNNER_TEMP/caps.wait.txt" 2>&1; then
               missing=0
               for cap in $required_caps; do
                 if ! grep -q "$cap" "$RUNNER_TEMP/caps.wait.txt"; then
@@ -974,14 +974,14 @@ jobs:
             fi
             sleep 5
           done
-          rbnx caps -v --server "$ROBONIX_CI_ATLAS" || true
+          rbnx caps -v --server "$ROBONIX_CI_SRC" || true
 
       - name: Run interface checks
         env:
           ROBONIX_REQUIRE_AUDIO: "1"
         run: |
-          export ROBONIX_ATLAS="$ROBONIX_CI_ATLAS"
-          python3 "$GITHUB_WORKSPACE/testing/run_interfaces.py" --server "$ROBONIX_CI_ATLAS"
+          export ROBONIX_SRC="$ROBONIX_CI_SRC"
+          python3 "$GITHUB_WORKSPACE/testing/run_interfaces.py" --server "$ROBONIX_CI_SRC"
 
       - name: Wait for mapping occupancy grid
         run: |
@@ -1027,23 +1027,23 @@ jobs:
             ' || true
             echo
             echo "=== final caps ==="
-            rbnx caps -v --server "$ROBONIX_CI_ATLAS" || true
+            rbnx caps -v --server "$ROBONIX_CI_SRC" || true
             echo
             echo "=== rbnx boot tail ==="
             tail -240 "$RUNNER_TEMP/rbnx-boot.log" || true
           } | tee -a "$RUNNER_TEMP/sim-logs/map-readiness.txt"
           exit 1
 
-      - name: Wait for scene object detection
+      - name: Wait for World object detection
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/sim-logs"
-          scene_url="http://127.0.0.1:${SCENE_WEB_PORT}/api/state"
-          state_file="$RUNNER_TEMP/sim-logs/scene-state-readiness.json"
-          echo "waiting for a real non-robot scene object before scenario execution: ${scene_url}"
+          world_url="http://127.0.0.1:${WORLD_WEB_PORT}/api/state"
+          state_file="$RUNNER_TEMP/sim-logs/world-state-readiness.json"
+          echo "waiting for a real non-robot World object before scenario execution: ${world_url}"
           for _ in $(seq 1 180); do
-            if curl -fsS --max-time 2 "$scene_url" -o "$state_file"; then
-              if python3 - "$state_file" <<'SCENE_READY_PY'
+            if curl -fsS --max-time 2 "$world_url" -o "$state_file"; then
+              if python3 - "$state_file" <<'WORLD_READY_PY'
           import json, sys
           path = sys.argv[1]
           with open(path, "r", encoding="utf-8") as f:
@@ -1067,63 +1067,63 @@ jobs:
               }
               for o in real[:8]
           ], ensure_ascii=False))
-          SCENE_READY_PY
+          WORLD_READY_PY
               then
-                echo "scene object readiness confirmed"
+                echo "World object readiness confirmed"
                 exit 0
               fi
             fi
             sleep 2
           done
 
-          echo "::error::scene did not expose a non-robot object before scenario execution"
+          echo "::error::World did not expose a non-robot object before scenario execution"
           {
             echo "=== latest /api/state ==="
             cat "$state_file" || true
             echo
-            echo "=== scene.log tail ==="
-            tail -260 "examples/webots/rbnx-boot/logs/scene.log" || true
+            echo "=== world.log tail ==="
+            tail -260 "examples/webots/rbnx-boot/logs/world.log" || true
             echo
             echo "=== final caps ==="
-            rbnx caps -v --server "$ROBONIX_CI_ATLAS" || true
+            rbnx caps -v --server "$ROBONIX_CI_SRC" || true
             echo
             echo "=== rbnx boot tail ==="
             tail -240 "$RUNNER_TEMP/rbnx-boot.log" || true
-          } | tee -a "$RUNNER_TEMP/sim-logs/scene-readiness.txt"
+          } | tee -a "$RUNNER_TEMP/sim-logs/world-readiness.txt"
           exit 1
 
       - name: Run scenario suite
         id: scenarios
         run: |
           set -o pipefail
-          export ROBONIX_ATLAS="$ROBONIX_CI_ATLAS"
-          python3 "$GITHUB_WORKSPACE/testing/run.py" --server "$ROBONIX_CI_ATLAS" \
+          export ROBONIX_SRC="$ROBONIX_CI_SRC"
+          python3 "$GITHUB_WORKSPACE/testing/run.py" --server "$ROBONIX_CI_SRC" \
             --first object_navigation \
             --summary-json "$GITHUB_WORKSPACE/testing/logs/summary.json" | tee "$RUNNER_TEMP/scenarios.out"
           # Surface the one-line RESULT for the reusable-workflow output / bot.
           echo "result=$(grep '^RESULT:' "$RUNNER_TEMP/scenarios.out" | tail -1)" >> "$GITHUB_OUTPUT"
 
-      - name: Verify scene map persistence
+      - name: Verify World map persistence
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/sim-logs"
-          map_id="ci_scene_map_${RUN_KEY}"
-          python3 "$GITHUB_WORKSPACE/testing/verify_scene_map_persistence.py" \
-            --scene-url "http://127.0.0.1:${SCENE_WEB_PORT}" \
+          map_id="ci_world_map_${RUN_KEY}"
+          python3 "$GITHUB_WORKSPACE/testing/verify_world_map_persistence.py" \
+            --world-url "http://127.0.0.1:${WORLD_WEB_PORT}" \
             --map-id "$map_id" \
             --mapping-container "${ROBONIX_MAPPING_CONTAINER:-robonix_mapping}" \
             --maps-dir "$MAPPING_MAPS_DIR" \
             --sim-container "$ROBONIX_SIM_CONTAINER" \
             --delete-after \
-            --timeout 420 | tee "$RUNNER_TEMP/sim-logs/scene-map-persistence.txt"
+            --timeout 420 | tee "$RUNNER_TEMP/sim-logs/world-map-persistence.txt"
 
       - name: Validate boot/shutdown lifecycle
         # boot → shutdown → re-boot. Proves the runtime keeps
         # state under <manifest-dir>/rbnx-boot/ (not ~/.robonix/), that
-        # Soma package children are stopped cleanly, and that the stack
+        # Robotdesc package children are stopped cleanly, and that the stack
         # can come back up after a clean teardown (the issue #128
         # regression). The second boot reuses both the per-run sim container
-        # and the persistent mapping/scene state: a process restart must not
+        # and the persistent mapping/World state: a process restart must not
         # silently turn into a new-map session while the physical robot stays
         # at its post-scenario pose. CI leaves the second boot running so the
         # next step can exercise scenarios against the restarted stack; the
@@ -1133,13 +1133,13 @@ jobs:
           set -euo pipefail
           milvus_lock="$(dirname "$AGENT_MILVUS_URI")/.$(basename "$AGENT_MILVUS_URI").lock"
           # Scenario memory uses fixed fixture keys and must be isolated between
-          # passes. Mapping and scene data are deliberately preserved because
+          # passes. Mapping and World data are deliberately preserved because
           # they are runtime state whose reboot recovery this test exercises.
           export ROBONIX_LIFECYCLE_RESET_PATHS="${AGENT_MEMORY_DIR}:${AGENT_MILVUS_URI}:${milvus_lock}"
           python3 "$GITHUB_WORKSPACE/testing/validate_lifecycle.py" \
             --rbnx rbnx \
             --manifest robonix_manifest.ci.generated.yaml \
-            --server "$ROBONIX_CI_ATLAS" \
+            --server "$ROBONIX_CI_SRC" \
             --sim-container "$ROBONIX_SIM_CONTAINER" \
             --leave-running \
             --log-dir "$RUNNER_TEMP/lifecycle-logs" | tee "$RUNNER_TEMP/lifecycle.out"
@@ -1153,18 +1153,18 @@ jobs:
         working-directory: examples/webots
         run: |
           set -euo pipefail
-          export ROBONIX_ATLAS="$ROBONIX_CI_ATLAS"
-          # Wait for atlas to settle (the validator just re-booted
+          export ROBONIX_SRC="$ROBONIX_CI_SRC"
+          # Wait for src to settle (the validator just re-booted
           # everything; reuse the same caps wait).
           for i in $(seq 1 60); do
-            if rbnx caps -v --server "$ROBONIX_CI_ATLAS" >"$RUNNER_TEMP/caps.post-restart.txt" 2>&1 \
+            if rbnx caps -v --server "$ROBONIX_CI_SRC" >"$RUNNER_TEMP/caps.post-restart.txt" 2>&1 \
               && grep -q "robonix/service/navigation/navigate" "$RUNNER_TEMP/caps.post-restart.txt" \
               && grep -q "^● nav2 \[ACTIVE\]" "$RUNNER_TEMP/caps.post-restart.txt"; then
-              echo "post-restart atlas ready"
+              echo "post-restart src ready"
               break
             fi
             if [ "$i" -eq 60 ]; then
-              echo "::error::atlas not ready after lifecycle reboot"
+              echo "::error::src not ready after lifecycle reboot"
               tail -120 "$RUNNER_TEMP/caps.post-restart.txt" || true
               exit 1
             fi
@@ -1208,17 +1208,17 @@ jobs:
             fi
             sleep 0.5
           done
-          # Atlas readiness only proves that Scene registered its contracts.
-          # A restarted Scene still needs fresh camera frames before its object
+          # Src readiness only proves that World registered its contracts.
+          # A restarted World still needs fresh camera frames before its object
           # registry contains a real object, so apply the same readiness gate
           # used before the first scenario pass.
-          scene_url="http://127.0.0.1:${SCENE_WEB_PORT}/api/state"
-          state_file="$RUNNER_TEMP/sim-logs/scene-state-post-restart.json"
-          scene_ready=0
-          echo "waiting for a real non-robot scene object after lifecycle restart: ${scene_url}"
+          world_url="http://127.0.0.1:${WORLD_WEB_PORT}/api/state"
+          state_file="$RUNNER_TEMP/sim-logs/world-state-post-restart.json"
+          world_ready=0
+          echo "waiting for a real non-robot World object after lifecycle restart: ${world_url}"
           for _ in $(seq 1 180); do
-            if curl -fsS --max-time 2 "$scene_url" -o "$state_file"; then
-              if python3 - "$state_file" <<'SCENE_READY_PY'
+            if curl -fsS --max-time 2 "$world_url" -o "$state_file"; then
+              if python3 - "$state_file" <<'WORLD_READY_PY'
           import json, sys
           path = sys.argv[1]
           with open(path, "r", encoding="utf-8") as f:
@@ -1237,22 +1237,22 @@ jobs:
                   }, ensure_ascii=False))
                   sys.exit(0)
           sys.exit(1)
-          SCENE_READY_PY
+          WORLD_READY_PY
               then
-                echo "post-restart scene object readiness confirmed"
-                scene_ready=1
+                echo "post-restart World object readiness confirmed"
+                world_ready=1
                 break
               fi
             fi
             sleep 2
           done
-          if [ "$scene_ready" -ne 1 ]; then
-            echo "::error::scene did not expose a non-robot object after lifecycle restart"
+          if [ "$world_ready" -ne 1 ]; then
+            echo "::error::World did not expose a non-robot object after lifecycle restart"
             cat "$state_file" || true
-            tail -260 "examples/webots/rbnx-boot/logs/scene.log" || true
+            tail -260 "examples/webots/rbnx-boot/logs/world.log" || true
             exit 1
           fi
-          python3 "$GITHUB_WORKSPACE/testing/run.py" --server "$ROBONIX_CI_ATLAS" \
+          python3 "$GITHUB_WORKSPACE/testing/run.py" --server "$ROBONIX_CI_SRC" \
             --first object_navigation \
             --summary-json "$GITHUB_WORKSPACE/testing/logs/summary.restart.json" \
             | tee "$RUNNER_TEMP/scenarios.restart.out"
@@ -1265,14 +1265,14 @@ jobs:
             exit 0
           fi
           # Capture the sim/webots container stdout and the in-container ROS
-          # logs so a failure leaves a full trace alongside the scribe logs.
+          # logs so a failure leaves a full trace alongside the component log files.
           mkdir -p "$RUNNER_TEMP/sim-logs"
           docker logs "$ROBONIX_SIM_CONTAINER" >"$RUNNER_TEMP/sim-logs/webots.stdout.log" 2>&1 || true
           for name in \
             "${ROBONIX_MAPPING_CONTAINER:-ci-${RUN_KEY}-mapping}" \
             "${ROBONIX_NAV2_CONTAINER:-ci-${RUN_KEY}-nav2}" \
             "${ROBONIX_EXPLORE_CONTAINER:-ci-${RUN_KEY}-explore}" \
-            "${ROBONIX_SCENE_CONTAINER:-ci-${RUN_KEY}-scene}"; do
+            "${ROBONIX_WORLD_CONTAINER:-ci-${RUN_KEY}-world}"; do
             [ -n "$name" ] || continue
             docker logs "$name" >"$RUNNER_TEMP/sim-logs/${name}.stdout.log" 2>&1 || true
             docker inspect "$name" >"$RUNNER_TEMP/sim-logs/${name}.inspect.json" 2>&1 || true
@@ -1291,7 +1291,7 @@ jobs:
           docker inspect "$ROBONIX_SIM_CONTAINER" --format '{{.Config.Image}}' \
             >"$RUNNER_TEMP/sim-logs/sim-container-image.txt" 2>&1 || true
           # rbnx caps snapshot at end-of-run for post-mortem.
-          rbnx caps --server "${ROBONIX_CI_ATLAS:-127.0.0.1:50051}" --json >"$RUNNER_TEMP/sim-logs/caps.final.json" 2>&1 || true
+          rbnx caps --server "${ROBONIX_CI_SRC:-127.0.0.1:50051}" --json >"$RUNNER_TEMP/sim-logs/caps.final.json" 2>&1 || true
 
       - name: Stop run resources
         if: always()
@@ -1310,10 +1310,10 @@ jobs:
           fi
           # never touch other users' containers/processes; match on the run-id
           # prefix. $RUN_ID is the GitHub-assigned numeric id (job-level env).
-          rbnx shutdown --server "$ROBONIX_CI_ATLAS" 2>/dev/null || true
+          rbnx shutdown --server "$ROBONIX_CI_SRC" 2>/dev/null || true
           [ -n "${RBNX_BOOT_PID:-}" ] && kill "${RBNX_BOOT_PID}" 2>/dev/null || true
           [ -n "${FAKE_VLM_PID:-}" ] && kill "${FAKE_VLM_PID}" 2>/dev/null || true
-          for port in "${ATLAS_PORT:-}" "${EXECUTOR_PORT:-}" "${SOMA_PORT:-}" "${PILOT_PORT:-}" "${LIAISON_PORT:-}" "${FAKE_VLM_PORT:-}" "${ROBONIX_SIM_STREAM_PORT:-}" "${ROBONIX_SIM_VIEWER_PORT:-}" "${MAPPING_GRPC_PORT:-}" "${NAV2_DRIVER_PORT:-}" "${SCENE_WEB_PORT:-}"; do
+          for port in "${SRC_PORT:-}" "${EXECUTOR_PORT:-}" "${ROBOTDESC_PORT:-}" "${PLANNER_PORT:-}" "${GATEWAY_PORT:-}" "${FAKE_VLM_PORT:-}" "${ROBONIX_SIM_STREAM_PORT:-}" "${ROBONIX_SIM_VIEWER_PORT:-}" "${MAPPING_GRPC_PORT:-}" "${NAV2_DRIVER_PORT:-}" "${WORLD_WEB_PORT:-}"; do
             [ -z "$port" ] && continue
             pids=$(ss -ltnp 2>/dev/null | awk -v p=":$port" '$0 ~ p { while (match($0, /pid=[0-9]+/)) { print substr($0, RSTART+4, RLENGTH-4); $0=substr($0, RSTART+RLENGTH) } }' | sort -u)
             [ -n "$pids" ] && kill $pids 2>/dev/null || true
@@ -1528,7 +1528,7 @@ jobs:
             --log-root "lifecycle_logs=$RUNNER_TEMP/lifecycle-logs" \
             --log-root "cache_provider_logs=$cache_log_dir" \
             --log-root "provider_logs=$GITHUB_WORKSPACE/examples/webots/logs" \
-            --log-root "scene_logs=$GITHUB_WORKSPACE/system/scene/logs" \
+            --log-root "world_logs=$GITHUB_WORKSPACE/system/world/logs" \
             --log-root "sim_logs=$RUNNER_TEMP/sim-logs" \
             --log-file "fake_vlm.log=$RUNNER_TEMP/fake_vlm.log" \
             --log-file "rbnx-boot.log=$RUNNER_TEMP/rbnx-boot.log" \
@@ -1585,7 +1585,7 @@ jobs:
           path: |
             examples/webots/rbnx-boot/logs/
             examples/webots/logs/
-            system/scene/logs/
+            system/world/logs/
             testing/logs/
             testing/report/
             ${{ runner.temp }}/report-metadata.json

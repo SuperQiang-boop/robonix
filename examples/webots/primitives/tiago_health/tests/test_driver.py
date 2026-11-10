@@ -9,7 +9,7 @@ from tiago_health.driver import HealthSettings, build_health_state
 
 class HealthDriverTests(unittest.TestCase):
     def test_normal_profile_contains_nominal_component_values(self):
-        """The default frame covers every Soma component without fault codes."""
+        """The default frame covers every Robotdesc component without fault codes."""
         state = build_health_state(HealthSettings())
         readings = {reading.name: reading for reading in state.readings}
         self.assertAlmostEqual(state.voltage, 24.8, places=5)
@@ -50,7 +50,7 @@ class HealthDriverTests(unittest.TestCase):
         )
 
     def test_unknown_variant_is_rejected(self):
-        """Variant typos fail initialization instead of desynchronizing Soma."""
+        """Variant typos fail initialization instead of desynchronizing Robotdesc."""
         with self.assertRaisesRegex(ValueError, "choose 'lite' or 'full'"):
             HealthSettings.from_config({"variant": "tiago++"})
 

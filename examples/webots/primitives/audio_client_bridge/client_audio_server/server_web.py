@@ -147,7 +147,7 @@ async def serve_speaker(ws) -> None:
     # Bytearray buffer + lock — sounddevice's callback wants exactly
     # `len(outdata)` bytes per call (= FRAME_BYTES at our blocksize).
     # The previous queue-of-opaque-chunks design dropped any bytes
-    # beyond that boundary, so an 8 KiB liaison TTS chunk played
+    # beyond that boundary, so an 8 KiB gateway TTS chunk played
     # only the first 3.2 KiB and silently discarded the rest — most
     # of the speech was missing on the wire.
     buf = bytearray()

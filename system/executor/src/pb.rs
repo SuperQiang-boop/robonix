@@ -9,7 +9,7 @@
 //   pb::contracts::robonix_system_executor_control_plan_server — out-of-band plan meta ops
 //   pb::contracts::robonix_system_executor_list_active_plans_server — active-plan snapshot RPC
 //   pb::executor                                   — RtdlEvent
-//   pb::pilot                                      — Plan / CapabilityCall / CapabilityCallResult / ToolRouting
+//   pb::planner                                      — Plan / CapabilityCall / CapabilityCallResult / ToolRouting
 #![allow(
     dead_code,
     unused_imports,

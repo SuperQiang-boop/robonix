@@ -2,13 +2,13 @@
 """User-facing CapabilityProvider classes: `Primitive`, `Service`, `Skill`.
 
 A Robonix package instantiates exactly one of these. The framework
-talks to atlas (RegisterPrimitive/Service/Skill + DeclareCapability +
+talks to src (RegisterPrimitive/Service/Skill + DeclareCapability +
 Heartbeat), serves the lifecycle gRPC API
 (Driver(CMD_INIT/ACTIVATE/DEACTIVATE/SHUTDOWN)), and provides thin
 helpers over rclpy / grpcio / FastMCP for the most common patterns.
 
 Internal `_ProviderBase` shares all the lifecycle / decorator / server
-plumbing; the three concrete classes differ only in which atlas
+plumbing; the three concrete classes differ only in which src
 Register RPC they call.
 
 Layered API:
@@ -16,7 +16,7 @@ Layered API:
     spawn subprocess, sentinel waits.
   - Layer 2 (opt-in convenience): create_publisher / create_subscription
     for ROS 2; `@provider.provides_grpc(...)` / `@provider.provides_mcp(...)`
-    decorators that register the handler AND atlas-declare the
+    decorators that register the handler AND src-declare the
     Capability in one step (description is pulled from the function's
     docstring or passed explicitly).
 """
@@ -32,10 +32,10 @@ import threading
 from pathlib import Path
 from typing import Any, Callable
 
-from . import scribe_logger
+from . import log_logger
 from ._lifecycle_internal import _set_lifecycle_state
-from .atlas import ATLAS
-from .atlas_types import (
+from .src import SRC
+from .src_types import (
     Capability,
     CapabilityProvider,
     Channel,
@@ -169,7 +169,7 @@ class _ProviderBase:
                 pkg_root = find_pkg_root(caller_file)
         self.pkg_root: Path = (pkg_root or Path.cwd()).resolve()
 
-        # Add the package's codegen output to sys.path so atlas_pb2 /
+        # Add the package's codegen output to sys.path so src_pb2 /
         # contracts are importable when run() actually needs them.
         ensure_proto_gen(self.pkg_root)
 
@@ -194,12 +194,12 @@ class _ProviderBase:
         self._on_shutdown: Callable | None = None
 
         # Lifecycle state. Source of truth on the provider side; pushed to
-        # atlas via the privileged `_set_lifecycle_state` whenever it
+        # src via the privileged `_set_lifecycle_state` whenever it
         # transitions.
         self._state: LifecycleState = LifecycleState.REGISTERED
 
         # Channels we opened via connect_capability(); force-closed on
-        # teardown so atlas doesn't accumulate dangling edges.
+        # teardown so src doesn't accumulate dangling edges.
         self._channels: list[Channel] = []
 
         # Decorator-registered handlers.
@@ -235,7 +235,7 @@ class _ProviderBase:
 
     def on_deactivate(self, fn: Callable[[], Any]) -> Callable[[], Any]:
         """ACTIVE -> INACTIVE. Release hot resources, keep config /
-        atlas registration."""
+        src registration."""
         self._on_deactivate = fn
         return fn
 
@@ -251,7 +251,7 @@ class _ProviderBase:
         return self._state
 
     def _set_state(self, new_state: LifecycleState | str | None, detail: str = "") -> None:
-        """Update local state + push to atlas (privileged). Idempotent
+        """Update local state + push to src (privileged). Idempotent
         on no-change. `new_state=None` updates only state_detail."""
         if new_state is None:
             try:
@@ -277,7 +277,7 @@ class _ProviderBase:
         except Exception:  # noqa: BLE001
             pass
 
-    # -- Layer 1: raw atlas declares ---------------------------------------
+    # -- Layer 1: raw src declares ---------------------------------------
 
     def declare_capability(
         self,
@@ -289,12 +289,12 @@ class _ProviderBase:
     ) -> str:
         """Declare a Capability for `contract_id` on this CapabilityProvider.
         `description` is the instance-specific natural-language string
-        Pilot/LLM sees; empty means "use the contract's generic
+        Planner/LLM sees; empty means "use the contract's generic
         description from the TOML at consume time" (the two are merged,
         not picked-one-of). Namespace alignment is advisory: a regular
         contract outside this provider's primary namespace emits a warning
         but is still declared; contracts marked `cross_namespace` do not."""
-        contract = ATLAS.query_contract(contract_id)
+        contract = SRC.query_contract(contract_id)
         cross_namespace = bool(contract and contract.cross_namespace)
         namespace = self.namespace.strip("/")
         normalized_contract = contract_id.strip("/")
@@ -304,12 +304,12 @@ class _ProviderBase:
         if not namespace_matches and not cross_namespace:
             log.warning(
                 "[%s] namespace mismatch: declaring '%s' outside primary "
-                "namespace '%s'; Atlas will accept it and expose a diagnostic",
+                "namespace '%s'; Src will accept it and expose a diagnostic",
                 self.id,
                 contract_id,
                 self.namespace,
             )
-        return ATLAS.declare_capability(
+        return SRC.declare_capability(
             provider_id=self.id,
             contract_id=contract_id,
             transport=transport,
@@ -398,11 +398,11 @@ class _ProviderBase:
         transport: Transport | str | int,
     ) -> Channel:
         """Open a channel to another CapabilityProvider's Capability.
-        `provider` may be a `CapabilityProvider` (from `ATLAS.query_*`) or a
-        `Capability` (from `ATLAS.find_capability`); both carry the
+        `provider` may be a `CapabilityProvider` (from `SRC.query_*`) or a
+        `Capability` (from `SRC.find_capability`); both carry the
         provider id."""
         provider_id = provider.id if isinstance(provider, CapabilityProvider) else provider.provider_id
-        ch = ATLAS.connect_capability(
+        ch = SRC.connect_capability(
             consumer_id=self.id,
             provider_id=provider_id,
             contract_id=contract_id,
@@ -461,16 +461,16 @@ class _ProviderBase:
         return None
 
     def _advertise_host(self) -> str:
-        """The IP a provider publishes into atlas for its gRPC / MCP
+        """The IP a provider publishes into src for its gRPC / MCP
         endpoints. Must be reachable by a cross-host consumer (e.g. an
         executor on another machine), so hardcoding 127.0.0.1 breaks any
-        deployment where consumer and provider are not co-located: atlas
+        deployment where consumer and provider are not co-located: src
         would hand the consumer "127.0.0.1:<port>" and it would dial its
         own loopback instead of this host.
 
         Resolution order: ROBONIX_ADVERTISE_HOST (explicit override) -> an
         explicit non-wildcard provider bind host -> the local source IP that
-        routes toward the atlas host -> 127.0.0.1 when route resolution fails.
+        routes toward the src host -> 127.0.0.1 when route resolution fails.
         A loopback bind therefore advertises loopback automatically instead of
         publishing an endpoint that the server does not accept."""
         explicit = os.environ.get("ROBONIX_ADVERTISE_HOST", "").strip()
@@ -478,9 +478,9 @@ class _ProviderBase:
             return explicit
         if not ipaddress.ip_address(self._bind_host).is_unspecified:
             return self._bind_host
-        atlas = os.environ.get("ROBONIX_ATLAS", "127.0.0.1:50051")
-        atlas_host = atlas.rsplit(":", 1)[0] if ":" in atlas else atlas
-        return self.resolve_host_ip(atlas_host) or "127.0.0.1"
+        src = os.environ.get("ROBONIX_SRC", "127.0.0.1:50051")
+        src_host = src.rsplit(":", 1)[0] if ":" in src else src
+        return self.resolve_host_ip(src_host) or "127.0.0.1"
 
     # -- Layer 2: ROS publisher / subscriber -------------------------------
 
@@ -528,7 +528,7 @@ class _ProviderBase:
                     params=Ros2Params(qos_profile=qos if isinstance(qos, str) else "reliable"),
                 )
             except Exception:  # noqa: BLE001
-                # Consumer-side declare is optional; don't fail if atlas refuses.
+                # Consumer-side declare is optional; don't fail if src refuses.
                 pass
         return sub
 
@@ -595,7 +595,7 @@ class _ProviderBase:
         # loopback-only deployment is also reachable from a local browser, so
         # keep the MCP SDK's Host-header/DNS-rebinding guard enabled there.
         # The SDK defaults allowed_hosts to an empty list when callers provide
-        # explicit transport settings, which otherwise rejects every Atlas MCP
+        # explicit transport settings, which otherwise rejects every Src MCP
         # request with HTTP 421. Allow only this loopback endpoint (with its
         # dynamically allocated port) and the equivalent localhost spelling.
         protect_loopback = ipaddress.ip_address(self._bind_host).is_loopback
@@ -683,23 +683,23 @@ class _ProviderBase:
             self._teardown()
 
     # Subclasses override to call the right Register* RPC.
-    def _atlas_register(self) -> bool:
+    def _src_register(self) -> bool:
         raise NotImplementedError
 
     def _do_bootstrap(self) -> None:
-        # 0. Route ALL stdlib logging through Scribe under this provider's id
+        # 0. Route ALL stdlib logging through Log under this provider's id
         # (the same tag rbnx uses for its log file). This replaces any handler
         # installed by imports — fastmcp/uvicorn's rich handler, a host app's
         # own config — so the whole provider lifecycle (register, ready, Driver
         # commands, on_init, ACTIVE) lands in `rbnx logs -t <id>` instead of a
         # raw stderr that the unified log never sees. Deferred from import time
         # so a bare `import robonix_api` does not touch the host's logging.
-        scribe_logger.install_stdlib_bridge(self.id)
+        log_logger.install_stdlib_bridge(self.id)
 
-        # 1. atlas register
+        # 1. src register
         registered_ok = False
         try:
-            self._atlas_register()
+            self._src_register()
             log.info("registered %s '%s'", self._kind.name.lower(), self.id)
             registered_ok = True
         except Exception as e:  # noqa: BLE001
@@ -784,7 +784,7 @@ class _ProviderBase:
             "Lifecycle gRPC serving on %s:%d", self._bind_host, self._driver_port
         )
 
-        # 3. atlas-declare every gRPC capability
+        # 3. src-declare every gRPC capability
         endpoint = f"{self._advertise_host()}:{self._driver_port}"
         if driver_decl is not None:
             driver_base, driver_method = driver_decl
@@ -824,8 +824,8 @@ class _ProviderBase:
                 self._declare_mcp_handlers()
 
         # 5. heartbeat — pass the provider's stop Event so the thread
-        # exits on _teardown instead of pinging atlas after TERMINATED.
-        self._heartbeat_thread = ATLAS.start_heartbeat(self.id, stop=self._stopping)
+        # exits on _teardown instead of pinging src after TERMINATED.
+        self._heartbeat_thread = SRC.start_heartbeat(self.id, stop=self._stopping)
 
         # 6. state promotion: caps WITHOUT a Driver contract (system
         # services with only MCP tools) are fully ready as soon as gRPC
@@ -928,15 +928,15 @@ class Primitive(_ProviderBase):
 
     _kind = Kind.PRIMITIVE
 
-    def _atlas_register(self) -> bool:
-        ATLAS.register_primitive(self.id, self.namespace, self._md_path or "")
+    def _src_register(self) -> bool:
+        SRC.register_primitive(self.id, self.namespace, self._md_path or "")
         return True
 
 
 class Service(_ProviderBase):
     """A composed CapabilityProvider built on top of Primitives /
     Services.  e.g. mapping, navigation, scene; also the platform-
-    internal pilot / executor / scene / memory / liaison services.
+    internal planner / executor / scene / memory / gateway services.
 
         service_mapping = Service(
             id="mapping",
@@ -946,8 +946,8 @@ class Service(_ProviderBase):
 
     _kind = Kind.SERVICE
 
-    def _atlas_register(self) -> bool:
-        ATLAS.register_service(self.id, self.namespace, self._md_path or "")
+    def _src_register(self) -> bool:
+        SRC.register_service(self.id, self.namespace, self._md_path or "")
         return True
 
 
@@ -964,8 +964,8 @@ class Skill(_ProviderBase):
 
     _kind = Kind.SKILL
 
-    def _atlas_register(self) -> bool:
-        ATLAS.register_skill(self.id, self.namespace, self._md_path or "")
+    def _src_register(self) -> bool:
+        SRC.register_skill(self.id, self.namespace, self._md_path or "")
         return True
 
 

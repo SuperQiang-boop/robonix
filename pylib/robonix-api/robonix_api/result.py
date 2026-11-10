@@ -30,7 +30,7 @@ class Ok:
 @dataclass(frozen=True, slots=True)
 class Err:
     """Handler failed. `message` shows up in `rbnx caps` state_detail
-    and atlas's logs. Use this for both expected failures (config
+    and src's logs. Use this for both expected failures (config
     invalid, dependency missing) and caught exceptions."""
     message: str
 

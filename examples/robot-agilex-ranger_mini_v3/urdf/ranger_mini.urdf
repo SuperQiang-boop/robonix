@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Ranger Mini v2 + MID-360 + RealSense D435i URDF for soma.
+  Ranger Mini v2 + MID-360 + RealSense D435i URDF for robotdesc.
 
   Origin: chassis links (base_link + 4 wheel links) come from
   old_cap/ranger_description/src/ranger_description/urdf/ranger_mini.urdf
@@ -9,7 +9,7 @@
   Sensor mount edges (livox_frame, camera_435i_link) appended below;
   values match the static_transform_publisher defaults shipped in
   packages/ranger_description_rbnx/launch/static_tf.launch.xml so that
-  the deploy has a single source of truth: when soma's
+  the deploy has a single source of truth: when robotdesc's
   sensor_extrinsics srv ships and consumers switch over (Stage B),
   ranger_description retires and this URDF becomes canonical.
 
@@ -25,7 +25,7 @@
                          frames). We only own the chassis→camera-body
                          edge.
 
-  Mesh paths use package://ranger_description/meshes/*.STL — soma v0.1
+  Mesh paths use package://ranger_description/meshes/*.STL — robotdesc v0.1
   does not parse meshes, only returns the URDF XML as a string. mesh
   files are NOT shipped with this deploy. When stage B's footprint srv
   needs mesh hulls, mesh path resolution will be revisited.

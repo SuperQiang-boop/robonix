@@ -4,7 +4,7 @@ package:
   name: robonix.robot.unitree.go2.dashboard
   version: 0.1.0
   vendor: syswonder
-  description: Robonix provider for read-only Go2 telemetry and optional loopback Liaison voice handoff.
+  description: Robonix provider for read-only Go2 telemetry and optional loopback Gateway voice handoff.
   license: Apache-2.0
   tags: [robot, unitree, go2, ui, telemetry, ros2, readonly]
   maintainers:

@@ -5,9 +5,9 @@
 This Webots package provides `robonix/primitive/health/state` and
 `robonix/primitive/health/stream`. It publishes deterministic nominal values
 for the TIAGo base, wheels, battery, camera, lidar, and audio component paths
-declared in `examples/webots/soma.yaml`. The `full` variant also reports all
+declared in `examples/webots/robotdesc.yaml`. The `full` variant also reports all
 seven arm joints plus the parallel gripper and its actuator declared in
-`soma.full.yaml`.
+`robotdesc.full.yaml`.
 
 Configuration is delivered through the primitive entry in
 `robonix_manifest.yaml`:
@@ -23,7 +23,7 @@ config:
 ```
 
 `variant` accepts `lite` (default) or `full`. It must match the Webots and
-Soma variant selected by the example launch scripts.
+Robotdesc variant selected by the example launch scripts.
 
 `scenario` is the stable fault-injection entry point. Only `normal` is
 implemented now; unsupported values fail lifecycle initialization instead of

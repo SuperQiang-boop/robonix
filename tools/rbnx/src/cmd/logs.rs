@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MulanPSL-2.0
-// `rbnx logs` — read Scribe JSON-lines log files with tag / level
+// `rbnx logs` — read Log JSON-lines files with tag / level
 // filtering and optional follow mode.
 
 use anyhow::Result;
-use robonix_scribe::LogRecord;
+use robonix_log::LogRecord;
 use std::path::PathBuf;
 
 /// Minimum level string → numeric floor for filtering.
@@ -17,18 +17,18 @@ fn level_floor(s: &str) -> u8 {
     }
 }
 
-fn level_value(level: &robonix_scribe::Level) -> u8 {
+fn level_value(level: &robonix_log::Level) -> u8 {
     match level {
-        robonix_scribe::Level::Debug => 0,
-        robonix_scribe::Level::Info => 1,
-        robonix_scribe::Level::Warn => 2,
-        robonix_scribe::Level::Error => 3,
+        robonix_log::Level::Debug => 0,
+        robonix_log::Level::Info => 1,
+        robonix_log::Level::Warn => 2,
+        robonix_log::Level::Error => 3,
     }
 }
 
-/// Render one record as a logcat-style line (reuse Scribe's own formatter).
+/// Render one record as a logcat-style line (reuse Log's own formatter).
 fn render_console(rec: &LogRecord) -> String {
-    robonix_scribe::format::format_console(rec)
+    robonix_log::format::format_console(rec)
 }
 
 /// Read all `*.log` files in `dir`, parse every line as a LogRecord,
@@ -78,8 +78,8 @@ fn read_all(dir: &PathBuf, tags: &[String], min_level: u8, raw_json: bool) -> Re
 
 /// Scan every `*.log` in `dir` and print the distinct tags found, each with a
 /// record count, sorted by tag. Helps discover which `-t <tag>` values exist.
-/// Ignores the tag / level filters. When no Scribe records parse, says so
-/// (the files may be empty or in a pre-Scribe text format) rather than
+/// Ignores the tag / level filters. When no Log records parse, says so
+/// (the files may be empty or in a pre-Log text format) rather than
 /// printing nothing.
 fn list_tags(dir: &PathBuf) -> Result<()> {
     use std::collections::BTreeMap;
@@ -106,8 +106,8 @@ fn list_tags(dir: &PathBuf) -> Result<()> {
     }
     if counts.is_empty() {
         eprintln!(
-            "rbnx logs: no Scribe records in {} ({files} .log file(s) scanned). \
-             The files may be empty or in a pre-Scribe text format.",
+            "rbnx logs: no Log records in {} ({files} .log file(s) scanned). \
+             The files may be empty or in a pre-Log text format.",
             dir.display()
         );
         return Ok(());
@@ -184,7 +184,7 @@ pub async fn execute(
     list_tags_mode: bool,
 ) -> Result<()> {
     let dir = log_dir.unwrap_or_else(|| {
-        std::env::var("SCRIBE_LOG_DIR")
+        std::env::var("ROBONIX_LOG_DIR")
             .map(PathBuf::from)
             .unwrap_or_else(|_| PathBuf::from("./rbnx-boot/logs"))
     });
@@ -194,7 +194,7 @@ pub async fn execute(
             "rbnx logs: {} does not exist or is not a directory.",
             dir.display()
         );
-        eprintln!("Set SCRIBE_LOG_DIR or run from a deploy directory.");
+        eprintln!("Set ROBONIX_LOG_DIR or run from a deploy directory.");
         std::process::exit(1);
     }
 

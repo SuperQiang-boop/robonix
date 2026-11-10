@@ -42,8 +42,8 @@ prepare_runtime_proto_gen() {
         echo "[explore/start] cannot resolve Robonix runtime proto directory" >&2
         return 1
     }
-    [[ -d "$runtime_proto" && -f "$runtime_proto/atlas.proto" ]] || {
-        echo "[explore/start] missing runtime atlas.proto: $runtime_proto" >&2
+    [[ -d "$runtime_proto" && -f "$runtime_proto/src.proto" ]] || {
+        echo "[explore/start] missing runtime src.proto: $runtime_proto" >&2
         return 1
     }
     [[ -d "$proto_staging" ]] \
@@ -106,7 +106,7 @@ exec docker run --rm \
     --name "$CT" \
     --network host \
     --ipc=host \
-    -e ROBONIX_ATLAS="${ROBONIX_ATLAS:-127.0.0.1:50051}" \
+    -e ROBONIX_SRC="${ROBONIX_SRC:-127.0.0.1:50051}" \
     -e ROBONIX_CAPABILITY_ID="${ROBONIX_CAPABILITY_ID:-com.robonix.skill.explore}" \
     -e ROBONIX_PKG_HOST_DIR="$(pwd)" \
     -e RBNX_CONFIG_FILE="${RBNX_CONFIG_FILE:-}" \

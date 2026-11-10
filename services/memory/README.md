@@ -5,7 +5,7 @@ it consumes `LogRecord` entries from Scribe Log and builds a causal knowledge
 graph (CKG) with tag-indexed, vector-searchable memory nodes.
 
 Runs in parallel with **memsearch** under the shared `robonix/service/memory/`
-namespace — Pilot discovers both backends and the LLM chooses between them.
+namespace — Planner discovers both backends and the LLM chooses between them.
 
 ## Capability surface
 

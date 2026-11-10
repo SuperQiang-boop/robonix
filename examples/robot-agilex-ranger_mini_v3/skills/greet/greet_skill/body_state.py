@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Read chassis motion from Soma's standard health snapshot."""
+"""Read chassis motion from Robotdesc's standard health snapshot."""
 from __future__ import annotations
 
 import logging
@@ -27,7 +27,7 @@ def snapshot_is_moving(snapshot, chassis_provider_id: str) -> bool:
     return snapshot_motion_state(snapshot, chassis_provider_id) == "moving"
 
 
-class SomaMotionMonitor:
+class RobotdescMotionMonitor:
     """Small pull client used by the long-lived skill; it has no ROS dependency."""
 
     def __init__(self, endpoint: str, chassis_provider_id: str, timeout_s: float = 0.5):
@@ -36,7 +36,7 @@ class SomaMotionMonitor:
 
         target = endpoint.removeprefix("http://").removeprefix("https://")
         self._channel = grpc.insecure_channel(target)
-        self._stub = robonix_contracts_pb2_grpc.RobonixSystemSomaGetHealthStub(
+        self._stub = robonix_contracts_pb2_grpc.RobonixSystemRobotdescGetHealthStub(
             self._channel
         )
         self._provider_id = chassis_provider_id
@@ -51,7 +51,7 @@ class SomaMotionMonitor:
             return
         action = "detection enabled" if state == "moving" else "detection paused"
         log.info(
-            "Soma motion gate: chassis=%s state=%s; %s",
+            "Robotdesc motion gate: chassis=%s state=%s; %s",
             self._provider_id,
             state,
             action,
@@ -60,7 +60,7 @@ class SomaMotionMonitor:
         self._last_state_log_at = now
 
     def is_moving(self) -> bool:
-        from soma_pb2 import GetHealth_Request
+        from robotdesc_pb2 import GetHealth_Request
 
         try:
             response = self._stub.GetHealth(
@@ -72,7 +72,7 @@ class SomaMotionMonitor:
         except Exception as exc:  # noqa: BLE001
             now = time.monotonic()
             if now - self._last_warning_at >= 10.0:
-                log.warning("Soma motion state unavailable; greeting paused: %s", exc)
+                log.warning("Robotdesc motion state unavailable; greeting paused: %s", exc)
                 self._last_warning_at = now
             self._last_state = "unavailable"
             return False

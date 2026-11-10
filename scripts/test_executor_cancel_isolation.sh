@@ -5,21 +5,21 @@
 set -euo pipefail
 
 ROOT="${ROBONIX_SOURCE_PATH:-$(cd "$(dirname "$0")/.." && pwd)}"
-ATLAS_ADDR="${RBNX_TEST_ATLAS_ADDR:-127.0.0.1:51051}"
+SRC_ADDR="${RBNX_TEST_SRC_ADDR:-127.0.0.1:51051}"
 EXECUTOR_ADDR="${RBNX_TEST_EXECUTOR_ADDR:-127.0.0.1:51061}"
-ATLAS_BIN="${ROBONIX_ATLAS_BIN:-$(command -v robonix-atlas || true)}"
+SRC_BIN="${ROBONIX_SRC_BIN:-$(command -v robonix-src || true)}"
 EXECUTOR_BIN="${ROBONIX_EXECUTOR_BIN:-$(command -v robonix-executor || true)}"
 WORK="$(mktemp -d /tmp/robonix-rtdl-isolation.XXXXXX)"
 TRACE="$WORK/timeline.log"
-ATLAS_LOG="$WORK/atlas.log"
+SRC_LOG="$WORK/src.log"
 EXECUTOR_LOG="$WORK/executor.log"
 
 cleanup() {
   local rc=$?
   if [[ -n "${EXECUTOR_PID:-}" ]]; then kill "$EXECUTOR_PID" 2>/dev/null || true; fi
-  if [[ -n "${ATLAS_PID:-}" ]]; then kill "$ATLAS_PID" 2>/dev/null || true; fi
+  if [[ -n "${SRC_PID:-}" ]]; then kill "$SRC_PID" 2>/dev/null || true; fi
   wait "${EXECUTOR_PID:-}" 2>/dev/null || true
-  wait "${ATLAS_PID:-}" 2>/dev/null || true
+  wait "${SRC_PID:-}" 2>/dev/null || true
   if [[ $rc -ne 0 ]]; then
     echo "FAIL: artifacts retained at $WORK" >&2
     echo "--- executor log tail ---" >&2
@@ -31,20 +31,20 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-: "${ATLAS_BIN:?robonix-atlas is not on PATH; set ROBONIX_ATLAS_BIN}"
+: "${SRC_BIN:?robonix-src is not on PATH; set ROBONIX_SRC_BIN}"
 : "${EXECUTOR_BIN:?robonix-executor is not on PATH; set ROBONIX_EXECUTOR_BIN}"
 
 export ROBONIX_SOURCE_PATH="$ROOT"
-export SCRIBE_STDOUT_LEVEL=warn
-export SCRIBE_FILE_LEVEL=debug
+export ROBONIX_LOG_STDOUT_LEVEL=warn
+export ROBONIX_LOG_FILE_LEVEL=debug
 
-"$ATLAS_BIN" \
-  --listen "$ATLAS_ADDR" \
+"$SRC_BIN" \
+  --listen "$SRC_ADDR" \
   --capabilities "$ROOT/capabilities" \
-  >"$ATLAS_LOG" 2>&1 &
-ATLAS_PID=$!
+  >"$SRC_LOG" 2>&1 &
+SRC_PID=$!
 
-python3 - "$ATLAS_ADDR" <<'PY'
+python3 - "$SRC_ADDR" <<'PY'
 import socket, sys, time
 host, port = sys.argv[1].rsplit(":", 1)
 deadline = time.time() + 10
@@ -54,11 +54,11 @@ while time.time() < deadline:
             raise SystemExit(0)
     except OSError:
         time.sleep(0.1)
-raise SystemExit("atlas did not listen within 10s")
+raise SystemExit("src did not listen within 10s")
 PY
 
 "$EXECUTOR_BIN" \
-  --atlas "$ATLAS_ADDR" \
+  --src "$SRC_ADDR" \
   --listen "$EXECUTOR_ADDR" \
   --id executor \
   >"$EXECUTOR_LOG" 2>&1 &
@@ -98,7 +98,7 @@ import time
 
 import grpc
 import executor_pb2
-import pilot_pb2
+import planner_pb2
 import robonix_contracts_pb2_grpc as contracts
 
 endpoint, trace_arg = sys.argv[1:3]
@@ -120,11 +120,11 @@ def shell_mark(label: str, sleep_s: int, end: str | None = None) -> str:
 
 
 def bash_call(plan_id: str, call_id: str, op_id: str, description: str, command: str):
-    return pilot_pb2.RtdlNode(
+    return planner_pb2.RtdlNode(
         node_kind=2,
         op_id=op_id,
         description=description,
-        call=pilot_pb2.CapabilityCall(
+        call=planner_pb2.CapabilityCall(
             call_id=f"{plan_id}:{call_id}",
             provider_id="executor",
             contract_id="robonix/system/executor/builtin/run_command",
@@ -133,11 +133,11 @@ def bash_call(plan_id: str, call_id: str, op_id: str, description: str, command:
     )
 
 
-plan_a = pilot_pb2.Plan(
+plan_a = planner_pb2.Plan(
     plan_id="A-route",
     session_id=session_id,
     nodes=[
-        pilot_pb2.RtdlNode(
+        planner_pb2.RtdlNode(
             node_kind=0,
             children=[1, 2],
             op_id="A-sequence",
@@ -158,20 +158,20 @@ greet_cmd = (
     f'"$(date +%s.%N)" "$i" >> {greet_target}; sleep 1; done; '
     f'printf "%.3f B_GREET_END\\n" "$(date +%s.%N)" >> {greet_target}'
 )
-plan_b = pilot_pb2.Plan(
+plan_b = planner_pb2.Plan(
     plan_id="B-greet",
     session_id=session_id,
     nodes=[bash_call("B-greet", "0", "B-watch", "continuous greet watch", greet_cmd)],
     root_index=0,
 )
-plan_c = pilot_pb2.Plan(
+plan_c = planner_pb2.Plan(
     plan_id="C-open-area",
     session_id=session_id,
     nodes=[bash_call("C-open-area", "0", "C-drive", "move to open area",
                      shell_mark("C_OPEN_START", 30, "C_OPEN_END"))],
     root_index=0,
 )
-plan_d = pilot_pb2.Plan(
+plan_d = planner_pb2.Plan(
     plan_id="D-return-315",
     session_id=session_id,
     nodes=[bash_call("D-return-315", "0", "D-return", "return to office 315",

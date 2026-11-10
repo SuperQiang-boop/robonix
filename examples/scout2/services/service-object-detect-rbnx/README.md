@@ -1,6 +1,6 @@
 # service-object-detect-rbnx
 
-Robonix package for **LLM/VLM-based object detection**. It exposes an atlas-routed MCP service and replaces the older `yolo_world_rbnx` path. Owns the `service/perception/object_detect/*` namespace.
+Robonix package for **LLM/VLM-based object detection**. It exposes an src-routed MCP service and replaces the older `yolo_world_rbnx` path. Owns the `service/perception/object_detect/*` namespace.
 
 Catalog name: `robonix.service.object_detect`.
 
@@ -21,17 +21,17 @@ There is no legacy `/yolo/detect_object` ROS-service fallback in this package.
 
 ## Boot ordering
 
-Must come **after** `primitive-orbbec-dabai_dcw-camera-rbnx` in the deploy manifest — Init resolves the RGB topic (and, when `skip_depth=false`, the depth topic) at atlas-registration time.
+Must come **after** `primitive-orbbec-dabai_dcw-camera-rbnx` in the deploy manifest — Init resolves the RGB topic (and, when `skip_depth=false`, the depth topic) at src-registration time.
 
 ## Driver-init lifecycle
 
-`start.sh` brings up the atlas bridge — no ROS spawn. The bridge opens a gRPC server, registers the capability and declares only `object_detect/driver`, then blocks awaiting `Driver(CMD_INIT, config_json)`.
+`start.sh` brings up the src bridge — no ROS spawn. The bridge opens a gRPC server, registers the capability and declares only `object_detect/driver`, then blocks awaiting `Driver(CMD_INIT, config_json)`.
 
 When `rbnx boot` invokes Init the handler:
 
 1. validates the LLM endpoint / API key / model name;
-2. resolves `primitive/camera/rgb` and `primitive/camera/camera_info` via atlas (depth is skipped when `skip_depth=true`);
-3. declares `object_detect/detect_object` on atlas.
+2. resolves `primitive/camera/rgb` and `primitive/camera/camera_info` via src (depth is skipped when `skip_depth=true`);
+3. declares `object_detect/detect_object` on src.
 
 ## Layout
 
@@ -41,10 +41,10 @@ service-object-detect-rbnx/
 ├── capabilities/
 │   └── service/perception/object_detect/{driver,detect_object}.v1.toml
 ├── config/                     example .env / prompt templates
-├── llm_detect/                 Python package: atlas bridge + VLM client
+├── llm_detect/                 Python package: src bridge + VLM client
 ├── scripts/
 │   ├── build.sh                colcon build + rbnx codegen
-│   └── start.sh                source ROS, exec atlas_bridge
+│   └── start.sh                source ROS, exec src_bridge
 └── src/                        vendored dependencies (if any)
 ```
 
@@ -65,13 +65,13 @@ service-object-detect-rbnx/
 
 - `rotation_cam2arm`: rotate the image 180° before sending to the LLM when the camera is mounted opposite to the arm.
 - `skip_depth`: vertical-grasp mode — bypass depth back-projection entirely. `env LLM_DETECT_SKIP_DEPTH=1` is the fallback.
-- Empty topic strings mean "atlas-resolved"; defaults already match `primitive-orbbec-dabai_dcw-camera-rbnx`.
+- Empty topic strings mean "src-resolved"; defaults already match `primitive-orbbec-dabai_dcw-camera-rbnx`.
 
 ## Build / run standalone
 
 ```bash
 bash scripts/build.sh                           # colcon + rbnx codegen
-ROBONIX_ATLAS=127.0.0.1:50051 \
+ROBONIX_SRC=127.0.0.1:50051 \
     bash scripts/start.sh                       # registers, awaits Init
 ```
 
@@ -82,7 +82,7 @@ rbnx caps | grep object_detect
 # Expected: llm_detect provider with
 #   robonix/service/perception/object_detect/{driver, detect_object}
 
-# End-to-end via the atlas MCP surface:
+# End-to-end via the src MCP surface:
 rbnx ask "where is the paper on the desk?"
 
 # The package intentionally has no direct ROS service surface.

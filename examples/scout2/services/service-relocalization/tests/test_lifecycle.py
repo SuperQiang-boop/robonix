@@ -41,7 +41,7 @@ class LifecycleTests(unittest.TestCase):
     def test_partial_dependency_failure_closes_channels(self):
         """Do not leak earlier connections when another dependency is missing."""
         channel = Mock()
-        with patch.object(main.ATLAS, "find_unique_capability", side_effect=[Mock(), RuntimeError("no odom")]), \
+        with patch.object(main.SRC, "find_unique_capability", side_effect=[Mock(), RuntimeError("no odom")]), \
                 patch.object(main.service, "connect_capability", return_value=channel):
             self.assertIsInstance(main.activate(), Err)
         channel.close.assert_called_once()
@@ -52,11 +52,11 @@ class LifecycleTests(unittest.TestCase):
         """Failed ROS startup rolls back; successful retries can be shut down twice."""
         main._settings = replace(main._settings, profile_file=Path('/tmp/profile.json'),
                                  coordination_dir=Path('/tmp/coordination'))
-        with patch.object(main.ATLAS, "find_unique_capability"), \
+        with patch.object(main.SRC, "find_unique_capability"), \
                 patch.object(main.service, "connect_capability", side_effect=lambda cap, cid, transport:
                     Mock(contract_id=cid, endpoint='/fixture')), \
                 patch.object(main, 'Backend'), \
-                patch.object(main.service, "declare_ros2_topic", return_value="/atlas/status") as declare, \
+                patch.object(main.service, "declare_ros2_topic", return_value="/src/status") as declare, \
                 patch.object(main, "StatusPublisher") as factory:
             publisher = factory.return_value
             publisher.start.side_effect = RuntimeError("ROS startup failed")
@@ -71,7 +71,7 @@ class LifecycleTests(unittest.TestCase):
                 self.assertIsInstance(main.deactivate(), Ok)
             self.assertFalse(main._runtime.status()["localization_valid"])
             declare.assert_called_once()
-            self.assertEqual(publisher.topic, "/atlas/status")
+            self.assertEqual(publisher.topic, "/src/status")
 
     def test_failed_cleanup_is_retained_for_retry(self):
         """A resource whose close fails remains reachable and availability is false."""

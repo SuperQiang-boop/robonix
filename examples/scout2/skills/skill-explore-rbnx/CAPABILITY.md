@@ -7,7 +7,7 @@ description: Autonomous frontier exploration — drives the robot to map and cat
 Drives the robot through frontier-based exploration of its surroundings,
 building a spatial occupancy map (via the mapping service) and a
 semantic object registry (via scene's built-in VLM detector) along the
-way. User-invocable via the LLM/pilot.
+way. User-invocable via the LLM/planner.
 
 ## Interface (3 MCP tools)
 
@@ -68,16 +68,16 @@ Passing an empty `run_id` uses the most recent exploration task.
 
 ## What this skill does NOT do
 
-- No SLAM (mapping service does that — atlas-resolved input).
-- No collision avoidance (navigation service does that — atlas-resolved).
+- No SLAM (mapping service does that — src-resolved input).
+- No collision avoidance (navigation service does that — src-resolved).
 - No object detection (scene service does that, in-process VLM, on
   the camera frames published by the camera primitive).
 
 The skill is purely a goal-selection loop with safety pre-filters. All
-sensor/actuator access is through atlas-resolved contracts; no
+sensor/actuator access is through src-resolved contracts; no
 hardcoded inter-package topic names.
 
-## Dependencies it Connect()s on atlas at startup
+## Dependencies it Connect()s on src at startup
 
 | key             | contract                                | transport |
 |-----------------|------------------------------------------|-----------|

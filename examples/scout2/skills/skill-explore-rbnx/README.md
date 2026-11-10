@@ -1,7 +1,7 @@
 # explore_rbnx
 
 Autonomous frontier exploration skill for robonix. Driven by the
-LLM/pilot via `rbnx ask "explore"` (or any equivalent intent that
+LLM/planner via `rbnx ask "explore"` (or any equivalent intent that
 triggers the `robonix/skill/explore/explore` tool).
 
 See `CAPABILITY.md` for the full interface + behaviour spec.
@@ -23,7 +23,7 @@ skill:
     config: {}
 ```
 
-The skill registers 3 MCP tools with atlas. Pilot's tool catalog
+The skill registers 3 MCP tools with src. Planner's tool catalog
 will include `robonix/skill/explore/{explore, status, cancel}`.
 
 ## Layout
@@ -37,12 +37,12 @@ explore_rbnx/
 │   ├── cancel.v1.toml
 │   └── srv/{Explore,GetExploreStatus,CancelExplore}.srv
 ├── explore_skill/           # python module
-│   ├── atlas_bridge.py      # entrypoint: register + serve MCP
+│   ├── src_bridge.py      # entrypoint: register + serve MCP
 │   ├── frontier.py          # WFD + clustering + scoring + safety
 │   └── controller.py        # state machine, frontier loop, sweep
 ├── scripts/{build,start}.sh
 ├── docker/{Dockerfile, entrypoint.sh, no_shm_profile.xml}
-├── CAPABILITY.md            # LLM-readable spec (registered with atlas)
+├── CAPABILITY.md            # LLM-readable spec (registered with src)
 └── README.md
 ```
 

@@ -4,8 +4,8 @@
 # Build robonix-api sdist + wheel for PyPI / Test PyPI.
 #
 # Steps:
-#   1. Run protoc against system/atlas/proto/atlas.proto and write
-#      atlas_pb2.py / atlas_pb2_grpc.py into robonix_api/_generated/.
+#   1. Run protoc against system/src/proto/src.proto and write
+#      src_pb2.py / src_pb2_grpc.py into robonix_api/_generated/.
 #   2. `python -m build` to produce dist/*.tar.gz + dist/*.whl.
 #
 # Does NOT upload. Run scripts/publish_testpypi.sh / scripts/publish_pypi.sh
@@ -16,12 +16,12 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PKG_ROOT="$(cd "$HERE/.." && pwd)"
 REPO_ROOT="$(cd "$PKG_ROOT/../.." && pwd)"
-PROTO_DIR="$REPO_ROOT/system/atlas/proto"
-PROTO_FILE="$PROTO_DIR/atlas.proto"
+PROTO_DIR="$REPO_ROOT/system/src/proto"
+PROTO_FILE="$PROTO_DIR/src.proto"
 OUT_DIR="$PKG_ROOT/robonix_api/_generated"
 
 if [[ ! -f "$PROTO_FILE" ]]; then
-    echo "ERR: atlas.proto not found at $PROTO_FILE" >&2
+    echo "ERR: src.proto not found at $PROTO_FILE" >&2
     exit 1
 fi
 
@@ -42,21 +42,21 @@ echo "[build_dist] cleaning $OUT_DIR and dist/"
 rm -rf "$OUT_DIR" "$PKG_ROOT/dist" "$PKG_ROOT/build" "$PKG_ROOT"/*.egg-info
 mkdir -p "$OUT_DIR"
 
-echo "[build_dist] generating atlas_pb2*.py from $PROTO_FILE"
+echo "[build_dist] generating src_pb2*.py from $PROTO_FILE"
 "$PYTHON" -m grpc_tools.protoc \
     -I "$PROTO_DIR" \
     --python_out="$OUT_DIR" \
     --grpc_python_out="$OUT_DIR" \
     "$PROTO_FILE"
 
-# Patch grpc_tools' default `import atlas_pb2 as ...` (top-level) into a
+# Patch grpc_tools' default `import src_pb2 as ...` (top-level) into a
 # relative import so _generated/ ships as a proper sub-package and we
 # don't have to mutate global sys.path at runtime.
-sed -i 's|^import atlas_pb2 as |from . import atlas_pb2 as |' \
-    "$OUT_DIR/atlas_pb2_grpc.py"
+sed -i 's|^import src_pb2 as |from . import src_pb2 as |' \
+    "$OUT_DIR/src_pb2_grpc.py"
 
 # Mark _generated as a sub-package — both for wheel data inclusion and
-# for the relative import from atlas_pb2_grpc.py above.
+# for the relative import from src_pb2_grpc.py above.
 touch "$OUT_DIR/__init__.py"
 echo "[build_dist] generated files:"
 ls -1 "$OUT_DIR"

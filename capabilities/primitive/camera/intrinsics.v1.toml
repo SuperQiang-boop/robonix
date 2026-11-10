@@ -8,7 +8,7 @@
 #   by cx/cy. A consumer that assumes one camera's intrinsics and is fed
 #   another camera's depth at a different resolution or FOV places objects at systematically
 #   wrong map positions — silently, with no crash. Routing K through
-#   atlas means the consumer asks for `primitive/camera/intrinsics` and
+#   src means the consumer asks for `primitive/camera/intrinsics` and
 #   gets the geometry of whichever camera is actually wired in.
 #
 # Payload: sensor_msgs/CameraInfo — `k` is the 3x3 row-major intrinsic

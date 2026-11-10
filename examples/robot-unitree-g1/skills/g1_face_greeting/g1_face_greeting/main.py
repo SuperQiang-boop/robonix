@@ -15,8 +15,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from robonix_api import ATLAS, Err, Ok, Skill
-from robonix_api.atlas_types import Transport
+from robonix_api import SRC, Err, Ok, Skill
+from robonix_api.src_types import Transport
 from g1_face_greeting_mcp import (
     CancelFaceMessage_Request, CancelFaceMessage_Response,
     CreateFaceMessage_Request, CreateFaceMessage_Response,
@@ -31,7 +31,7 @@ from g1_face_greeting import coordination
 log = logging.getLogger("g1_face_greeting")
 FACE_EVENTS = "robonix/service/face_recognition/events/next"
 FACE_RESOLVE = "robonix/service/face_recognition/people/resolve"
-SCENE_OBJECTS = "robonix/system/scene/list_objects"
+WORLD_OBJECTS = "robonix/system/world/list_objects"
 SPEECH = "robonix/service/speech/speak"
 ARM = "robonix/skill/g1_arm_actions/run"
 NAVIGATION = "robonix/service/navigation/navigate"
@@ -49,7 +49,7 @@ ALLOWED_ACTIONS = {
 @dataclass(frozen=True)
 class Settings:
     face_provider_id: str
-    scene_provider_id: str
+    world_provider_id: str
     speech_provider_id: str
     arm_provider_id: str
     navigation_enabled: bool
@@ -68,7 +68,7 @@ class Settings:
 
         allowed = {
             "face_provider_id",
-            "scene_provider_id",
+            "world_provider_id",
             "speech_provider_id",
             "arm_provider_id",
             "navigation_enabled",
@@ -138,7 +138,7 @@ class Settings:
             raise ValueError("message_store_path must be an absolute file path")
         return cls(
             text("face_provider_id", "face_recognition"),
-            text("scene_provider_id", "scene"),
+            text("world_provider_id", "world"),
             text("speech_provider_id", "speech"),
             text("arm_provider_id", "g1_arm_actions"),
             navigation,
@@ -154,7 +154,7 @@ class Settings:
 
 _settings: Settings | None = None
 _face_connection = None
-_scene_connection = None
+_world_connection = None
 _speech_connection = None
 _arm_connection = None
 _worker: threading.Thread | None = None
@@ -167,14 +167,14 @@ _greeting_lock = threading.Lock()
 
 
 def _find(contract: str, provider_id: str):
-    caps = ATLAS.find_capability(provider_id=provider_id, contract_id=contract, transport=Transport.MCP)
+    caps = SRC.find_capability(provider_id=provider_id, contract_id=contract, transport=Transport.MCP)
     if len(caps) != 1:
         raise RuntimeError(f"expected one {provider_id!r} provider for {contract}, found {len(caps)}")
     return caps[0]
 
 
 def _find_optional(contract: str, provider_id: str):
-    caps = ATLAS.find_capability(provider_id=provider_id, contract_id=contract, transport=Transport.MCP)
+    caps = SRC.find_capability(provider_id=provider_id, contract_id=contract, transport=Transport.MCP)
     if len(caps) > 1:
         raise RuntimeError(f"expected at most one {provider_id!r} provider for {contract}, found {len(caps)}")
     return caps[0] if caps else None
@@ -231,11 +231,11 @@ def _normal_label(value: Any) -> str:
     return "".join(str(value or "").casefold().split())
 
 
-async def _resolve_scene_object(label: str) -> dict[str, Any]:
-    """Resolve one exact Scene label to its current stable object ID."""
-    if _scene_connection is None:
+async def _resolve_world_object(label: str) -> dict[str, Any]:
+    """Resolve one exact World label to its current stable object ID."""
+    if _world_connection is None:
         raise RuntimeError("Scene object tracking is unavailable")
-    response = await _call_connection(_scene_connection, "list_objects", {}, 8.0)
+    response = await _call_connection(_world_connection, "list_objects", {}, 8.0)
     wanted = _normal_label(label)
     matches = [
         item for item in response.get("objects", [])
@@ -259,9 +259,9 @@ async def _refresh_object_status(task: dict[str, Any]) -> dict[str, Any]:
         return task
     checked_at = time.time()
     try:
-        if _scene_connection is None:
+        if _world_connection is None:
             raise RuntimeError("Scene object tracking is unavailable")
-        response = await _call_connection(_scene_connection, "list_objects", {}, 8.0)
+        response = await _call_connection(_world_connection, "list_objects", {}, 8.0)
         objects = [item for item in response.get("objects", []) if isinstance(item, dict)]
         current = next((item for item in objects if str(item.get("id", "")) == object_id), None)
         object_status = "present" if current is not None else "removed"
@@ -282,9 +282,9 @@ async def _refresh_object_statuses(tasks: list[dict[str, Any]]) -> list[dict[str
         return tasks
     checked_at = time.time()
     try:
-        if _scene_connection is None:
+        if _world_connection is None:
             raise RuntimeError("Scene object tracking is unavailable")
-        response = await _call_connection(_scene_connection, "list_objects", {}, 8.0)
+        response = await _call_connection(_world_connection, "list_objects", {}, 8.0)
         objects = {
             str(item.get("id", "")): item
             for item in response.get("objects", [])
@@ -433,7 +433,7 @@ def _greet_stationary(event: dict[str, Any]) -> dict[str, Any]:
 
 
 def _navigation_call(tool: str, payload: dict) -> dict:
-    """Resolve each navigation operation through Atlas and release its connection."""
+    """Resolve each navigation operation through Src and release its connection."""
     contract = NAVIGATION + '/' + tool
     log.info('navigation %s requested run_id=%s', tool, payload.get('run_id', ''))
     connection = skill.connect_capability(_find(contract, _settings.navigation_provider_id), contract, Transport.MCP)
@@ -616,7 +616,7 @@ def init(config: dict[str, Any]):
 
 @skill.on_activate
 def activate():
-    global _face_connection, _scene_connection, _speech_connection, _arm_connection, _worker, _store
+    global _face_connection, _world_connection, _speech_connection, _arm_connection, _worker, _store
     with _lock:
         if _settings is None:
             return Err("skill has not been initialized")
@@ -628,12 +628,12 @@ def activate():
             _store = MessageStore(_settings.message_store_path)
             _face_connection = skill.connect_capability(_find(FACE_EVENTS, _settings.face_provider_id), FACE_EVENTS, Transport.MCP)
             _find(FACE_RESOLVE, _settings.face_provider_id)
-            scene_capability = _find_optional(SCENE_OBJECTS, _settings.scene_provider_id)
-            _scene_connection = (
-                skill.connect_capability(scene_capability, SCENE_OBJECTS, Transport.MCP)
-                if scene_capability is not None else None
+            world_capability = _find_optional(WORLD_OBJECTS, _settings.world_provider_id)
+            _world_connection = (
+                skill.connect_capability(world_capability, WORLD_OBJECTS, Transport.MCP)
+                if world_capability is not None else None
             )
-            if _scene_connection is None:
+            if _world_connection is None:
                 log.warning("Scene object tracking is unavailable; ordinary face messages remain usable")
             _speech_connection = skill.connect_capability(_find(SPEECH, _settings.speech_provider_id), SPEECH, Transport.MCP)
             if ARM_GREETING_ENABLED:
@@ -655,7 +655,7 @@ def activate():
 
 @skill.on_deactivate
 def deactivate():
-    global _face_connection, _scene_connection, _speech_connection, _arm_connection, _worker, _store
+    global _face_connection, _world_connection, _speech_connection, _arm_connection, _worker, _store
     with _lock:
         _stop.set()
         if _worker is not None and _worker is not threading.current_thread():
@@ -663,8 +663,8 @@ def deactivate():
             if _worker.is_alive():
                 return Err("greeting worker is still completing an in-flight MCP request")
         _worker = None
-        connections = (_face_connection, _scene_connection, _speech_connection, _arm_connection)
-        _face_connection = _scene_connection = _speech_connection = _arm_connection = None
+        connections = (_face_connection, _world_connection, _speech_connection, _arm_connection)
+        _face_connection = _world_connection = _speech_connection = _arm_connection = None
         errors = []
         for connection in connections:
             try:
@@ -765,7 +765,7 @@ async def create_object_message(
         if not response.get("found"):
             return CreateObjectFaceMessage_Response(detail=str(response.get("detail", "person not registered")))
         person_id = int(response["person_id"])
-        object_info = await _resolve_scene_object(object_label)
+        object_info = await _resolve_world_object(object_label)
         task_id, created = _store.create_or_get(
             person_id, str(response["name"]), sender, body,
             object_id=object_info["id"], object_label=object_info["label"],
@@ -801,7 +801,7 @@ async def create_object_message(
 
 @skill.mcp("robonix/skill/g1_face_greeting/list_messages")
 async def list_messages(req: ListFaceMessages_Request) -> ListFaceMessages_Response:
-    """List recent tasks so Pilot can report pending and delivered results."""
+    """List recent tasks so Planner can report pending and delivered results."""
     if _store is None:
         return ListFaceMessages_Response(detail="greeting skill is not active")
     status = req.status.strip()

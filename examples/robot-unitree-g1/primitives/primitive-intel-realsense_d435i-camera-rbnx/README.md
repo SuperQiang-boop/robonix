@@ -1,6 +1,6 @@
 # realsense_camera_rbnx
 
-Robonix package wrapping the **Intel RealSense D435i** RGBD camera. Owns the `primitive/camera/*` namespace. Exposes the camera's RGB + aligned-depth streams under generic contracts so that mapping, scene, and any vision skill can resolve topic names through atlas (no hardcoded `/camera_435i/...` paths on the consumer side).
+Robonix package wrapping the **Intel RealSense D435i** RGBD camera. Owns the `primitive/camera/*` namespace. Exposes the camera's RGB + aligned-depth streams under generic contracts so that mapping, scene, and any vision skill can resolve topic names through src (no hardcoded `/camera_435i/...` paths on the consumer side).
 
 ## Capability surface
 
@@ -17,9 +17,9 @@ The D435i's internal IMU is **deliberately not** registered under `primitive/imu
 
 ## Driver-init lifecycle
 
-`start.sh` only brings up the atlas bridge process. The bridge opens a gRPC server on port `REALSENSE_DRIVER_PORT` (default 50232), registers the capability and declares only `primitive/camera/driver` on atlas, then blocks on heartbeat awaiting `Driver(CMD_INIT, config_json)`.
+`start.sh` only brings up the src bridge process. The bridge opens a gRPC server on port `REALSENSE_DRIVER_PORT` (default 50232), registers the capability and declares only `primitive/camera/driver` on src, then blocks on heartbeat awaiting `Driver(CMD_INIT, config_json)`.
 
-When `rbnx boot` invokes Init it passes the manifest's `config:` block as JSON. The handler parses config (camera name, RGB/depth profiles, align_depth, IMU on/off), spawns `ros2 launch realsense2_camera rs_launch.py …`, waits for the first frame on the configured RGB topic, declares `primitive/camera/{rgb, depth}` on atlas, and returns ok. Atlas only ever advertises endpoints we've confirmed are publishing.
+When `rbnx boot` invokes Init it passes the manifest's `config:` block as JSON. The handler parses config (camera name, RGB/depth profiles, align_depth, IMU on/off), spawns `ros2 launch realsense2_camera rs_launch.py …`, waits for the first frame on the configured RGB topic, declares `primitive/camera/{rgb, depth}` on src, and returns ok. Src only ever advertises endpoints we've confirmed are publishing.
 
 ## Layout
 
@@ -27,10 +27,10 @@ When `rbnx boot` invokes Init it passes the manifest's `config:` block as JSON. 
 realsense_camera_rbnx/
 ├── package_manifest.yaml
 ├── realsense_camera/
-│   └── atlas_bridge.py           driver gRPC + lazy Init
+│   └── src_bridge.py           driver gRPC + lazy Init
 ├── scripts/
 │   ├── build.sh                  colcon build vendored src + rbnx codegen
-│   └── start.sh                  source ROS, exec atlas_bridge
+│   └── start.sh                  source ROS, exec src_bridge
 ├── src/
 │   └── realsense-ros/            VENDORED IntelRealSense/realsense-ros
 └── .gitignore
@@ -63,6 +63,18 @@ does not create or calibrate the underlying TF transform.
 
 ## Build / run standalone
 
+Build, codegen, and runtime use `/usr/bin/python3` so the Python ABI matches
+the system ROS installation, even when Conda is active. Both CMake Python
+interpreter variables are pinned during colcon builds. When switching from a
+Conda-built workspace, move its generated `build`, `install`, and `log`
+directories aside before rebuilding; changing the shell interpreter alone
+does not replace old ROS overlays. Keep `src` and `rbnx-build/data` intact.
+The vendored camera workspace uses copy installation with
+`AMENT_CMAKE_SYMLINK_INSTALL=OFF`, including incremental rebuilds. Mixing a
+previous copy build with `--symlink-install` makes ament fail with
+`existing path cannot be removed: Is a directory`; the build script explicitly
+resets this CMake option so the existing copy-built workspace remains usable.
+
 ```bash
 bash scripts/build.sh
 bash scripts/start.sh        # registers driver iface, waits for INIT
@@ -73,8 +85,12 @@ To drive Init manually (without rbnx boot): from any robonix gRPC client, call `
 ## Tests
 
 Run the hardware-independent retry smoke tests from this package directory:
-`python3 -m unittest discover -s tests -v`. They cover TF recovery after the old
+`/usr/bin/python3 -m unittest discover -s tests -v`. They cover TF recovery after the old
 60-second deadline, error throttling, and cancellation on shutdown.
+After building, `test_ros_overlay.py` also imports actual native ROS type
+support through the same overlays as `start.sh`, without initializing a ROS
+node or starting a camera. Importing `Parameter` alone does not load its native
+type support and cannot detect a Python ABI mismatch.
 
 ## License
 

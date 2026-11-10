@@ -17,12 +17,12 @@ job). You can also run it by hand against any booted deploy.
 |------|-------------|-----|
 | Webots simulator | Real Webots container, started per run | Exercises ROS topics, sensors, TF, mapping/nav/explore against a simulated robot. |
 | ROS graph | Real ROS topics from the sim and service containers | Catches topic, frame, DDS domain, and map/nav integration issues. |
-| Atlas / executor / pilot | Real binaries from the checked-out ref | Tests registry, dispatch, planning loop, and executor leaf handling. |
+| Src / executor / planner | Real binaries from the checked-out ref | Tests registry, dispatch, planning loop, and executor leaf handling. |
 | Camera / lidar | Real Webots sensor data | Snapshot scenarios assert returned image/point-cloud metadata. |
 | Mapping / nav2 / explore | Real service/skill containers | Scenarios exercise map save, object-derived navigation, and bounded explore status/cancel. |
 | Memory / voiceprint | Real services | Scenarios assert save/search and list behavior. |
 | VLM | Deterministic fake OpenAI-compatible endpoint | Real LLM calls would make CI nondeterministic and require secrets. The fake only scripts RTDL plans. |
-| Scene perception | Real scene service over Webots RGB-D, camera intrinsics, and ConceptGraphs | Scenarios require non-robot objects from the live scene registry and use one as the navigation target. |
+| World perception | Real World service over Webots RGB-D, camera intrinsics, and ConceptGraphs | Scenarios require non-robot objects from the live world registry and use one as the navigation target. |
 | Speech/audio hardware | Real speech service plus audio driver using ALSA `null` devices | The runner has no physical speaker/mic. CI checks TTS-to-speaker and mic/speaker driver wiring through normal ALSA devices, not acoustic output. |
 
 This workflow is therefore not a perception-quality or physical-audio quality
@@ -39,7 +39,7 @@ planning boundary.
 | `scenarios/cap/*.yaml` | single-capability tests. |
 | `scenarios/flow/*.yaml` | multi-step task flows, incl. fault injection + recovery. |
 | `run.py` | runs cap + flow scenarios; writes `logs/<family>.<name>.jsonl`; asserts each RTDL leaf's args/results, fault recovery, and final status; prints coverage. |
-| `run_interfaces.py` | direct atlas/pilot/audio RPC checks; writes `logs/iface.*`. |
+| `run_interfaces.py` | direct src/planner/audio RPC checks; writes `logs/iface.*`. |
 | `report.py` | renders `testing/report/index.html`, Markdown summary, embedded logs, and optional LLM-assisted analysis. |
 | `build_report_from_artifacts.py` | canonical report builder used by both direct Webots workflow runs and ChatOps Pages publishing. |
 | `collect_diagnostic_context.py` | collects bounded PR metadata/diff plus relevant logs for failure/success analysis; it does not upload the whole repository. |
@@ -49,7 +49,7 @@ planning boundary.
 
 Execution order after boot:
 
-1. `testing/run_interfaces.py` checks direct APIs: atlas discovery, pilot task
+1. `testing/run_interfaces.py` checks direct APIs: src discovery, planner task
    submission, and audio gRPC through ALSA `null` devices.
 2. `testing/run.py` runs every YAML scenario under `scenarios/cap/` and
    `scenarios/flow/`.
@@ -87,7 +87,7 @@ sending diagnostic context to the LLM.
 
 ## Why RTDL, not OpenAI tool-calls
 
-Pilot does **not** drive the VLM in OpenAI `tool_calls` mode — it hard-errors on
+Planner does **not** drive the VLM in OpenAI `tool_calls` mode — it hard-errors on
 that (`planner.rs`: "VLM returned tool_calls in RTDL mode"). Instead the
 assistant returns exactly one JSON object in `content` with four keys:
 
@@ -102,16 +102,16 @@ assistant returns exactly one JSON object in `content` with four keys:
 }
 ```
 
-The fake server reads the capability **catalog out of pilot's system prompt**
+The fake server reads the capability **catalog out of planner's system prompt**
 (`- capability_name: tiago_camera.camera_snapshot`). Scenarios must reference
 the exact provider-qualified planner capability name, such as
-`tiago_camera.camera_snapshot` or `scene.scene_list_objects`; the fake VLM does
+`tiago_camera.camera_snapshot` or `world.world_list_objects`; the fake VLM does
 not do suffix or substring resolution.
 
-Pilot feeds RTDL executor feedback back into VLM history as structured
+Planner feeds RTDL executor feedback back into VLM history as structured
 `leaf_result` JSON (`call_id`, `contract_id`, `success`, `output`, `error`). The
 fake VLM advances through ordinary `steps` by observed contract success, not by
-raw request count. If Pilot asks again before a prior result is visible in
+raw request count. If Planner asks again before a prior result is visible in
 history, the fake VLM returns an empty wait RTDL for the already-served step
 instead of resubmitting side-effecting work such as navigation. A step that sets
 `retry_delay_s` is stricter: the fake VLM also requires that step's
@@ -145,16 +145,16 @@ The scenario YAML grammar is defined in `SCENARIO_SPEC.md`. In short:
 
 **Exception injection** is done purely in the scenario: a step calls a real
 capability with invalid args (e.g. a required field omitted) so the leaf
-genuinely fails, then a later step recovers. This drives pilot's real
+genuinely fails, then a later step recovers. This drives planner's real
 replan-on-failure path with no test hooks in production code.
 
 
-## Verify scene map persistence
+## Verify World map persistence
 
-For debugging map save/load regressions, use `testing/verify_scene_map_persistence.py`
-against an already booted Webots deploy. It calls the Scene public map API, then
+For debugging map save/load regressions, use `testing/verify_world_map_persistence.py`
+against an already booted Webots deploy. It calls the World public map API, then
 uses the mapping and sim containers only as verifiers: SQLite `quick_check`,
-RTAB-Map table counts, preview PNG size, metadata, Scene's fresh-occupancy
+RTAB-Map table counts, preview PNG size, metadata, World's fresh-occupancy
 confirmation for the requested load, and a non-empty `/map` must all be valid.
 The report records any width or height difference between the saved preview and
 the live occupancy grid as a diagnostic warning because RTAB-Map may
@@ -162,12 +162,12 @@ re-quantize the grid boundary on load.
 
 ```bash
 # Verify an existing saved map without writing a new artifact.
-python3 testing/verify_scene_map_persistence.py \
+python3 testing/verify_world_map_persistence.py \
   --map-id codex_preview_fix_20260709_191939 \
   --skip-save
 
 # Full save -> inspect artifact -> load -> compare live /map.
-python3 testing/verify_scene_map_persistence.py \
+python3 testing/verify_world_map_persistence.py \
   --map-id manual_apartment_$(date +%Y%m%d_%H%M%S)
 ```
 
@@ -199,7 +199,7 @@ python3 testing/fake_vlm/server.py --port 18421
 ```
 
 The fake VLM logs deterministic prompt byte/four-byte-token estimates for every
-request and returns a streaming `usage` chunk when Pilot requests one. This
+request and returns a streaming `usage` chunk when Planner requests one. This
 makes multi-round prompt regressions visible in `fake_vlm.log` without changing
 the scripted RTDL behavior or calling an external model.
 
@@ -217,9 +217,9 @@ rbnx boot --no-update-check
 Terminal 4, from the repository root, run the checks:
 
 ```bash
-export ROBONIX_ATLAS=127.0.0.1:50051
-python3 testing/run_interfaces.py --server "$ROBONIX_ATLAS"
-python3 testing/run.py --server "$ROBONIX_ATLAS" \
+export ROBONIX_SRC=127.0.0.1:50051
+python3 testing/run_interfaces.py --server "$ROBONIX_SRC"
+python3 testing/run.py --server "$ROBONIX_SRC" \
   --timeout 900 \
   --summary-json /tmp/robonix-local-summary.json
 ```
@@ -227,7 +227,7 @@ python3 testing/run.py --server "$ROBONIX_ATLAS" \
 For a targeted live run:
 
 ```bash
-python3 testing/run.py --server "$ROBONIX_ATLAS" \
+python3 testing/run.py --server "$ROBONIX_SRC" \
   --only object_navigation \
   --timeout 900
 ```
@@ -249,7 +249,7 @@ actions, so another client can preempt or alter the expected result.
 
 `run_interfaces.py` and `run.py` both exit non-zero on failure and write
 per-test traces under `testing/logs/`. `run.py` exits non-zero if any scenario
-fails an assertion or pilot reports FAILED. The coverage section lists every
+fails an assertion or planner reports FAILED. The coverage section lists every
 `contract_id` exercised across the run.
 
 ## Adding coverage with scenario YAML
@@ -269,7 +269,7 @@ Use this checklist:
 1. Find its capability — only `[mode] type = "rpc"` contracts become planner
    tools; `topic_in/out` ones are ROS data channels, not callable.
 2. Read its `.srv` IDL under `capabilities/lib/<area>/srv/` for the arg fields.
-3. Add a scenario whose `steps[].rtdl` mirrors the RTDL tree you want Pilot to
+3. Add a scenario whose `steps[].rtdl` mirrors the RTDL tree you want Planner to
    receive. Put assertions inside each `do.expect`, not in a global footer.
 4. Validate the offline parser and fake-VLM model:
 

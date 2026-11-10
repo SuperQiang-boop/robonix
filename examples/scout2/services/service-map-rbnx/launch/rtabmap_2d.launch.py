@@ -2,7 +2,7 @@
 """RTAB-Map launch — sensor-agnostic, deploy-driven.
 
 The launch file does not assume any sensor combination. It branches on
-which input topics the deploy actually wired up via atlas_bridge's
+which input topics the deploy actually wired up via src_bridge's
 resolved.yaml:
 
     sensors.lidar2d=true   → subscribe_scan          (LaserScan)
@@ -28,7 +28,7 @@ Launch args:
                                                          odometry node
     use_sim_time, enable_viz: standard
 
-Outputs (declared on atlas by atlas_bridge — see _ALGO_TOPIC_BINDINGS):
+Outputs (declared on src by src_bridge — see _ALGO_TOPIC_BINDINGS):
     /map                 nav_msgs/OccupancyGrid (2D, lidar + depth proj)
     /rtabmap/cloud_map   sensor_msgs/PointCloud2 (3D fused cloud)
     /tf                  map→odom transform
@@ -74,7 +74,7 @@ def generate_launch_description():
         DeclareLaunchArgument("navigation_odom_topic", default_value="/odom"),
         DeclareLaunchArgument("navigation_odom_frame", default_value="odom"),
         DeclareLaunchArgument("enable_viz", default_value="false"),
-        # Map persistence (set by atlas_bridge from the deploy's map_id /
+        # Map persistence (set by src_bridge from the deploy's map_id /
         # map_mode config; empty database_path = ephemeral, the legacy
         # behaviour).
         #   map_mode=mapping       build/extend a map at database_path.
@@ -158,7 +158,7 @@ def _make_nodes(context, *args, **kwargs):
         )
 
     # Occupancy-grid source must auto-adapt to the sensors the deploy
-    # actually wired up (via atlas_bridge's resolved.yaml), the same way
+    # actually wired up (via src_bridge's resolved.yaml), the same way
     # the subscriptions below do. Grid/Sensor: 0=laser scan(s) only,
     # 1=depth only, 2=both. A hardcoded "2" assumed a depth camera was
     # always present; on a lidar-only deploy (no RGBD) the depth half has
@@ -292,7 +292,7 @@ def _make_nodes(context, *args, **kwargs):
 
     # RTAB-Map is the mapping engine, not an optional sidecar. If it exits,
     # terminate the launch immediately instead of leaving rtabmap_viz and the
-    # pose adapter alive. Otherwise the package process keeps running and Soma
+    # pose adapter alive. Otherwise the package process keeps running and Robotdesc
     # continues to report Mapping ACTIVE even though /map has no publisher.
     rtabmap_exit_guard = RegisterEventHandler(
         OnProcessExit(

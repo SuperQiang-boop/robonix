@@ -10,7 +10,7 @@ package:
   description: Memsearch MCP server — fact/preference memory for the agent.
   license: MulanPSL-2.0
 
-# Atlas provider_id (matched verbatim by rbnx-boot). Distinct from package.name.
+# Src provider_id (matched verbatim by rbnx-boot). Distinct from package.name.
 
 build: bash scripts/build.sh
 
@@ -20,7 +20,7 @@ start: |
 
   # Self-heal stale milvus locks. memsearch embeds milvus_lite, which
   # holds a shared lock on `agent_milvus.db` for the lifetime of the
-  # python process. If a previous `rbnx boot` run died without atlas
+  # python process. If a previous `rbnx boot` run died without src
   # SIGKILL'ing the entire process group (e.g. when the boot was
   # cancelled while memsearch was importing a slow native lib, or when
   # killpg failed to reach a milvus child that escaped the pgid),

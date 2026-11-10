@@ -88,7 +88,7 @@ workspace and runs all workspace targets.
 
 Run the package-specific tests, build scripts, and smoke tests for Python,
 contracts, code generation, Webots, or hardware-facing changes. Changes that
-cross an Atlas wire protocol, Driver lifecycle, or Python API singleton
+cross an Src wire protocol, Driver lifecycle, or Python API singleton
 boundary require an end-to-end run; compilation alone is not sufficient.
 
 ## Commit messages
@@ -103,8 +103,8 @@ Recommended types are `feat`, `fix`, `docs`, `refactor`, `test`, `perf`, `ci`,
 `build`, and `chore`. Examples:
 
 ```text
-feat(atlas): expose provider health query
-fix(pilot): preserve active plan on steer
+feat(src): expose provider health query
+fix(planner): preserve active plan on steer
 docs: explain package configuration
 ci: check commit authorship
 ```

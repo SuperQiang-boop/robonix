@@ -3,7 +3,7 @@
 # tiago_chassis runtime — docker-exec into the pre-running sim container.
 # Sim must be brought up first by `bash examples/webots/sim/start.sh`.
 #
-# Lifecycle is owned by rbnx/Soma: Driver(CMD_SHUTDOWN), then this package's
+# Lifecycle is owned by rbnx/Robotdesc: Driver(CMD_SHUTDOWN), then this package's
 # manifest stop hook, then wrapper PGID TERM/KILL. Keep start.sh as a foreground
 # docker-exec wrapper so provider stdout/stderr stay connected and failures are
 # visible in rbnx-boot/logs.
@@ -22,7 +22,7 @@ if ! docker ps --format '{{.Names}}' | grep -qx "$SIM_CT"; then
 fi
 
 # Cross-host wiring for an isolated (bridge-network) sim: the driver runs INSIDE
-# the sim container but registers with an atlas on the host, and the host
+# the sim container but registers with an src on the host, and the host
 # executor must dial the driver's MCP endpoint back. Host-network sim containers
 # do not have a bridge IP; Docker may render that as the literal string
 # "invalid IP", so only use the inspected address when it is a valid IPv4.
@@ -48,7 +48,7 @@ resolve_advertise_host() {
 ADVERTISE_HOST="$(resolve_advertise_host)"
 
 exec docker exec \
-  -e ROBONIX_ATLAS="${ROBONIX_SIM_ATLAS:-${ROBONIX_ATLAS:-127.0.0.1:50051}}" \
+  -e ROBONIX_SRC="${ROBONIX_SIM_SRC:-${ROBONIX_SRC:-127.0.0.1:50051}}" \
   -e ROBONIX_ADVERTISE_HOST="$ADVERTISE_HOST" \
   -e ROBONIX_PKG_HOST_DIR="$(cd "$(dirname "$0")/.." && pwd)" \
   -e RMW_IMPLEMENTATION="${RMW_IMPLEMENTATION:-rmw_zenoh_cpp}" \

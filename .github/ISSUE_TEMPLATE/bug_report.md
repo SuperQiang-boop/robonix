@@ -14,12 +14,12 @@ A clear, one-paragraph description of what's wrong.
 Tick the closest match — maintainers confirm the final `comp:*` label.
 
 **System** (core OS services)
-- [ ] atlas (capability registry)
+- [ ] src (capability registry)
 - [ ] executor
-- [ ] pilot (planner / VLM)
-- [ ] liaison (voice / user I/O)
-- [ ] scene (semantic + spatial map)
-- [ ] sentinel (safety) / soma (body model) / scribe (logging) / chronos / keystone / vitals / nexus
+- [ ] planner (planner / VLM)
+- [ ] gateway (voice / user I/O)
+- [ ] world (semantic + spatial map)
+- [ ] sentinel (safety) / robotdesc (body model) / log (logging) / chronos / keystone / monitor / nexus
 
 **Service** (scene-level capabilities)
 - [ ] mapping (`service/map`)

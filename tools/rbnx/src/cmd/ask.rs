@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MulanPSL-2.0
-// `rbnx ask` — non-interactive sibling of `rbnx chat`. Same atlas
+// `rbnx ask` — non-interactive sibling of `rbnx chat`. Same src
 // + SubmitTask gRPC path, but no ratatui shell: prints events to
-// stdout as they arrive and exits when the pilot stream closes.
+// stdout as they arrive and exits when the planner stream closes.
 //
 // Use cases:
-//   * scripted regression / smoke tests that need pilot in the loop
+//   * scripted regression / smoke tests that need planner in the loop
 //     without a human typing into the TUI
 //   * CI / agent-driven runs where stdout is the artifact
 //   * quick one-shot prompts ("describe what's in front of the robot")
@@ -14,18 +14,18 @@
 // it will work in `rbnx chat`, and vice versa.
 
 use anyhow::{Context, Result};
-use robonix_atlas::client::{self as atlas_client, AtlasClient};
+use robonix_src::client::{self as src_client, SrcClient};
 use std::io::{self, Write};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio_stream::StreamExt;
 use tonic::Request;
 use uuid::Uuid;
 
-use crate::pb::contracts::robonix_system_pilot_client::RobonixSystemPilotClient;
-use crate::pb::pilot::rtdl_node_state::RtdlNodeStateEnum;
-use crate::pb::pilot::{CapabilityCall, Plan, Task};
+use crate::pb::contracts::robonix_system_planner_client::RobonixSystemPlannerClient;
+use crate::pb::planner::rtdl_node_state::RtdlNodeStateEnum;
+use crate::pb::planner::{CapabilityCall, Plan, Task};
 
-// PilotEvent.event_kind discriminants — must mirror service.rs / .msg.
+// PlannerEvent.event_kind discriminants — must mirror service.rs / .msg.
 const EVT_TEXT_CHUNK: u32 = 0;
 const EVT_PLAN: u32 = 1;
 const EVT_BATCH_RESULT: u32 = 2;
@@ -36,17 +36,17 @@ const STATE_FAILED: u32 = 2;
 const CONSUMER_ID: &str = "rbnx-cli/ask";
 
 pub async fn execute(server: &str, prompt: &str, json: bool) -> Result<()> {
-    let mut atlas = AtlasClient::connect(server)
+    let mut src = SrcClient::connect(server)
         .await
-        .with_context(|| format!("connect to atlas at '{server}'"))?;
-    let (channel_id, pilot_cap_id, channel) =
-        atlas_client::connect_to_capability(&mut atlas, CONSUMER_ID, "robonix/system/pilot")
+        .with_context(|| format!("connect to src at '{server}'"))?;
+    let (channel_id, planner_cap_id, channel) =
+        src_client::connect_to_capability(&mut src, CONSUMER_ID, "robonix/system/planner")
             .await
-            .context("locate pilot via atlas")?;
+            .context("locate planner via src")?;
     if !json {
-        eprintln!("[ask] connected to pilot '{pilot_cap_id}' (channel {channel_id})");
+        eprintln!("[ask] connected to planner '{planner_cap_id}' (channel {channel_id})");
     }
-    let mut client = RobonixSystemPilotClient::new(channel);
+    let mut client = RobonixSystemPlannerClient::new(channel);
 
     let session_id = Uuid::new_v4().to_string();
     let task = Task {
@@ -70,7 +70,7 @@ pub async fn execute(server: &str, prompt: &str, json: bool) -> Result<()> {
     let mut had_failure = false;
 
     while let Some(event) = stream.next().await {
-        let event = event.context("pilot stream error")?;
+        let event = event.context("planner stream error")?;
         if json {
             // One JSON object per event, line-delimited. Lets callers
             // pipe through `jq` without grappling with the TUI shape.
@@ -214,9 +214,9 @@ pub async fn execute(server: &str, prompt: &str, json: bool) -> Result<()> {
     if last_was_chunk {
         writeln!(out)?;
     }
-    let _ = atlas.disconnect_capability(&channel_id).await;
+    let _ = src.disconnect_capability(&channel_id).await;
     if had_failure {
-        anyhow::bail!("pilot reported FAILED status");
+        anyhow::bail!("planner reported FAILED status");
     }
     Ok(())
 }

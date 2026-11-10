@@ -237,7 +237,7 @@ class TencentRealtimeASRBackend:
         """Hold Tencent's revisable hypothesis until it becomes final.
 
         Tencent sends cumulative snapshots and may rewrite earlier characters
-        between snapshots.  Liaison's stream contract is append-only, so a
+        between snapshots.  Gateway's stream contract is append-only, so a
         revised snapshot cannot be represented as a safe delta (for example
         ``I may`` may become ``I have already...``). Emitting partials would
         concatenate every revision.  Keep only the newest snapshot and emit it

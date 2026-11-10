@@ -5,11 +5,11 @@
 #
 # Owns the `robonix/service/navigation/*` namespace.
 #
-# Lifecycle: start.sh launches the atlas bridge ONLY (no nav2 spawn).
+# Lifecycle: start.sh launches the src bridge ONLY (no nav2 spawn).
 # `rbnx boot` then calls `Driver(CMD_INIT, config_json)` — the handler
 # spawns `ros2 launch nav2_bringup navigation_launch.py params_file:=…`,
 # waits for the `navigate_to_pose` action server to come up, then
-# declares navigate / status / cancel on atlas.
+# declares navigate / status / cancel on src.
 #
 # Capability surface (mode = abstract pattern, transport = wire):
 #   service/navigation/driver    mode=rpc  transport=gRPC  Driver(INIT)

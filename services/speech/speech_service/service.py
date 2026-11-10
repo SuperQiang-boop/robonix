@@ -2,7 +2,7 @@
 """Speech service -- the voice interaction service for Robonix.
 
 Architecture position: robonix/service/speech
-  - Consumes the audio_driver primitive; consumed in turn by skills / pilot
+  - Consumes the audio_driver primitive; consumed in turn by skills / planner
   - Receives raw audio from audio_driver via gRPC, returns transcriptions
   - Receives text from applications, returns synthesized audio (MP3)
 
@@ -33,9 +33,9 @@ Audio adaptation:
   to 16kHz mono pcm_s16le using speech_service.audio_utils.adapt_audio().
   Callers do NOT need to pre-process audio -- the service handles it.
 
-Atlas integration:
-  On startup, the service optionally registers with the Atlas control plane
-  (RegisterService + DeclareCapability x 5). If Atlas is unavailable, the service
+Src integration:
+  On startup, the service optionally registers with the Src control plane
+  (RegisterService + DeclareCapability x 5). If Src is unavailable, the service
   runs in standalone mode. Set SPEECH_STANDALONE=1 to skip registration.
 
 Environment variables:
@@ -50,7 +50,7 @@ Environment variables:
   TENCENTCLOUD_SECRET_ID / TENCENTCLOUD_SECRET_KEY
                      Tencent Cloud credentials when SPEECH_BACKEND=tencent
   TENCENT_ASR_APPID  Tencent Cloud ASR AppID when SPEECH_BACKEND=tencent
-  ROBONIX_ATLAS      Atlas control-plane address (default: localhost:50051)
+  ROBONIX_SRC      Src control-plane address (default: localhost:50051)
   SPEECH_PORT        gRPC listen port, 0 = auto-pick (default: 0)
   SPEECH_BIND_ADDR   gRPC bind address (default: 0.0.0.0)
   SPEECH_BACKEND     Set to mock for local mock backends (no GPU/model needed)
@@ -70,13 +70,13 @@ from concurrent import futures
 from pathlib import Path
 from typing import Iterable, Iterator, Optional, Protocol
 
-# Route all stdlib logging (this module + transitive deps) through Scribe so
+# Route all stdlib logging (this module + transitive deps) through Log so
 # `rbnx logs -t speech` sees everything and the package owns no log file or
 # stdout sink of its own. (robonix_api is pip-installed; only the proto stubs
 # need the sys.path bootstrap below.)
-from robonix_api import scribe_logger  # noqa: E402
+from robonix_api import log_logger  # noqa: E402
 
-scribe_logger.install_stdlib_bridge("speech")
+log_logger.install_stdlib_bridge("speech")
 log = logging.getLogger(__name__)
 
 
@@ -1124,9 +1124,9 @@ class SpeechDialogServicer(SpeechDialogBase):
             self.dialog_manager.remove_session(session.session_id)
 
 
-# -- Atlas registration (optional) -------------------------------------------
-# Registers the speech service with the Robonix Atlas control plane so that
-# other nodes can discover it. If Atlas is unavailable or the runtime protos
+# -- Src registration (optional) -------------------------------------------
+# Registers the speech service with the Robonix Src control plane so that
+# other nodes can discover it. If Src is unavailable or the runtime protos
 # are not installed, the service runs in standalone mode.
 
 from robonix_api import Service, Ok, Err, Deferred  # noqa: E402
@@ -1179,12 +1179,12 @@ speech.attach_grpc_servicer("robonix/service/speech/dialog",     _dialog_service
 
 
 # -- MCP tools: list_speakers + speak (TTS → chosen speaker primitive) -------
-# Let Pilot / RTDL discover audio output devices and make the robot announce
+# Let Planner / RTDL discover audio output devices and make the robot announce
 # text aloud on a chosen speaker. speech here becomes a *consumer* of
-# audio/speaker primitives (find via atlas, stream AudioChunk to its Speaker
+# audio/speaker primitives (find via src, stream AudioChunk to its Speaker
 # client-streaming RPC) — services consuming primitives is normal.
 import json as _json  # noqa: E402
-from robonix_api import ATLAS, Transport  # noqa: E402
+from robonix_api import SRC, Transport  # noqa: E402
 from speech_mcp import (  # noqa: E402
     Speak_Request, Speak_Response,
     ListSpeakers_Request, ListSpeakers_Response,
@@ -1205,10 +1205,10 @@ def _speaker_lock(provider_id: str) -> threading.Lock:
 
 @speech.mcp("robonix/service/speech/list_speakers")
 def list_speakers(req: ListSpeakers_Request) -> ListSpeakers_Response:
-    """List audio output devices (speaker primitives) registered in atlas, so
+    """List audio output devices (speaker primitives) registered in src, so
     you can pick a `target` for speak. Returns a JSON array of
     {provider_id, namespace, description}."""
-    caps = ATLAS.find_capability(
+    caps = SRC.find_capability(
         contract_id=_SPEAKER_CONTRACT,
         namespace_prefix=(req.namespace_prefix or ""),
         transport=Transport.GRPC,
@@ -1236,7 +1236,7 @@ def speak(req: Speak_Request) -> Speak_Response:
     text = (req.text or "").strip()
     if not text:
         raise RuntimeError("empty text")
-    caps = ATLAS.find_capability(contract_id=_SPEAKER_CONTRACT, transport=Transport.GRPC)
+    caps = SRC.find_capability(contract_id=_SPEAKER_CONTRACT, transport=Transport.GRPC)
     target = (req.target or _default_speaker_provider_id).strip()
     if target:
         caps = [c for c in caps if c.provider_id == target]
@@ -1435,7 +1435,7 @@ def init(cfg):
         model_dir = Path(cfg.get("wake_word_model_dir") or package_root / "rbnx-build" / "models" / "sherpa-onnx-kws-zipformer-zh-en-3M-2025-12-20")
         # The default is a distinctive phrase validated with the bundled KWS
         # model and Tencent 16 kHz TTS. Deployments can replace it without
-        # modifying Liaison through `wake_words` or `SPEECH_WAKE_WORDS`.
+        # modifying Gateway through `wake_words` or `SPEECH_WAKE_WORDS`.
         wake_words = _configured_strings(
             cfg.get("wake_words"),
             "SPEECH_WAKE_WORDS",

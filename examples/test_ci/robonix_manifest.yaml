@@ -4,11 +4,11 @@ env:
   LOG: "INFO"
 
 system:
-  atlas:
+  src:
     listen: 127.0.0.1:50051
   executor:
     listen: 127.0.0.1:50061
-  pilot:
+  planner:
     listen: 127.0.0.1:50071
     vlm:
       upstream: ${VLM_BASE_URL}

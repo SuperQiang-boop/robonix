@@ -27,10 +27,10 @@ done
 
 case "$TIAGO_VARIANT" in
   lite)
-    export ROBONIX_SOMA_ROBOT_YAML="$SCRIPT_DIR/soma.yaml"
+    export ROBONIX_ROBOTDESC_ROBOT_YAML="$SCRIPT_DIR/robotdesc.yaml"
     ;;
   full)
-    export ROBONIX_SOMA_ROBOT_YAML="$SCRIPT_DIR/soma.full.yaml"
+    export ROBONIX_ROBOTDESC_ROBOT_YAML="$SCRIPT_DIR/robotdesc.full.yaml"
     ;;
   *)
     echo "[webots/boot] unsupported TIAGo variant: $TIAGO_VARIANT (choose lite or full)" >&2
@@ -40,5 +40,5 @@ esac
 
 export ROBONIX_TIAGO_VARIANT="$TIAGO_VARIANT"
 echo "[webots/boot] using TIAGo variant: $ROBONIX_TIAGO_VARIANT"
-echo "[webots/boot] using Soma robot YAML: $ROBONIX_SOMA_ROBOT_YAML"
+echo "[webots/boot] using Robotdesc robot YAML: $ROBONIX_ROBOTDESC_ROBOT_YAML"
 exec rbnx boot -f "$SCRIPT_DIR/robonix_manifest.yaml" "${RBNX_ARGS[@]}"

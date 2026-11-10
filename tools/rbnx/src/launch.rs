@@ -2,35 +2,35 @@
 //
 // Cross-component package bring-up primitives.
 //
-// `rbnx boot` and Soma both need to: spawn a package process, wait for it
-// to register a CapabilityProvider on Atlas, optionally find that
+// `rbnx boot` and Robotdesc both need to: spawn a package process, wait for it
+// to register a CapabilityProvider on Src, optionally find that
 // provider's `*/driver` capability, and drive `Driver(CMD_INIT)` /
 // `Driver(CMD_ACTIVATE)` over gRPC. Historically this lived entirely
 // inside `cmd::deploy.rs` and was tangled with terminal UI (`output::*`).
 //
 // This module exposes the **pure** parts of that flow as crate-public
-// helpers so Soma (which orchestrates primitive/skill bring-up at
+// helpers so Robotdesc (which orchestrates primitive/skill bring-up at
 // runtime) can do exactly the same lifecycle dance without copy-pasting
 // the timeout / channel-hygiene / FSM-step logic. The UI side stays
-// inside `cmd::deploy` — Soma logs via `scribe` instead.
+// inside `cmd::deploy` — Robotdesc logs via `log` instead.
 //
 // What's here vs what's not:
-//   * `wait_for_registration_core` — atlas-side poll loop, no UI. Accepts
+//   * `wait_for_registration_core` — src-side poll loop, no UI. Accepts
 //     the expected provider's pre-spawn registration fingerprint so callers
 //     can recognize either a new id or a same-id endpoint takeover. Returns
 //     `(provider_id, driver_contract)`.
 //   * `call_driver_cmd` — one Driver(cmd) RPC against a freshly-connected
 //     channel, no UI. Returns the response's `state` string.
 //   * `CMD_*` constants and the `DRIVER_*_TIMEOUT` values — single source
-//     of truth so rbnx + soma agree on the deadlines.
+//     of truth so rbnx + robotdesc agree on the deadlines.
 //   * `contract_id_to_service_name` — mirrors codegen's PascalCase rule,
-//     needed by both the rbnx CLI and Soma to assemble the
+//     needed by both the rbnx CLI and Robotdesc to assemble the
 //     `/robonix.contracts.<Name>/Driver` gRPC path.
 //
 // What's NOT here:
 //   * `spawn_package` — depends on `cmd::install` / `cmd::run` / the
 //     manifest-driven start.sh wrapper, which is a heavy subtree we
-//     don't want to drag into Soma. Soma spawns packages through its
+//     don't want to drag into Robotdesc. Robotdesc spawns packages through its
 //     own `ProcessManager` (existing) and only borrows the *post-spawn*
 //     bookkeeping from here.
 //   * Terminal output (spinners, ok/fail lines) — these are
@@ -38,14 +38,14 @@
 //     module compiles in any caller that doesn't want a TTY.
 //
 // Stability: this is an *internal* crate boundary between rbnx-cli and
-// Soma; both are workspace members and bumped together. The API is
+// Robotdesc; both are workspace members and bumped together. The API is
 // free to evolve as long as we keep the two callers in sync.
 
 use crate::pb::lifecycle::{DriverRequest, DriverResponse};
 use anyhow::{Context, Result};
-use robonix_atlas::client::AtlasClient;
-use robonix_atlas::pb as atlas_pb;
-use robonix_scribe::{info, warn};
+use robonix_log::{info, warn};
+use robonix_src::client::SrcClient;
+use robonix_src::pb as src_pb;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::path::PathBuf;
@@ -65,7 +65,7 @@ pub const CMD_DEACTIVATE: u32 = 2;
 pub const CMD_SHUTDOWN: u32 = 3;
 
 /// Max time we'll wait for a freshly spawned package to register its
-/// driver capability with atlas before giving up.
+/// driver capability with src before giving up.
 pub const DRIVER_REGISTER_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Max time we'll wait for one `Driver(CMD_*)` RPC to return. 90s gives
@@ -75,19 +75,19 @@ pub const DRIVER_REGISTER_TIMEOUT: Duration = Duration::from_secs(60);
 /// than racing the CLI deadline.
 pub const DRIVER_INIT_TIMEOUT: Duration = Duration::from_secs(90);
 
-/// Consumer id used by both rbnx-cli (deploy) and Soma when opening
-/// channels to call `Driver(...)` during boot. Atlas just records the
-/// edge for bookkeeping — the id is only ever read in `inspect_atlas`
+/// Consumer id used by both rbnx-cli (deploy) and Robotdesc when opening
+/// channels to call `Driver(...)` during boot. Src just records the
+/// edge for bookkeeping — the id is only ever read in `inspect_src`
 /// output, so we keep one stable string instead of inventing per-caller
 /// ones (would only add noise).
 pub const BOOT_CONSUMER_ID: &str = "rbnx-cli/deploy";
 
 /// Runtime-owned process and lifecycle metadata for one package wrapper.
 ///
-/// Both `rbnx boot` and Soma spawn long-lived `rbnx start -p` wrappers.
+/// Both `rbnx boot` and Robotdesc spawn long-lived `rbnx start -p` wrappers.
 /// Shutdown must be ordered the same way in both callers: provider lifecycle,
 /// package stop hook, process-group fallback. Keeping the record here prevents
-/// Soma and rbnx from growing divergent cleanup semantics.
+/// Robotdesc and rbnx from growing divergent cleanup semantics.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct PackageRuntimeRecord {
     pub name: String,
@@ -109,12 +109,12 @@ pub struct PackageRuntimeRecord {
 /// Stop one package runtime using the canonical shutdown order:
 /// Driver(CMD_SHUTDOWN) -> manifest stop -> TERM PGID -> KILL PGID.
 pub async fn shutdown_package_runtime(
-    atlas_endpoint: Option<&str>,
+    src_endpoint: Option<&str>,
     record: &PackageRuntimeRecord,
     term_wait: Duration,
 ) {
     if let (Some(endpoint), Some(provider_id), Some(driver_contract)) = (
-        atlas_endpoint,
+        src_endpoint,
         record.provider_id.as_deref(),
         record.driver_contract.as_deref(),
     ) {
@@ -123,11 +123,11 @@ pub async fn shutdown_package_runtime(
         } else {
             format!("http://{endpoint}")
         };
-        match AtlasClient::connect(&normalized).await {
-            Ok(mut atlas) => {
+        match SrcClient::connect(&normalized).await {
+            Ok(mut src) => {
                 let config_json = record.config_json.clone().unwrap_or_else(|| "{}".into());
                 match call_driver_cmd(
-                    &mut atlas,
+                    &mut src,
                     provider_id,
                     driver_contract,
                     CMD_SHUTDOWN,
@@ -147,7 +147,7 @@ pub async fn shutdown_package_runtime(
                 }
             }
             Err(e) => warn!(
-                "shutdown {} could not connect atlas at {}: {e:#}",
+                "shutdown {} could not connect src at {}: {e:#}",
                 record.name, normalized
             ),
         }
@@ -159,7 +159,7 @@ pub async fn shutdown_package_runtime(
         .map(str::trim)
         .filter(|s| !s.is_empty())
     {
-        run_package_stop_hook(record, stop, atlas_endpoint).await;
+        run_package_stop_hook(record, stop, src_endpoint).await;
     }
 
     terminate_process_group(record.pgid, term_wait).await;
@@ -168,7 +168,7 @@ pub async fn shutdown_package_runtime(
 async fn run_package_stop_hook(
     record: &PackageRuntimeRecord,
     stop: &str,
-    atlas_endpoint: Option<&str>,
+    src_endpoint: Option<&str>,
 ) {
     let Some(package_dir) = record.package_dir.as_deref() else {
         warn!("shutdown {} has stop hook but no package_dir", record.name);
@@ -181,8 +181,8 @@ async fn run_package_stop_hook(
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
-    if let Some(endpoint) = atlas_endpoint {
-        cmd.env("ROBONIX_ATLAS", endpoint);
+    if let Some(endpoint) = src_endpoint {
+        cmd.env("ROBONIX_SRC", endpoint);
     }
     match tokio::time::timeout(Duration::from_secs(20), cmd.status()).await {
         Ok(Ok(status)) if status.success() => {
@@ -268,7 +268,7 @@ fn process_is_not_zombie(pid: u32) -> bool {
 /// `RobonixPrimitiveChassisDriver`. No prefix stripping. Full gRPC
 /// service path: `/robonix.contracts.<this>/Driver`.
 ///
-/// Lifted out of `cmd::deploy` so Soma can build the same gRPC URLs
+/// Lifted out of `cmd::deploy` so Robotdesc can build the same gRPC URLs
 /// without re-implementing the rule (which would drift).
 pub fn contract_id_to_service_name(id: &str) -> String {
     id.split('/')
@@ -290,7 +290,7 @@ pub fn contract_id_to_service_name(id: &str) -> String {
 
 /// One declared capability's stable registration identity.
 ///
-/// Atlas Query intentionally omits resolved endpoints, so fingerprint capture
+/// Src Query intentionally omits resolved endpoints, so fingerprint capture
 /// opens a metadata-only ConnectCapability probe and immediately disconnects
 /// it. The probe never dials the provider process itself.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -311,9 +311,9 @@ struct ProviderRegistrationFingerprint {
 /// Comparing endpoint fingerprints distinguishes the dynamic-port takeover
 /// used by package wrappers without relying on heartbeat or lifecycle state,
 /// both of which change during ordinary operation. A takeover that reuses the
-/// exact same fixed endpoint cannot be distinguished if polling misses Atlas's
+/// exact same fixed endpoint cannot be distinguished if polling misses Src's
 /// brief endpoint-clear interval; that is an explicit boundary of the current
-/// Atlas read protocol.
+/// Src read protocol.
 #[derive(Debug, Clone)]
 pub struct ProviderRegistrationSnapshot {
     expected_provider_id: String,
@@ -325,7 +325,7 @@ enum FingerprintRead {
     Retry,
 }
 
-fn atlas_not_found(error: &anyhow::Error) -> bool {
+fn src_not_found(error: &anyhow::Error) -> bool {
     error
         .chain()
         .filter_map(|cause| cause.downcast_ref::<tonic::Status>())
@@ -340,11 +340,11 @@ fn atlas_not_found(error: &anyhow::Error) -> bool {
 /// that successfully opens a channel disconnects it before this function can
 /// return, including when a later probe encounters an error.
 async fn read_provider_fingerprint(
-    atlas: &mut AtlasClient,
+    src: &mut SrcClient,
     expected_provider_id: &str,
 ) -> Result<FingerprintRead> {
-    let providers = atlas
-        .query_capabilities(expected_provider_id, "", atlas_pb::Transport::Unspecified)
+    let providers = src
+        .query_capabilities(expected_provider_id, "", src_pb::Transport::Unspecified)
         .await
         .with_context(|| format!("query expected provider '{expected_provider_id}'"))?;
     let Some(provider) = providers
@@ -356,9 +356,9 @@ async fn read_provider_fingerprint(
 
     let mut capabilities = BTreeSet::new();
     for capability in provider.capabilities {
-        let transport = atlas_pb::Transport::try_from(capability.transport)
-            .unwrap_or(atlas_pb::Transport::Unspecified);
-        let connected = atlas
+        let transport = src_pb::Transport::try_from(capability.transport)
+            .unwrap_or(src_pb::Transport::Unspecified);
+        let connected = src
             .connect_capability(
                 BOOT_CONSUMER_ID,
                 expected_provider_id,
@@ -368,7 +368,7 @@ async fn read_provider_fingerprint(
             .await;
         let (channel_id, endpoint, _params) = match connected {
             Ok(binding) => binding,
-            Err(error) if atlas_not_found(&error) => return Ok(FingerprintRead::Retry),
+            Err(error) if src_not_found(&error) => return Ok(FingerprintRead::Retry),
             Err(error) => {
                 return Err(error).with_context(|| {
                     format!(
@@ -378,13 +378,13 @@ async fn read_provider_fingerprint(
                 });
             }
         };
-        let disconnected = atlas
+        let disconnected = src
             .disconnect_capability(&channel_id)
             .await
             .with_context(|| format!("disconnect registration probe '{channel_id}'"))?;
         if !disconnected {
             // A same-id takeover auto-drops old channels. The probe has no
-            // remaining Atlas state, but its endpoint sample is no longer a
+            // remaining Src state, but its endpoint sample is no longer a
             // stable view of the current registration.
             return Ok(FingerprintRead::Retry);
         }
@@ -405,7 +405,7 @@ async fn read_provider_fingerprint(
 
 /// Snapshot one manifest-expected provider before spawning its package.
 pub async fn snapshot_provider_registration(
-    atlas: &mut AtlasClient,
+    src: &mut SrcClient,
     expected_provider_id: &str,
 ) -> Result<ProviderRegistrationSnapshot> {
     // A concurrent takeover can invalidate Query before the endpoint probes.
@@ -413,7 +413,7 @@ pub async fn snapshot_provider_registration(
     // yet, so a small bounded retry is sufficient to obtain a stable baseline.
     const SNAPSHOT_ATTEMPTS: usize = 4;
     for _ in 0..SNAPSHOT_ATTEMPTS {
-        match read_provider_fingerprint(atlas, expected_provider_id).await? {
+        match read_provider_fingerprint(src, expected_provider_id).await? {
             FingerprintRead::Stable(fingerprint) => {
                 return Ok(ProviderRegistrationSnapshot {
                     expected_provider_id: expected_provider_id.to_string(),
@@ -424,7 +424,7 @@ pub async fn snapshot_provider_registration(
         }
     }
     anyhow::bail!(
-        "pre-spawn atlas snapshot for '{expected_provider_id}' changed during endpoint probes"
+        "pre-spawn src snapshot for '{expected_provider_id}' changed during endpoint probes"
     )
 }
 
@@ -450,12 +450,12 @@ pub struct RegistrationOutcome {
     pub driver_contract: Option<String>,
 }
 
-/// Poll Atlas until the expected provider appears or changes its endpoint
+/// Poll Src until the expected provider appears or changes its endpoint
 /// fingerprint, then briefly settle for its `*/driver` gRPC capability.
 ///
 /// No terminal UI — pure RPC + sleep loop. Callers that want spinner /
 /// boot_progress output (rbnx CLI) wrap this with their own decorator.
-/// Soma calls it directly and logs through scribe.
+/// Robotdesc calls it directly and logs through log.
 ///
 /// Errors:
 ///   * timeout (the expected registration did not change before
@@ -466,12 +466,12 @@ pub struct RegistrationOutcome {
 /// `who` is a free-form label included in error messages so the caller
 /// can tell which spawn this poll belonged to.
 pub async fn wait_for_registration_core(
-    atlas: &mut AtlasClient,
+    src: &mut SrcClient,
     before: &ProviderRegistrationSnapshot,
     who: &str,
 ) -> Result<RegistrationOutcome> {
     // Poll cadence is decoupled from any spinner refresh: we just sleep
-    // 200ms between Atlas queries. That's the same cadence the CLI used
+    // 200ms between Src queries. That's the same cadence the CLI used
     // (one query per 2 spinner ticks at 100ms/tick).
     const POLL_INTERVAL: Duration = Duration::from_millis(200);
     let started = Instant::now();
@@ -484,9 +484,9 @@ pub async fn wait_for_registration_core(
                 before.expected_provider_id,
             );
         }
-        let current = match read_provider_fingerprint(atlas, &before.expected_provider_id)
+        let current = match read_provider_fingerprint(src, &before.expected_provider_id)
             .await
-            .with_context(|| format!("[{who}] poll atlas"))?
+            .with_context(|| format!("[{who}] poll src"))?
         {
             FingerprintRead::Stable(current) => current,
             FingerprintRead::Retry => {
@@ -511,7 +511,7 @@ pub async fn wait_for_registration_core(
             let mut current = first.clone();
             let driver_contract = loop {
                 let driver = current.capabilities.iter().find(|cap| {
-                    cap.transport == atlas_pb::Transport::Grpc as i32
+                    cap.transport == src_pb::Transport::Grpc as i32
                         && cap.contract_id.ends_with("/driver")
                 });
                 if driver.is_some() {
@@ -521,7 +521,7 @@ pub async fn wait_for_registration_core(
                     break None;
                 }
                 tokio::time::sleep(Duration::from_millis(100)).await;
-                match read_provider_fingerprint(atlas, &provider_id)
+                match read_provider_fingerprint(src, &provider_id)
                     .await
                     .with_context(|| format!("[{who}] re-poll for driver"))?
                 {
@@ -540,7 +540,7 @@ pub async fn wait_for_registration_core(
                     }
                     FingerprintRead::Stable(None) => {
                         // Provider vanished between the original match
-                        // and now (crashed mid-settle, atlas evicted,
+                        // and now (crashed mid-settle, src evicted,
                         // heartbeat lapsed). Caller's downstream logic
                         // would silently treat "no driver" as fine and
                         // march on against a dead process; instead fail
@@ -563,13 +563,13 @@ pub async fn wait_for_registration_core(
 /// Issue one `Driver(cmd)` RPC against a freshly-connected channel, then
 /// release the channel. Returns the response's `state` string on success;
 /// bails when ok=false or the RPC itself fails. Mirrors rbnx-cli's boot
-/// behaviour for both CMD_INIT and CMD_ACTIVATE so Soma drives the same
+/// behaviour for both CMD_INIT and CMD_ACTIVATE so Robotdesc drives the same
 /// lifecycle transitions.
 ///
 /// `who` shows up in every error message so callers can attribute
 /// failures to a specific package without re-wrapping each return.
 pub async fn call_driver_cmd(
-    atlas: &mut AtlasClient,
+    src: &mut SrcClient,
     provider_id: &str,
     driver_contract: &str,
     cmd: u32,
@@ -583,12 +583,12 @@ pub async fn call_driver_cmd(
         CMD_SHUTDOWN => "SHUTDOWN",
         _ => "?",
     };
-    let (channel_id, endpoint, _params) = atlas
+    let (channel_id, endpoint, _params) = src
         .connect_capability(
             BOOT_CONSUMER_ID,
             provider_id,
             driver_contract,
-            atlas_pb::Transport::Grpc,
+            src_pb::Transport::Grpc,
         )
         .await
         .with_context(|| format!("[{who}] ConnectCapability for {driver_contract}"))?;
@@ -633,9 +633,9 @@ pub async fn call_driver_cmd(
         Ok::<_, anyhow::Error>(resp.into_inner())
     }
     .await;
-    // Always disconnect, even on error — Atlas counts open channels and
+    // Always disconnect, even on error — Src counts open channels and
     // we don't want them to leak when boot races a half-up provider.
-    let _ = atlas.disconnect_capability(&channel_id).await;
+    let _ = src.disconnect_capability(&channel_id).await;
     let r = result.map_err(|e| anyhow::anyhow!("[{who}] Driver(CMD_{cmd_name}): {e:#}"))?;
     if !r.ok {
         anyhow::bail!(
@@ -654,9 +654,9 @@ mod registration_tests {
         ProviderRegistrationSnapshot, changed_expected_registration,
         snapshot_provider_registration, wait_for_registration_core,
     };
-    use robonix_atlas::client::{AtlasClient, grpc_params};
-    use robonix_atlas::pb;
-    use robonix_atlas::service::{AtlasRegistry, serve_atlas};
+    use robonix_src::client::{SrcClient, grpc_params};
+    use robonix_src::pb;
+    use robonix_src::service::{SrcRegistry, serve_src};
     use std::collections::BTreeSet;
     use std::sync::Arc;
     use std::time::Duration;
@@ -762,53 +762,51 @@ mod registration_tests {
         );
     }
 
-    /// Takeover waits through Atlas' capability gap until the new driver appears.
+    /// Takeover waits through Src' capability gap until the new driver appears.
     #[tokio::test]
     async fn same_id_takeover_waits_for_driver_declared_during_settle() {
-        let probe = std::net::TcpListener::bind("127.0.0.1:0").expect("bind Atlas probe");
-        let atlas_addr = probe.local_addr().expect("Atlas probe address");
+        let probe = std::net::TcpListener::bind("127.0.0.1:0").expect("bind Src probe");
+        let src_addr = probe.local_addr().expect("Src probe address");
         drop(probe);
 
-        let registry = Arc::new(AtlasRegistry::default());
-        let server = tokio::spawn(serve_atlas(Arc::clone(&registry), atlas_addr));
-        let endpoint = format!("http://{atlas_addr}");
-        let mut atlas = AtlasClient::connect_with_retry(&endpoint, 20, Duration::from_millis(25))
+        let registry = Arc::new(SrcRegistry::default());
+        let server = tokio::spawn(serve_src(Arc::clone(&registry), src_addr));
+        let endpoint = format!("http://{src_addr}");
+        let mut src = SrcClient::connect_with_retry(&endpoint, 20, Duration::from_millis(25))
             .await
-            .expect("connect test Atlas");
+            .expect("connect test Src");
 
-        atlas
-            .register_primitive(EXPECTED_ID, "robonix/primitive/health", "")
+        src.register_primitive(EXPECTED_ID, "robonix/primitive/health", "")
             .await
             .expect("register old provider");
-        atlas
-            .declare_capability(
-                EXPECTED_ID,
-                DRIVER_CONTRACT,
-                pb::Transport::Grpc,
-                "127.0.0.1:34001",
-                grpc_params("", "", ""),
-            )
-            .await
-            .expect("declare old driver");
-        let before = snapshot_provider_registration(&mut atlas, EXPECTED_ID)
+        src.declare_capability(
+            EXPECTED_ID,
+            DRIVER_CONTRACT,
+            pb::Transport::Grpc,
+            "127.0.0.1:34001",
+            grpc_params("", "", ""),
+        )
+        .await
+        .expect("declare old driver");
+        let before = snapshot_provider_registration(&mut src, EXPECTED_ID)
             .await
             .expect("snapshot old provider");
         let inspect: serde_json::Value = serde_json::from_str(
             &registry
                 .inspect_json()
                 .await
-                .expect("inspect Atlas after snapshot"),
+                .expect("inspect Src after snapshot"),
         )
-        .expect("parse Atlas inspection");
+        .expect("parse Src inspection");
         assert_eq!(
             inspect["channels"]
                 .as_object()
                 .map(|channels| channels.len()),
             Some(0),
-            "registration fingerprint probes must disconnect every Atlas channel",
+            "registration fingerprint probes must disconnect every Src channel",
         );
 
-        let mut takeover_client = atlas.clone();
+        let mut takeover_client = src.clone();
         let takeover = tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(50)).await;
             takeover_client
@@ -830,7 +828,7 @@ mod registration_tests {
 
         let outcome = tokio::time::timeout(
             Duration::from_secs(3),
-            wait_for_registration_core(&mut atlas, &before, "primitive/health_piper"),
+            wait_for_registration_core(&mut src, &before, "primitive/health_piper"),
         )
         .await
         .expect("registration wait must not reach the 60s production timeout")

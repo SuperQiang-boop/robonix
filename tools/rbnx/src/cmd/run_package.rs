@@ -4,16 +4,16 @@
 // Dev-packaging contract: one package has ONE top-level `start` shell body
 // (not a list of nodes). `rbnx start` just executes that body at the
 // package root — the body itself is responsible for spawning processes
-// and registering capabilities with atlas. No node-id flag.
+// and registering capabilities with src. No node-id flag.
 
 use super::build;
 use anyhow::{Context, Result};
-use robonix_atlas::client::AtlasClient;
-use robonix_atlas::pb as atlas_pb;
 use robonix_cli::Config;
 use robonix_cli::manifest;
 use robonix_cli::output;
 use robonix_cli::process::ProcessManager;
+use robonix_src::client::SrcClient;
+use robonix_src::pb as src_pb;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -273,7 +273,7 @@ fn build_deploy_manifest(
     // `system:` non-builtin entries are real packages too (memory / scene
     // / speech / …), they just live under `<robonix_source>/system/<key>/`
     // instead of being declared with an explicit `path:` / `url:`. The
-    // builtin Rust binaries (atlas / executor / soma / pilot / vitals / liaison) are
+    // builtin Rust binaries (src / executor / robotdesc / planner / monitor / gateway) are
     // shipped via `cargo install` and skipped here.
     if let Some(map) = root.get("system").and_then(|v| v.as_mapping()) {
         let source_root = config.robonix_source_path.as_ref();
@@ -589,15 +589,15 @@ pub async fn execute_start(
 
     // Per-package run logs live under <pkg>/rbnx-build/logs (gitignored,
     // owned by the package itself).  When `rbnx boot` spawns us, it sets
-    // $SCRIBE_LOG_DIR to the deploy log dir — respect that so boot-time
+    // $ROBONIX_LOG_DIR to the deploy log dir — respect that so boot-time
     // logs stay under `rbnx-boot/logs/` for `rbnx logs` to find.
-    let log_dir = std::env::var("SCRIBE_LOG_DIR")
+    let log_dir = std::env::var("ROBONIX_LOG_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|_| package_root.join("rbnx-build").join("logs"));
     let process_manager = ProcessManager::new(log_dir.clone())?;
 
     output::action("Running", &manifest.package.name);
-    output::sub_step(&format!("Atlas endpoint: {}", endpoint));
+    output::sub_step(&format!("Src endpoint: {}", endpoint));
     if !manifest.capabilities.is_empty() {
         output::sub_step(&format!(
             "Capabilities: {}",
@@ -611,8 +611,8 @@ pub async fn execute_start(
     }
 
     let mut env = std::collections::HashMap::new();
-    env.insert("ROBONIX_ATLAS".to_string(), endpoint.clone());
-    env.insert("SCRIBE_LOG_DIR".to_string(), log_dir.display().to_string());
+    env.insert("ROBONIX_SRC".to_string(), endpoint.clone());
+    env.insert("ROBONIX_LOG_DIR".to_string(), log_dir.display().to_string());
     if materialized_cfg_json.is_some() {
         output::sub_step("Config: will deliver via Driver(CMD_INIT) post-register");
     }
@@ -661,19 +661,19 @@ pub async fn execute_start(
         format!("{}; {start_body}", prefix_parts.join("; "))
     };
 
-    // Post-spawn task: wait for the provider to register with atlas, then
+    // Post-spawn task: wait for the provider to register with src, then
     // send Driver(CMD_INIT, config_json=<materialized>). The provider
-    // process never sees the JSON anywhere — atlas + this gRPC call
+    // process never sees the JSON anywhere — src + this gRPC call
     // is the only delivery path. Skipped when no --config / --set was
     // given (rbnx start without config = run package as-is, init with
     // default empty config).
     let init_task = if let Some(json) = materialized_cfg_json {
-        // One package = one provider. Snapshot atlas, then post-spawn diff
+        // One package = one provider. Snapshot src, then post-spawn diff
         // gives the new provider_id.
         let endpoint_for_task = endpoint.clone();
-        let before_snapshot = match AtlasClient::connect(&endpoint).await {
+        let before_snapshot = match SrcClient::connect(&endpoint).await {
             Ok(mut a) => a
-                .query_capabilities("", "", atlas_pb::Transport::Unspecified)
+                .query_capabilities("", "", src_pb::Transport::Unspecified)
                 .await
                 .map(|providers| providers.into_iter().map(|r| r.id).collect::<HashSet<_>>())
                 .unwrap_or_default(),
@@ -686,7 +686,7 @@ pub async fn execute_start(
         None
     };
 
-    // Scribe tag = the per-INSTANCE provider id, never the package name. A
+    // Log tag = the per-INSTANCE provider id, never the package name. A
     // single package (one `package.name`) can be deployed as N instances, each
     // with a distinct provider id; tagging by package.name would collide them
     // all into one log. `rbnx boot` passes the instance's provider id via
@@ -756,24 +756,24 @@ fn driver_init_timeout() -> Duration {
         .unwrap_or(DEFAULT_DRIVER_INIT_TIMEOUT)
 }
 
-/// Wait for the new provider (any provider not in `before`) to appear in atlas with a
+/// Wait for the new provider (any provider not in `before`) to appear in src with a
 /// `*/driver` gRPC capability, then call Driver(CMD_INIT, config_json). One
 /// package = one provider. Gives up after 60s; `rbnx start` keeps the package
 /// running regardless.
 async fn drive_cmd_init_after_register(
-    atlas_endpoint: &str,
+    src_endpoint: &str,
     before: &HashSet<String>,
     config_json: String,
 ) {
-    let normalized = if atlas_endpoint.starts_with("http") {
-        atlas_endpoint.to_string()
+    let normalized = if src_endpoint.starts_with("http") {
+        src_endpoint.to_string()
     } else {
-        format!("http://{atlas_endpoint}")
+        format!("http://{src_endpoint}")
     };
-    let mut atlas = match AtlasClient::connect(&normalized).await {
+    let mut src = match SrcClient::connect(&normalized).await {
         Ok(c) => c,
         Err(e) => {
-            output::warning(&format!("CMD_INIT delivery: connect atlas failed: {e:#}"));
+            output::warning(&format!("CMD_INIT delivery: connect src failed: {e:#}"));
             return;
         }
     };
@@ -786,8 +786,8 @@ async fn drive_cmd_init_after_register(
             ));
             return;
         }
-        let providers = match atlas
-            .query_capabilities("", "", atlas_pb::Transport::Unspecified)
+        let providers = match src
+            .query_capabilities("", "", src_pb::Transport::Unspecified)
             .await
         {
             Ok(r) => r,
@@ -802,7 +802,7 @@ async fn drive_cmd_init_after_register(
             continue;
         };
         let driver_cap = provider.capabilities.iter().find(|c| {
-            c.transport == atlas_pb::Transport::Grpc as i32 && c.contract_id.ends_with("/driver")
+            c.transport == src_pb::Transport::Grpc as i32 && c.contract_id.ends_with("/driver")
         });
         let Some(driver) = driver_cap else {
             tokio::time::sleep(POLL_INTERVAL).await;
@@ -811,7 +811,7 @@ async fn drive_cmd_init_after_register(
         let driver_contract = driver.contract_id.clone();
         let provider_id = provider.id.clone();
         match call_driver_init(
-            &mut atlas,
+            &mut src,
             &provider_id,
             &driver_contract,
             config_json.clone(),
@@ -835,17 +835,17 @@ async fn drive_cmd_init_after_register(
 /// gRPC capability. Mirrors deploy.rs's call_driver_cmd but inlined to
 /// keep run_package.rs free of cross-module coupling.
 async fn call_driver_init(
-    atlas: &mut AtlasClient,
+    src: &mut SrcClient,
     provider_id: &str,
     driver_contract: &str,
     config_json: String,
 ) -> Result<String> {
-    let (channel_id, endpoint, _params) = atlas
+    let (channel_id, endpoint, _params) = src
         .connect_capability(
             "rbnx-cli/start",
             provider_id,
             driver_contract,
-            atlas_pb::Transport::Grpc,
+            src_pb::Transport::Grpc,
         )
         .await
         .with_context(|| format!("ConnectCapability({driver_contract})"))?;
@@ -891,7 +891,7 @@ async fn call_driver_init(
         Ok::<_, anyhow::Error>(resp.into_inner())
     }
     .await;
-    let _ = atlas.disconnect_capability(&channel_id).await;
+    let _ = src.disconnect_capability(&channel_id).await;
     let r = result?;
     if !r.ok {
         anyhow::bail!(

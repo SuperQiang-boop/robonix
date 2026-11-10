@@ -33,11 +33,11 @@ steps:
       children:
         - op: do
           id: list_scene_objects
-          cap: scene.scene_list_objects
+          cap: world.world_list_objects
           args: {}
           description: return the current scene object registry
           expect:
-            contract: robonix/system/scene/list_objects
+            contract: robonix/system/world/list_objects
             success: true
             output:
               checks:
@@ -65,12 +65,12 @@ steps:
       children:
         - op: do
           id: goal_near_object
-          cap: scene.scene_goal_near
+          cap: world.world_goal_near
           args:
             object_id: {var: object_id}
           description: compute an approach pose near the selected real object
           expect:
-            contract: robonix/system/scene/goal_near
+            contract: robonix/system/world/goal_near
             success: true
             output:
               json: {reachable: true}

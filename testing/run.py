@@ -1,18 +1,18 @@
 # SPDX-License-Identifier: MulanPSL-2.0
 """Run the robonix CI capability + flow scenarios against a live deploy.
 
-Assumes the stack is already booted (real Webots sim + real atlas/executor/
-pilot/components) with pilot pointed at the fake VLM (``VLM_BASE_URL`` →
+Assumes the stack is already booted (real Webots sim + real src/executor/
+planner/components) with planner pointed at the fake VLM (``VLM_BASE_URL`` →
 fake_vlm/server.py). Two scenario families live under ``scenarios/``:
 
   cap/   single-capability tests — "tool X is dispatched and succeeds".
   flow/  multi-step task flows, including **exception injection**: a step
          calls a capability with bad args so the leaf genuinely fails, the
          next scripted round recovers, and we assert the task still finishes.
-         This exercises pilot's replan-on-failure path deterministically.
+         This exercises planner's replan-on-failure path deterministically.
 
 For each scenario this submits the task with ``rbnx ask <task> --json``, writes
-the full PilotEvent stream to ``logs/<name>.jsonl`` (every run is recorded), and
+the full PlannerEvent stream to ``logs/<name>.jsonl`` (every run is recorded), and
 asserts each RTDL ``do`` node produced its declared executor leaf and the task
 reached ``done``. Assertions live on the RTDL leaf that planned the call, so the
 scenario file mirrors what the fake VLM actually returns.
@@ -30,15 +30,15 @@ from pathlib import Path
 
 import yaml
 
-STATE_FAILED = 2  # PilotEvent status.state (ask.rs)
+STATE_FAILED = 2  # PlannerEvent status.state (ask.rs)
 LOG_DIR = Path(__file__).resolve().parent / "logs"
 
 
 def run_ask(rbnx: str, task: str, server: str, timeout: int, log_path: Path) -> tuple[list[dict], int]:
     """Submit one task via ``rbnx ask --json``; tee stdout to a log file.
 
-    Returns (parsed_events, exit_code). rbnx exits non-zero iff pilot emitted a
-    FAILED status. The raw stdout (one PilotEvent JSON per line) plus stderr are
+    Returns (parsed_events, exit_code). rbnx exits non-zero iff planner emitted a
+    FAILED status. The raw stdout (one PlannerEvent JSON per line) plus stderr are
     persisted to log_path so every CI run keeps a full trace.
     """
     cmd = [rbnx, "ask", task, "--json", "--server", server]
@@ -482,7 +482,7 @@ def summarize_plan_rounds(events: list[dict]) -> list[dict]:
 
 
 def final_failed(events: list[dict]) -> bool:
-    """True if pilot emitted a FAILED status anywhere in the stream."""
+    """True if planner emitted a FAILED status anywhere in the stream."""
     return any((ev.get("status") or {}).get("state") == STATE_FAILED for ev in events)
 
 
@@ -500,7 +500,7 @@ def check_scenario(scenario: dict, events: list[dict], exit_code: int) -> list[s
     leaves = collect_leaf_results(events)
 
     if scenario.get("expect_final_done", True) and final_failed(events):
-        fails.append("pilot reported FAILED but expect_final_done")
+        fails.append("planner reported FAILED but expect_final_done")
     if exit_code != 0:
         fails.append(f"rbnx ask exit={exit_code}")
 
@@ -576,7 +576,7 @@ def check_scenario(scenario: dict, events: list[dict], exit_code: int) -> list[s
 def main() -> int:
     ap = argparse.ArgumentParser(description="robonix CI scenario runner")
     ap.add_argument("--rbnx", default=os.environ.get("RBNX_BIN", "rbnx"))
-    ap.add_argument("--server", default=os.environ.get("ROBONIX_ATLAS", "127.0.0.1:50051"))
+    ap.add_argument("--server", default=os.environ.get("ROBONIX_SRC", "127.0.0.1:50051"))
     ap.add_argument("--scenarios", type=Path, default=Path(__file__).resolve().parent / "scenarios")
     ap.add_argument("--timeout", type=int, default=300, help="per-scenario seconds")
     ap.add_argument("--only", help="run only the scenario with this name")

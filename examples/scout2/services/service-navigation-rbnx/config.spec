@@ -12,7 +12,7 @@ required:
 
   provider_ids:
     type: mapping[string, string]
-    description: Atlas provider IDs for Navigation inputs.
+    description: Src provider IDs for Navigation inputs.
     supported_roles:
       map: robonix/service/map/occupancy_grid
       odom: robonix/primitive/chassis/odom
@@ -118,10 +118,10 @@ optional:
         description: Enable the PointCloud2-to-LaserScan adapter.
       target_frame:
         type: string
-        default: Soma base_frame
+        default: Robotdesc base_frame
         description: >-
           TF frame in which height, range, and robot self-filtering are
-          evaluated. An empty value uses Soma's declared base frame.
+          evaluated. An empty value uses Robotdesc's declared base frame.
       min_height_m:
         type: number
         default: 0.0
@@ -144,7 +144,7 @@ optional:
         default: 0.05
         unit: metres
         description: >-
-          Extra margin added around Soma's robot footprint before points are
+          Extra margin added around Robotdesc's robot footprint before points are
           treated as returns from the robot itself. Must be non-negative.
       transform_tolerance_s:
         type: number

@@ -25,9 +25,9 @@ Robonix package wrapping the **AgileX Ranger Mini v3** and **Scout / Scout 2** c
 
 ## Driver-init lifecycle
 
-`start.sh` brings up the atlas bridge — no ROS spawn. The bridge opens a gRPC server (default port 50234), registers the capability and declares only `primitive/chassis/driver`, then blocks awaiting `Driver(CMD_INIT, config_json)`.
+`start.sh` brings up the src bridge — no ROS spawn. The bridge opens a gRPC server (default port 50234), registers the capability and declares only `primitive/chassis/driver`, then blocks awaiting `Driver(CMD_INIT, config_json)`.
 
-When `rbnx boot` calls Init, the handler parses config, spawns `ros2 launch ranger_bringup ranger_mini_v3.launch.xml`, waits for the first `nav_msgs/Odometry` on `/<odom_topic_name>`, and declares `chassis/odom` + `chassis/twist_in` on atlas.
+When `rbnx boot` calls Init, the handler parses config, spawns `ros2 launch ranger_bringup ranger_mini_v3.launch.xml`, waits for the first `nav_msgs/Odometry` on `/<odom_topic_name>`, and declares `chassis/odom` + `chassis/twist_in` on src.
 
 If the chassis isn't powered or CAN isn't up, the sentinel times out and Init returns `state="error"` (NOT deferred — the chassis owns its process; we know it's stuck if we just spawned it and got nothing).
 
@@ -36,10 +36,10 @@ If the chassis isn't powered or CAN isn't up, the sentinel times out and Init re
 ```
 ranger_chassis_rbnx/
 ├── package_manifest.yaml
-├── ranger_chassis/atlas_bridge.py
+├── ranger_chassis/src_bridge.py
 ├── scripts/
 │   ├── build.sh        colcon build vendored sources + rbnx codegen
-│   └── start.sh        source ROS, exec atlas_bridge
+│   └── start.sh        source ROS, exec src_bridge
 └── src/
     ├── ranger_ros2/    VENDORED agilexrobotics/ranger_ros2
     ├── scout_ros2/     VENDORED westonrobot/scout_ros2 (Scout / Scout 2)

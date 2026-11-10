@@ -2,7 +2,7 @@
 [project]
 name = "robonix-api"
 version = "0.1.0rc1"
-description = "Robonix Python client library: write Primitive/Service/Skill packages, talk to atlas, serve Driver lifecycle gRPC, wrap rclpy/FastMCP/grpcio middleware."
+description = "Robonix Python client library: write Primitive/Service/Skill packages, talk to src, serve Driver lifecycle gRPC, wrap rclpy/FastMCP/grpcio middleware."
 readme = "README.md"
 license = { text = "MulanPSL-2.0" }
 authors = [

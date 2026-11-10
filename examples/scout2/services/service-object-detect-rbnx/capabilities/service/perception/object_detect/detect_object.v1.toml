@@ -9,7 +9,7 @@
 # the camera_info K matrix (same algorithm as yolo_world_rbnx).
 #
 # IDL: lib/perception/srv/DetectObject.srv (package-local), exposed only
-# through the atlas-routed MCP surface.
+# through the src-routed MCP surface.
 [contract]
 id      = "robonix/service/perception/object_detect/detect_object"
 version = "1"

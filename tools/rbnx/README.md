@@ -31,12 +31,12 @@ cargo install --force --path tools/rbnx --bin rbnx
 | `rbnx boot [-f MANIFEST]` | Bring up the full stack from a deploy manifest         |
 | `rbnx shutdown`           | Tear down what `rbnx boot` brought up                  |
 | `rbnx start PKG`          | Launch one package directly (used internally by boot)  |
-| `rbnx caps [-v]`          | List capabilities currently registered with atlas      |
+| `rbnx caps [-v]`          | List capabilities currently registered with src      |
 | `rbnx contracts`          | List contracts in the loaded registry                  |
 | `rbnx channels`           | List open consumer→provider channels                   |
-| `rbnx inspect`            | Dump atlas state for debugging                         |
+| `rbnx inspect`            | Dump src state for debugging                         |
 | `rbnx codegen [--mcp]`    | Generate proto + MCP type stubs for a package          |
-| `rbnx chat`               | Interactive TUI chat with the pilot                    |
+| `rbnx chat`               | Interactive TUI chat with the planner                    |
 | `rbnx ask "..."`          | Single-turn task submission                            |
 | `rbnx path KEY`           | Resolve a registered source path (root / capabilities / interfaces-lib / runtime-proto / robonix-api) |
 | `rbnx setup [PATH]`       | Register a robonix source tree at `PATH`               |
@@ -47,31 +47,37 @@ Run `rbnx <cmd> --help` for full flags.
 ## Built-in system components
 
 `rbnx boot` launches each declared built-in component in dependency order:
-Atlas, Executor, Soma, Pilot, Vitals, then Liaison. Their `system.<name>`
+Src, Executor, Robotdesc, Planner, Monitor, then Gateway. Their `system.<name>`
 manifest blocks are translated into CLI flags and also passed intact through
 `--config-json`. Components not present in the manifest are not started, except
-that Soma is added automatically when the deployment contains primitives or
+that Robotdesc is added automatically when the deployment contains primitives or
 skills.
 
-For example, this enables Vitals without a separate terminal or global
+World is a Python system package rather than a built-in Rust binary. Declare
+`system.world` with `path: ${ROBONIX_SOURCE_PATH}/system/world`; it starts through
+that directory's `package_manifest.yaml`. Build it with `rbnx build -p
+system/world`, then boot the deployment normally. The package registers the
+`robonix/system/world` namespace and uses `WORLD_*` / `ROBONIX_WORLD_*` settings.
+
+For example, this enables Monitor without a separate terminal or global
 `RUST_LOG` setting:
 
 ```yaml
 system:
-  vitals:
+  monitor:
     listen: 127.0.0.1:50093
     log: info
 ```
 
 ## Environment
 
-- `ROBONIX_ATLAS` — atlas endpoint, default `127.0.0.1:50051`.
+- `ROBONIX_SRC` — src endpoint, default `127.0.0.1:50051`.
 - `VLM_API_KEY` / `VLM_BASE_URL` / `VLM_MODEL` — VLM credentials forwarded
-  to pilot at boot.
+  to planner at boot.
 - `RBNX_CONFIG_FILE` — explicit path to a config file (overrides
   `~/.robonix/config.yaml`).
 
-Each primitive, service, and skill entry's `name` is its deploy-time Atlas
+Each primitive, service, and skill entry's `name` is its deploy-time Src
 provider id. `rbnx boot` passes it as `RBNX_INSTANCE_NAME`; the SDK uses that
 identity for registration, capability declaration, heartbeat, and lifecycle
 state. Package source keeps its own default id for standalone `rbnx start`.
@@ -82,7 +88,7 @@ registration cannot receive another instance's lifecycle config.
 
 Many subcommands (codegen, build, boot) need to resolve paths inside
 the Robonix source repo (the IDL tree under `capabilities/lib`, the
-atlas proto under `system/atlas/proto`, the Python SDK under
+src proto under `system/src/proto`, the Python SDK under
 `pylib/robonix-api`). `rbnx setup` writes the absolute path of the
 current clone into `~/.robonix/config.yaml`; later calls anywhere on
 disk resolve those keys via `rbnx path`.

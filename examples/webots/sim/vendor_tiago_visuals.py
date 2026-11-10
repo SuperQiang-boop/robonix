@@ -23,7 +23,7 @@ WEBOTS_TAGS = {"webots", "ros2_control"}
 def parse_args() -> argparse.Namespace:
     """Parse source descriptions and Webots overlay locations."""
     parser = argparse.ArgumentParser(
-        description="Bundle PAL TIAGo visuals into the URDFs served by Soma."
+        description="Bundle PAL TIAGo visuals into the URDFs served by Robotdesc."
     )
     parser.add_argument("--lite-urdf", type=Path, required=True)
     parser.add_argument("--full-urdf", type=Path, required=True)
@@ -210,7 +210,7 @@ def bundle_urdf(
 
 
 def main() -> None:
-    """Generate the Lite and Full Soma/Webots descriptions and manifest."""
+    """Generate the Lite and Full Robotdesc/Webots descriptions and manifest."""
     args = parse_args()
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)

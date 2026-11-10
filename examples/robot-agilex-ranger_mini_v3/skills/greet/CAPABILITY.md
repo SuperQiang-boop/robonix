@@ -7,7 +7,7 @@ description: Passerby greeting — watch the front camera, detect people (YOLO) 
 # greet_rbnx — passerby-greeting skill
 
 Watches the robot's front RGB camera and greets people in its path so they can
-make way. Soma gates the loop on a fresh chassis `moving` metric, so the skill
+make way. Robotdesc gates the loop on a fresh chassis `moving` metric, so the skill
 sleeps while the robot is stationary or body state is unavailable. While the
 robot is moving, a **local YOLO** person detector runs on the Jetson GPU; only
 when it actually sees people does
@@ -26,15 +26,15 @@ The robot base is **never driven** — the only outward action is speech.
 
 - `robonix/primitive/camera/rgb` (ros2 topic) — the front RGB image.
 - `robonix/service/speech/speak` (mcp) — announce the line aloud.
-- `robonix/system/soma/get_health` (grpc) — fresh chassis motion state.
+- `robonix/system/robotdesc/get_health` (grpc) — fresh chassis motion state.
 
 ## Config (via Driver CMD_INIT)
 
 | key | meaning | default |
 |-----|---------|---------|
 | `vlm.upstream` / `vlm.api_key` / `vlm.model` | independent OpenAI-compatible vision endpoint | — / — / `qwen-vl-plus` |
-| `camera_provider_id` | front RGB provider selected through Atlas | required |
-| `soma_provider_id` | Soma provider selected through Atlas | required |
+| `camera_provider_id` | front RGB provider selected through Src | required |
+| `robotdesc_provider_id` | Robotdesc provider selected through Src | required |
 | `chassis_provider_id` | chassis whose `moving` metric gates detection | required |
 | `yolo_conf` | YOLO person confidence threshold | 0.4 |
 | `yolo_weights` | path to the YOLO weight file (the robot has no internet) | `weights/yolov8n.pt` |

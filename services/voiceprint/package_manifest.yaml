@@ -1,8 +1,8 @@
 # Robonix voiceprint service — ECAPA-TDNN one-shot speaker identification.
-# Three atlas-registered capabilities (all gRPC, all on the same listener):
+# Three src-registered capabilities (all gRPC, all on the same listener):
 #
 #   robonix/service/voiceprint/identify         — Identify(audio) → user_id
-#       Consumed by Liaison's voice gating path; LLM-visible only
+#       Consumed by Gateway's voice gating path; LLM-visible only
 #       indirectly via the user_id stamped on each Task.
 #
 #   robonix/service/voiceprint/enroll  — Enroll(audio,id,name) → ok

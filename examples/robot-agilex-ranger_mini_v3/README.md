@@ -29,7 +29,7 @@ component.
 The exact provider IDs, device addresses, sensor profiles, and runtime options
 are defined in [`robonix_manifest.yaml`](robonix_manifest.yaml). The robot body,
 component hierarchy, footprint, and provider-to-component mapping are defined
-in [`soma.yaml`](soma.yaml). Vitals consumes Soma's body-health stream and
+in [`robotdesc.yaml`](robotdesc.yaml). Monitor consumes Robotdesc's body-health stream and
 aggregates Robonix module health on port `50093` for trusted operator clients.
 
 Robot-specific algorithm configuration is also deployment-owned:
@@ -60,9 +60,9 @@ the provider implements upstream; a robot manifest cannot invent a new profile.
 Robot-specific runtime values remain in this repository's parameter files (or
 documented config overrides) and do not create a new upstream profile.
 
-Scene is pinned to the front Gemini provider `orbbec_camera`. That provider
+World is pinned to the front Gemini provider `orbbec_camera`. That provider
 supplies both aligned RGB and depth (plus camera calibration); the wrist DC1 is
-exposed separately as `orbbec_wrist_camera` and cannot be selected by Atlas
+exposed separately as `orbbec_wrist_camera` and cannot be selected by Src
 ordering. Scene obtains the robot's globally corrected pose from the Mapping
 `robonix/service/map/pose` contract and combines it with the complete URDF
 camera transform published by `robot_description`.
@@ -111,8 +111,8 @@ Operator pages:
 
 - Scene: `http://<robot-host>:50107/`
 - Mapping: `http://<robot-host>:8091/`
-- Atlas for Robonix Client: `<robot-host>:50051`
-- Liaison for Robonix Client: `<robot-host>:50081`
+- Src for Robonix Client: `<robot-host>:50051`
+- Gateway for Robonix Client: `<robot-host>:50081`
 
 Static deployment checks do not start hardware:
 
@@ -125,7 +125,7 @@ python3 -m unittest -v \
 
 The deploy keeps the complete v0.1 RViz configuration and an updated mapping
 variant. The updated file preserves the original map, costmap, scan, path,
-goal, TF, particle-cloud, and footprint displays, and adds the Soma-backed
+goal, TF, particle-cloud, and footprint displays, and adds the Robotdesc-backed
 RobotModel plus the live MID-360 `/scanner/cloud` display.
 
 ```bash
@@ -152,9 +152,9 @@ After the chassis is powered on:
 
 ## Robot description
 
-`soma.yaml` and `urdf/ranger_mini.urdf` are served by Soma. The description
-contains the body footprint and sensor tree used by Pilot and other consumers.
+`robotdesc.yaml` and `urdf/ranger_mini.urdf` are served by Robotdesc. The description
+contains the body footprint and sensor tree used by Planner and other consumers.
 `urdf/piper.urdf` is currently a separate arm-only model used by the IK solver;
-it is not a substitute for the Soma body tree. Mount transforms remain
+it is not a substitute for the Robotdesc body tree. Mount transforms remain
 calibration-sensitive; update the body URDF after physical measurement rather
 than compensating in Scene or Mapping.

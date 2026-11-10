@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MulanPSL-2.0
-# patrol skill start (native). Runs the atlas bridge under the selected Python environment,
+# patrol skill start (native). Runs the src bridge under the selected Python environment,
 # with ROS + codegen + robonix-api on PYTHONPATH.
 set -euo pipefail
 PKG="${RBNX_PACKAGE_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
@@ -51,4 +51,4 @@ if ROBONIX_PY="$(rbnx path robonix-api 2>/dev/null)"; then
 fi
 
 # -u: unbuffered stdio so log lines flush immediately
-exec "$CONDA_PY" -u -m patrol_skill.atlas_bridge
+exec "$CONDA_PY" -u -m patrol_skill.src_bridge

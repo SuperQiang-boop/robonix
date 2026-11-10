@@ -2,7 +2,7 @@
 // Generate the browsable contract + ROS IDL reference for the mdBook
 // (`docs/src/reference/{contracts,idl}.md`). Reuses the same contract
 // loader as proto generation (`contract_gen::load_contract_summaries`),
-// so the reference can't drift from what codegen / atlas actually parse.
+// so the reference can't drift from what codegen / src actually parse.
 //
 // Two pages, cross-linked:
 //   contracts.md — every contract; its payload cell links into idl.md.

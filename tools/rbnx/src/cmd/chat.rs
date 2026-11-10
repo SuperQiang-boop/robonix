@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: MulanPSL-2.0
-// cmd/chat.rs — TUI chat client (connects to robonix-liaison via SrvLiaison).
+// cmd/chat.rs — TUI chat client (connects to robonix-gateway via SrvGateway).
 //
 // Modalities (one TUI, one stream type per turn):
 //
-//   ┌────────────────┐ Enter ─────────► SrvLiaison.Stream(Task)
-//   │ rbnx chat TUI  │                 (text → PilotEvent stream)
-//   └────────────────┘ F2 ────────► SrvLiaison.StartVoiceSession(req)
+//   ┌────────────────┐ Enter ─────────► SrvGateway.Stream(Task)
+//   │ rbnx chat TUI  │                 (text → PlannerEvent stream)
+//   └────────────────┘ F2 ────────► SrvGateway.StartVoiceSession(req)
 //                                       (voice → VoiceEvent stream which
-//                                        wraps PilotEvent in `pilot` field)
+//                                        wraps PlannerEvent in `planner` field)
 //
-// Liaison handles user-id assignment, voice mic/ASR/voiceprint/TTS/speaker
-// orchestration, and forwarding to Pilot. The TUI just renders events.
+// Gateway handles user-id assignment, voice mic/ASR/voiceprint/TTS/speaker
+// orchestration, and forwarding to Planner. The TUI just renders events.
 
 use anyhow::{Context, Result};
 use crossterm::{
@@ -26,9 +26,9 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph, Wrap},
 };
-use robonix_atlas::client::AtlasClient;
-use robonix_atlas::pb as atlas_pb;
-use robonix_scribe::{info, warn};
+use robonix_log::{info, warn};
+use robonix_src::client::SrcClient;
+use robonix_src::pb as src_pb;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::io;
@@ -37,12 +37,12 @@ use tokio_stream::StreamExt;
 use uuid::Uuid;
 
 const CONSUMER_ID: &str = "rbnx-cli/chat";
-// Liaison was split into two contracts (submit + voice). chat only needs
-// to find one of them in atlas to know liaison is up; submit is the
+// Gateway was split into two contracts (submit + voice). chat only needs
+// to find one of them in src to know gateway is up; submit is the
 // always-present one (voice is optional / mode-gated), so wait on it.
-const LIAISON_CONTRACT_ID: &str = "robonix/system/liaison/submit";
+const GATEWAY_CONTRACT_ID: &str = "robonix/system/gateway/submit";
 
-/// Atlas contract ids for the audio primitives that have user-visible
+/// Src contract ids for the audio primitives that have user-visible
 /// device choices on a multi-provider host (e.g. local ALSA driver vs
 /// the macOS bridge). asr/tts are software backends with one provider
 /// per box, so we don't prompt for them.
@@ -62,7 +62,7 @@ enum Role {
     Voice,
 }
 
-/// Live RTDL forest state for the right-side panel. Fed by `PilotEvent`
+/// Live RTDL forest state for the right-side panel. Fed by `PlannerEvent`
 /// task_state / plan / node_state / batch_result events; rendered every frame.
 #[derive(Default)]
 struct ForestView {
@@ -75,7 +75,7 @@ struct ForestView {
 
 struct PlanView {
     plan_id: String,
-    plan: crate::pb::pilot::Plan,
+    plan: crate::pb::planner::Plan,
     /// node_index → executor state (2=ok 3=fail 4=cancel …). Absent = pending.
     node_states: HashMap<u32, u32>,
     done: bool,
@@ -96,12 +96,12 @@ impl ForestView {
     }
 }
 
-/// The standard LLM-facing capability name, exactly as pilot presents it to
+/// The standard LLM-facing capability name, exactly as planner presents it to
 /// the model and as the model emits it in `do.cap`: `provider_id.<area>_<leaf>`
 /// — e.g. `front_camera.camera_snapshot`, `explore.explore_status`,
 /// `executor.builtin_read_file`. The `<area>_<leaf>`
-/// part mirrors `robonix_pilot::discovery::llm_name` (kept in sync here since
-/// rbnx-cli doesn't depend on the pilot crate); the `<area>` prefix is what
+/// part mirrors `robonix_planner::discovery::llm_name` (kept in sync here since
+/// rbnx-cli doesn't depend on the planner crate); the `<area>` prefix is what
 /// disambiguates the shared `snapshot` / `status` leaves across providers.
 fn cap_short_name(provider_id: &str, contract_id: &str) -> String {
     let mut segs = contract_id.rsplit('/');
@@ -268,12 +268,12 @@ fn forest_node_lines(
     }
 }
 
-const DEFAULT_LIAISON_FALLBACK: &str = "http://127.0.0.1:50081";
+const DEFAULT_GATEWAY_FALLBACK: &str = "http://127.0.0.1:50081";
 
 /// Persisted user choices for `rbnx chat`, written to ~/.robonix/chat.yaml.
 ///
 /// Two layers per audio side:
-///   *_cap_id      → which audio impl provider in atlas (e.g. .alsa vs .macos)
+///   *_cap_id      → which audio impl provider in src (e.g. .alsa vs .macos)
 ///   *_device_id   → which OS-level device that impl should drive (impl-
 ///                   specific id from ListAudioDevices; "" = OS default)
 ///
@@ -315,28 +315,28 @@ fn save_chat_config(cfg: &ChatConfig) -> Result<()> {
 }
 
 pub async fn execute(server: &str) -> Result<()> {
-    let atlas_endpoint = if server.starts_with("http") {
+    let src_endpoint = if server.starts_with("http") {
         server.to_string()
     } else {
         format!("http://{server}")
     };
 
-    let liaison_endpoint = if let Ok(ep) = std::env::var("ROBONIX_LIAISON_ENDPOINT") {
-        info!("using ROBONIX_LIAISON_ENDPOINT={ep}");
+    let gateway_endpoint = if let Ok(ep) = std::env::var("ROBONIX_GATEWAY_ENDPOINT") {
+        info!("using ROBONIX_GATEWAY_ENDPOINT={ep}");
         if ep.starts_with("http") {
             ep
         } else {
             format!("http://{ep}")
         }
     } else {
-        discover_liaison(&atlas_endpoint).await.unwrap_or_else(|e| {
+        discover_gateway(&src_endpoint).await.unwrap_or_else(|e| {
             warn!(
-                "liaison discovery timed out ({e:#}), falling back to {DEFAULT_LIAISON_FALLBACK}"
+                "gateway discovery timed out ({e:#}), falling back to {DEFAULT_GATEWAY_FALLBACK}"
             );
-            DEFAULT_LIAISON_FALLBACK.to_string()
+            DEFAULT_GATEWAY_FALLBACK.to_string()
         })
     };
-    let liaison_endpoint = localhost_to_ipv4_loopback(&liaison_endpoint);
+    let gateway_endpoint = localhost_to_ipv4_loopback(&gateway_endpoint);
 
     let mut stdout = io::stdout();
     stdout.execute(EnterAlternateScreen)?;
@@ -345,25 +345,25 @@ pub async fn execute(server: &str) -> Result<()> {
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    // ensure_audio_devices is best-effort: if atlas is unreachable, no
+    // ensure_audio_devices is best-effort: if src is unreachable, no
     // audio providers are registered, or the user skips with Esc, we
     // surface the reason as a warning in the chat history and continue
     // — text chat works without any audio path. Hard errors here would
     // mean a single-user typo at audio-pick time kills the whole TUI.
-    let (chat_cfg, audio_warnings) =
-        match ensure_audio_devices(&atlas_endpoint, &mut terminal).await {
-            Ok(v) => v,
-            Err(e) => {
-                terminal::disable_raw_mode()?;
-                terminal.backend_mut().execute(LeaveAlternateScreen)?;
-                return Err(e);
-            }
-        };
+    let (chat_cfg, audio_warnings) = match ensure_audio_devices(&src_endpoint, &mut terminal).await
+    {
+        Ok(v) => v,
+        Err(e) => {
+            terminal::disable_raw_mode()?;
+            terminal.backend_mut().execute(LeaveAlternateScreen)?;
+            return Err(e);
+        }
+    };
 
     let result = run_tui(
         &mut terminal,
-        &atlas_endpoint,
-        &liaison_endpoint,
+        &src_endpoint,
+        &gateway_endpoint,
         chat_cfg,
         &audio_warnings,
     )
@@ -375,8 +375,8 @@ pub async fn execute(server: &str) -> Result<()> {
     result
 }
 
-/// Try to discover Liaison via Atlas, retrying for up to `timeout_secs`.
-async fn discover_liaison(atlas_endpoint: &str) -> Result<String> {
+/// Try to discover Gateway via Src, retrying for up to `timeout_secs`.
+async fn discover_gateway(src_endpoint: &str) -> Result<String> {
     const RETRY_INTERVAL_MS: u64 = 2_000;
     const TIMEOUT_SECS: u64 = 60;
 
@@ -385,14 +385,14 @@ async fn discover_liaison(atlas_endpoint: &str) -> Result<String> {
 
     loop {
         attempt += 1;
-        match try_discover_once(atlas_endpoint, LIAISON_CONTRACT_ID).await {
+        match try_discover_once(src_endpoint, GATEWAY_CONTRACT_ID).await {
             Ok(ep) => return Ok(ep),
             Err(e) => {
                 if std::time::Instant::now() >= deadline {
-                    anyhow::bail!("liaison not found in Atlas after {TIMEOUT_SECS}s: {e:#}");
+                    anyhow::bail!("gateway not found in Src after {TIMEOUT_SECS}s: {e:#}");
                 }
                 if attempt == 1 {
-                    eprintln!("[chat] waiting for Liaison to register in Atlas ({e:#})…");
+                    eprintln!("[chat] waiting for Gateway to register in Src ({e:#})…");
                 }
                 tokio::time::sleep(std::time::Duration::from_millis(RETRY_INTERVAL_MS)).await;
             }
@@ -400,10 +400,10 @@ async fn discover_liaison(atlas_endpoint: &str) -> Result<String> {
     }
 }
 
-async fn try_discover_once(atlas_endpoint: &str, contract_id: &str) -> Result<String> {
-    let mut atlas = AtlasClient::connect(atlas_endpoint).await?;
-    let transport = atlas_pb::Transport::Grpc;
-    let providers = atlas.query_capabilities("", contract_id, transport).await?;
+async fn try_discover_once(src_endpoint: &str, contract_id: &str) -> Result<String> {
+    let mut src = SrcClient::connect(src_endpoint).await?;
+    let transport = src_pb::Transport::Grpc;
+    let providers = src.query_capabilities("", contract_id, transport).await?;
     for provider in &providers {
         let has = provider
             .capabilities
@@ -412,7 +412,7 @@ async fn try_discover_once(atlas_endpoint: &str, contract_id: &str) -> Result<St
         if !has {
             continue;
         }
-        let (_, endpoint, _) = atlas
+        let (_, endpoint, _) = src
             .connect_capability(CONSUMER_ID, &provider.id, contract_id, transport)
             .await?;
         if endpoint.is_empty() {
@@ -425,7 +425,7 @@ async fn try_discover_once(atlas_endpoint: &str, contract_id: &str) -> Result<St
         };
         return Ok(localhost_to_ipv4_loopback(&uri));
     }
-    anyhow::bail!("no {contract_id} capability found in Atlas registry")
+    anyhow::bail!("no {contract_id} capability found in Src registry")
 }
 
 // ── Audio-device first-run picker ───────────────────────────────────────────
@@ -437,7 +437,7 @@ async fn try_discover_once(atlas_endpoint: &str, contract_id: &str) -> Result<St
 // to ~/.robonix/chat.yaml so future sessions don't ask again. To
 // re-pick: delete that file (or just edit it), re-run rbnx chat.
 //
-// Why this lives here and not in liaison: the user choice is per-client
+// Why this lives here and not in gateway: the user choice is per-client
 // preference (which physical box's audio do I want when sitting at this
 // terminal), not a per-deployment server setting.
 
@@ -453,17 +453,17 @@ enum PickMode {
 }
 
 /// Best-effort audio device discovery. Anything that goes wrong here
-/// (atlas unreachable, no providers registered, user pressed Esc) is
+/// (src unreachable, no providers registered, user pressed Esc) is
 /// downgraded to a chat-history warning — text mode keeps working.
 async fn ensure_audio_devices(
-    atlas_endpoint: &str,
+    src_endpoint: &str,
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
 ) -> Result<(ChatConfig, Vec<String>)> {
-    pick_audio_settings(atlas_endpoint, terminal, PickMode::FirstRun).await
+    pick_audio_settings(src_endpoint, terminal, PickMode::FirstRun).await
 }
 
 async fn pick_audio_settings(
-    atlas_endpoint: &str,
+    src_endpoint: &str,
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     mode: PickMode,
 ) -> Result<(ChatConfig, Vec<String>)> {
@@ -476,27 +476,27 @@ async fn pick_audio_settings(
     let mut need_speaker =
         always || (!env_set("ROBONIX_CHAT_SPEAKER_NODE") && cfg.speaker_cap_id.is_none());
 
-    let mut atlas = match AtlasClient::connect(atlas_endpoint).await {
+    let mut src = match SrcClient::connect(src_endpoint).await {
         Ok(c) => c,
         Err(e) => {
             warnings.push(format!(
-                "audio device pick skipped — atlas unreachable at {atlas_endpoint}: {e:#}. \
-                 Text mode still works; voice (F2) will fail until atlas is up."
+                "audio device pick skipped — src unreachable at {src_endpoint}: {e:#}. \
+                 Text mode still works; voice (F2) will fail until src is up."
             ));
             return Ok((cfg, warnings));
         }
     };
 
-    // Validate stored pins against current atlas state. A pin pointing at a
+    // Validate stored pins against current src state. A pin pointing at a
     // provider that's not in this deploy (e.g. config saved from an earlier
     // deploy where the audio provider was named differently) would silently break
     // voice — re-prompt instead.
     if !need_mic
         && let Some(pin) = cfg.mic_cap_id.as_deref()
-        && !pin_exists_in_atlas(&mut atlas, pin, MIC_CONTRACT).await
+        && !pin_exists_in_src(&mut src, pin, MIC_CONTRACT).await
     {
         warnings.push(format!(
-            "mic pin '{pin}' not in atlas (stale config) — re-prompting"
+            "mic pin '{pin}' not in src (stale config) — re-prompting"
         ));
         cfg.mic_cap_id = None;
         cfg.mic_device_id = None;
@@ -504,10 +504,10 @@ async fn pick_audio_settings(
     }
     if !need_speaker
         && let Some(pin) = cfg.speaker_cap_id.as_deref()
-        && !pin_exists_in_atlas(&mut atlas, pin, SPEAKER_CONTRACT).await
+        && !pin_exists_in_src(&mut src, pin, SPEAKER_CONTRACT).await
     {
         warnings.push(format!(
-            "speaker pin '{pin}' not in atlas (stale config) — re-prompting"
+            "speaker pin '{pin}' not in src (stale config) — re-prompting"
         ));
         cfg.speaker_cap_id = None;
         cfg.speaker_device_id = None;
@@ -521,7 +521,7 @@ async fn pick_audio_settings(
         let saved_cap = cfg.mic_cap_id.clone();
         let saved_dev = cfg.mic_device_id.clone();
         match try_pick(
-            &mut atlas,
+            &mut src,
             terminal,
             "mic",
             MIC_CONTRACT,
@@ -537,7 +537,7 @@ async fn pick_audio_settings(
                 cfg.mic_device_id = Some(device_id);
             }
             Ok(None) => warnings.push(
-                "no mic provider in atlas — voice input disabled (text mode unaffected)".into(),
+                "no mic provider in src — voice input disabled (text mode unaffected)".into(),
             ),
             Err(e) => warnings.push(format!("mic pick: {e:#}")),
         }
@@ -546,7 +546,7 @@ async fn pick_audio_settings(
         let saved_cap = cfg.speaker_cap_id.clone();
         let saved_dev = cfg.speaker_device_id.clone();
         match try_pick(
-            &mut atlas,
+            &mut src,
             terminal,
             "speaker",
             SPEAKER_CONTRACT,
@@ -562,7 +562,7 @@ async fn pick_audio_settings(
                 cfg.speaker_device_id = Some(device_id);
             }
             Ok(None) => warnings.push(
-                "no speaker provider in atlas — voice playback disabled (text mode unaffected)"
+                "no speaker provider in src — voice playback disabled (text mode unaffected)"
                     .into(),
             ),
             Err(e) => warnings.push(format!("speaker pick: {e:#}")),
@@ -574,17 +574,17 @@ async fn pick_audio_settings(
     Ok((cfg, warnings))
 }
 
-/// True iff atlas currently has a provider whose id (or namespace) matches the
+/// True iff src currently has a provider whose id (or namespace) matches the
 /// pin AND it provides `contract` over GRPC. Used at chat startup to detect
 /// stale pins from a prior deploy whose audio provider has since been renamed
 /// or removed — caller drops the pin and re-prompts the picker instead of
 /// silently letting voice fail with "no provider".
-async fn pin_exists_in_atlas(atlas: &mut AtlasClient, pin: &str, contract: &str) -> bool {
-    let Ok(providers) = atlas
-        .query_capabilities("", contract, atlas_pb::Transport::Grpc)
+async fn pin_exists_in_src(src: &mut SrcClient, pin: &str, contract: &str) -> bool {
+    let Ok(providers) = src
+        .query_capabilities("", contract, src_pb::Transport::Grpc)
         .await
     else {
-        // Atlas unreachable — don't drop the pin on a transient failure;
+        // Src unreachable — don't drop the pin on a transient failure;
         // the outer caller already warned and degraded.
         return true;
     };
@@ -593,10 +593,10 @@ async fn pin_exists_in_atlas(atlas: &mut AtlasClient, pin: &str, contract: &str)
 
 /// `Ok(Some((provider_id, device_id)))` = picked both layers; device_id may be ""
 /// when the impl returned UNIMPLEMENTED on list_devices.
-/// `Ok(None)` = no providers in atlas.
+/// `Ok(None)` = no providers in src.
 #[allow(clippy::too_many_arguments)]
 async fn try_pick(
-    atlas: &mut AtlasClient,
+    src: &mut SrcClient,
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     label: &str,
     contract: &str,
@@ -605,15 +605,15 @@ async fn try_pick(
     saved_device_id: Option<&str>,
     mode: PickMode,
 ) -> Result<Option<(String, String)>> {
-    let providers = atlas
-        .query_capabilities("", contract, atlas_pb::Transport::Grpc)
+    let providers = src
+        .query_capabilities("", contract, src_pb::Transport::Grpc)
         .await?;
     if providers.is_empty() {
         return Ok(None);
     }
 
     // Layer A — provider (provider_id). FirstRun honours the saved choice
-    // when it's still in atlas, or auto-picks the lone provider with a
+    // when it's still in src, or auto-picks the lone provider with a
     // 400 ms flash. Reconfigure (Ctrl+A) ALWAYS shows the TUI even
     // for a single entry — auto-pick on Ctrl+A looks identical to
     // "Ctrl+A did nothing", which is what the user just hit.
@@ -633,7 +633,7 @@ async fn try_pick(
     // Layer B — device id within the chosen impl. Connect to its
     // list_devices contract (UNIMPLEMENTED is OK — fall through with "").
     let device_id = pick_device_for_cap(
-        atlas,
+        src,
         terminal,
         &provider_id,
         label,
@@ -645,7 +645,7 @@ async fn try_pick(
 
     // Tell the impl which device to use. Best-effort; ignore failures.
     if !device_id.is_empty()
-        && let Err(e) = call_select_device(atlas, &provider_id, kind, &device_id).await
+        && let Err(e) = call_select_device(src, &provider_id, kind, &device_id).await
     {
         warn!("SelectAudioDevice on {provider_id} ({kind}={device_id}) failed: {e:#}");
     }
@@ -657,7 +657,7 @@ async fn try_pick(
 /// list, run a picker on the entries that match `kind` (input/output)
 /// + duplex. Returns "" when the impl doesn't expose the contract.
 async fn pick_device_for_cap(
-    atlas: &mut AtlasClient,
+    src: &mut SrcClient,
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     provider_id: &str,
     label: &str,
@@ -673,12 +673,12 @@ async fn pick_device_for_cap(
     // doesn't litter chat history with a non-actionable message.
     let reconf = matches!(mode, PickMode::Reconfigure);
 
-    let endpoint = match atlas
+    let endpoint = match src
         .connect_capability(
             CONSUMER_ID,
             provider_id,
             LIST_CONTRACT,
-            atlas_pb::Transport::Grpc,
+            src_pb::Transport::Grpc,
         )
         .await
     {
@@ -775,7 +775,7 @@ async fn pick_device_for_cap(
 }
 
 async fn call_select_device(
-    atlas: &mut AtlasClient,
+    src: &mut SrcClient,
     provider_id: &str,
     kind: &str,
     device_id: &str,
@@ -783,12 +783,12 @@ async fn call_select_device(
     use crate::pb::contracts::robonix_primitive_audio_select_device_client::RobonixPrimitiveAudioSelectDeviceClient;
     const SELECT_CONTRACT: &str = "robonix/primitive/audio/select_device";
 
-    let (_, ep, _) = atlas
+    let (_, ep, _) = src
         .connect_capability(
             CONSUMER_ID,
             provider_id,
             SELECT_CONTRACT,
-            atlas_pb::Transport::Grpc,
+            src_pb::Transport::Grpc,
         )
         .await?;
     let endpoint = if ep.starts_with("http") {
@@ -875,7 +875,7 @@ fn pick_tui(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     label: &str,
     contract: &str,
-    providers: &[atlas_pb::CapabilityProvider],
+    providers: &[src_pb::CapabilityProvider],
 ) -> Result<Option<String>> {
     let mut idx = 0usize;
     loop {
@@ -943,8 +943,8 @@ enum AudioSection {
 }
 
 struct AudioSettingsPage {
-    mic_providers: Vec<atlas_pb::CapabilityProvider>,
-    speaker_providers: Vec<atlas_pb::CapabilityProvider>,
+    mic_providers: Vec<src_pb::CapabilityProvider>,
+    speaker_providers: Vec<src_pb::CapabilityProvider>,
     mic_devices: Vec<crate::pb::audio::AudioDevice>,
     speaker_devices: Vec<crate::pb::audio::AudioDevice>,
 
@@ -963,7 +963,7 @@ struct AudioSettingsPage {
 }
 
 async fn fetch_devices_filtered(
-    atlas: &mut AtlasClient,
+    src: &mut SrcClient,
     provider_id: &str,
     kind: &str,
 ) -> Vec<crate::pb::audio::AudioDevice> {
@@ -972,12 +972,12 @@ async fn fetch_devices_filtered(
     if provider_id.is_empty() {
         return Vec::new();
     }
-    let endpoint = match atlas
+    let endpoint = match src
         .connect_capability(
             CONSUMER_ID,
             provider_id,
             LIST_CONTRACT,
-            atlas_pb::Transport::Grpc,
+            src_pb::Transport::Grpc,
         )
         .await
     {
@@ -1003,13 +1003,13 @@ async fn fetch_devices_filtered(
 }
 
 impl AudioSettingsPage {
-    async fn load(atlas: &mut AtlasClient, cfg: &ChatConfig) -> Self {
-        let mic_providers = atlas
-            .query_capabilities("", MIC_CONTRACT, atlas_pb::Transport::Grpc)
+    async fn load(src: &mut SrcClient, cfg: &ChatConfig) -> Self {
+        let mic_providers = src
+            .query_capabilities("", MIC_CONTRACT, src_pb::Transport::Grpc)
             .await
             .unwrap_or_default();
-        let speaker_providers = atlas
-            .query_capabilities("", SPEAKER_CONTRACT, atlas_pb::Transport::Grpc)
+        let speaker_providers = src
+            .query_capabilities("", SPEAKER_CONTRACT, src_pb::Transport::Grpc)
             .await
             .unwrap_or_default();
 
@@ -1026,8 +1026,8 @@ impl AudioSettingsPage {
                 .unwrap_or_default()
         });
 
-        let mic_devices = fetch_devices_filtered(atlas, &mic_cap_id, "input").await;
-        let speaker_devices = fetch_devices_filtered(atlas, &speaker_cap_id, "output").await;
+        let mic_devices = fetch_devices_filtered(src, &mic_cap_id, "input").await;
+        let speaker_devices = fetch_devices_filtered(src, &speaker_cap_id, "output").await;
 
         let mic_device_id = cfg.mic_device_id.clone().unwrap_or_default();
         let speaker_device_id = cfg.speaker_device_id.clone().unwrap_or_default();
@@ -1053,7 +1053,7 @@ impl AudioSettingsPage {
 
         let mut status = String::new();
         if mic_providers.is_empty() && speaker_providers.is_empty() {
-            status.push_str("no audio providers in atlas — boot the audio package first");
+            status.push_str("no audio providers in src — boot the audio package first");
         }
 
         Self {
@@ -1128,7 +1128,7 @@ impl AudioSettingsPage {
         };
     }
 
-    async fn enter(&mut self, atlas: &mut AtlasClient) {
+    async fn enter(&mut self, src: &mut SrcClient) {
         let i = self.current_cursor();
         match self.section {
             AudioSection::MicProvider => {
@@ -1136,7 +1136,7 @@ impl AudioSettingsPage {
                     let new_cap = p.id.clone();
                     if new_cap != self.mic_cap_id {
                         self.mic_cap_id = new_cap.clone();
-                        self.mic_devices = fetch_devices_filtered(atlas, &new_cap, "input").await;
+                        self.mic_devices = fetch_devices_filtered(src, &new_cap, "input").await;
                         self.mic_device_id.clear();
                         self.cursor_md = 0;
                     }
@@ -1148,7 +1148,7 @@ impl AudioSettingsPage {
                     let id = d.id.clone();
                     let name = d.name.clone();
                     self.mic_device_id = id.clone();
-                    match call_select_device(atlas, &self.mic_cap_id, "input", &id).await {
+                    match call_select_device(src, &self.mic_cap_id, "input", &id).await {
                         Ok(()) => self.status = format!("mic device → {name} ({id})"),
                         Err(e) => self.status = format!("mic device → {id} (warn: {e:#})"),
                     }
@@ -1160,7 +1160,7 @@ impl AudioSettingsPage {
                     if new_cap != self.speaker_cap_id {
                         self.speaker_cap_id = new_cap.clone();
                         self.speaker_devices =
-                            fetch_devices_filtered(atlas, &new_cap, "output").await;
+                            fetch_devices_filtered(src, &new_cap, "output").await;
                         self.speaker_device_id.clear();
                         self.cursor_sd = 0;
                     }
@@ -1172,7 +1172,7 @@ impl AudioSettingsPage {
                     let id = d.id.clone();
                     let name = d.name.clone();
                     self.speaker_device_id = id.clone();
-                    match call_select_device(atlas, &self.speaker_cap_id, "output", &id).await {
+                    match call_select_device(src, &self.speaker_cap_id, "output", &id).await {
                         Ok(()) => self.status = format!("speaker device → {name} ({id})"),
                         Err(e) => self.status = format!("speaker device → {id} (warn: {e:#})"),
                     }
@@ -1181,9 +1181,9 @@ impl AudioSettingsPage {
         }
     }
 
-    async fn refresh(&mut self, atlas: &mut AtlasClient) {
+    async fn refresh(&mut self, src: &mut SrcClient) {
         *self = Self::load(
-            atlas,
+            src,
             &ChatConfig {
                 mic_cap_id: (!self.mic_cap_id.is_empty()).then(|| self.mic_cap_id.clone()),
                 mic_device_id: (!self.mic_device_id.is_empty()).then(|| self.mic_device_id.clone()),
@@ -1210,7 +1210,7 @@ impl AudioSettingsPage {
             .add_modifier(Modifier::BOLD);
 
         let render_provider_row = |i: usize,
-                                   p: &atlas_pb::CapabilityProvider,
+                                   p: &src_pb::CapabilityProvider,
                                    sel: &str,
                                    in_section: bool,
                                    cursor: usize|
@@ -1413,14 +1413,14 @@ impl AudioSettingsPage {
 }
 
 async fn run_audio_settings_page(
-    atlas_endpoint: &str,
+    src_endpoint: &str,
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     cfg: ChatConfig,
 ) -> Result<ChatConfig> {
-    let mut atlas = AtlasClient::connect(atlas_endpoint)
+    let mut src = SrcClient::connect(src_endpoint)
         .await
-        .with_context(|| format!("connect to atlas at '{atlas_endpoint}' for audio settings"))?;
-    let mut page = AudioSettingsPage::load(&mut atlas, &cfg).await;
+        .with_context(|| format!("connect to src at '{src_endpoint}' for audio settings"))?;
+    let mut page = AudioSettingsPage::load(&mut src, &cfg).await;
 
     loop {
         terminal.draw(|f| page.draw(f))?;
@@ -1432,8 +1432,8 @@ async fn run_audio_settings_page(
                 (_, KeyCode::BackTab) => page.prev_section(),
                 (_, KeyCode::Up) | (_, KeyCode::Char('k')) => page.cursor_up(),
                 (_, KeyCode::Down) | (_, KeyCode::Char('j')) => page.cursor_down(),
-                (_, KeyCode::Enter) | (_, KeyCode::Char(' ')) => page.enter(&mut atlas).await,
-                (_, KeyCode::Char('r')) => page.refresh(&mut atlas).await,
+                (_, KeyCode::Enter) | (_, KeyCode::Char(' ')) => page.enter(&mut src).await,
+                (_, KeyCode::Char('r')) => page.refresh(&mut src).await,
                 (KeyModifiers::CONTROL, KeyCode::Char('a'))
                 | (_, KeyCode::Esc)
                 | (_, KeyCode::Char('q')) => break,
@@ -1478,8 +1478,8 @@ fn flash_picker_message(
 
 async fn run_tui(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
-    atlas_endpoint: &str,
-    liaison_endpoint: &str,
+    src_endpoint: &str,
+    gateway_endpoint: &str,
     mut chat_cfg: ChatConfig,
     audio_warnings: &[String],
 ) -> Result<()> {
@@ -1488,7 +1488,7 @@ async fn run_tui(
     initial.push(ChatMessage {
         role: Role::Status,
         text: format!(
-            "Connected to Liaison at {liaison_endpoint} as {local_user}. \
+            "Connected to Gateway at {gateway_endpoint} as {local_user}. \
              Enter = send · F2 = voice (auto end on silence) · Ctrl+A = audio settings · Esc = abort turn · Ctrl+C = quit."
         ),
     });
@@ -1519,7 +1519,7 @@ async fn run_tui(
             && let Event::Key(key) = event::read()?
         {
             if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
-                let _ = notify_session_end(liaison_endpoint, &session_id, &local_user).await;
+                let _ = notify_session_end(gateway_endpoint, &session_id, &local_user).await;
                 break;
             }
 
@@ -1531,7 +1531,7 @@ async fn run_tui(
                 && key.modifiers.contains(KeyModifiers::CONTROL)
                 && key.code == KeyCode::Char('a')
             {
-                match run_audio_settings_page(atlas_endpoint, terminal, chat_cfg.clone()).await {
+                match run_audio_settings_page(src_endpoint, terminal, chat_cfg.clone()).await {
                     Ok(new_cfg) => {
                         chat_cfg = new_cfg;
                         messages.borrow_mut().push(ChatMessage {
@@ -1569,7 +1569,7 @@ async fn run_tui(
                     busy,
                 )?;
                 if let Err(e) = run_voice_session_with_esc_abort(
-                    liaison_endpoint,
+                    gateway_endpoint,
                     &session_id,
                     &local_user,
                     Rc::clone(&messages),
@@ -1608,7 +1608,7 @@ async fn run_tui(
                     }
                     if msg == "quit" || msg == "exit" {
                         let _ =
-                            notify_session_end(liaison_endpoint, &session_id, &local_user).await;
+                            notify_session_end(gateway_endpoint, &session_id, &local_user).await;
                         break;
                     }
                     messages.borrow_mut().push(ChatMessage {
@@ -1628,7 +1628,7 @@ async fn run_tui(
                     )?;
 
                     match run_text_intent_with_esc_abort(
-                        liaison_endpoint,
+                        gateway_endpoint,
                         &session_id,
                         &local_user,
                         &msg,
@@ -1671,10 +1671,10 @@ async fn run_tui(
     Ok(())
 }
 
-// ── Liaison gRPC helpers ─────────────────────────────────────────────────────
+// ── Gateway gRPC helpers ─────────────────────────────────────────────────────
 
-fn build_text_task(session_id: &str, user_id: &str, text: &str) -> crate::pb::pilot::Task {
-    use crate::pb::pilot::Task;
+fn build_text_task(session_id: &str, user_id: &str, text: &str) -> crate::pb::planner::Task {
+    use crate::pb::planner::Task;
     const INTENT_SOURCE_TEXT: u32 = 0;
     Task {
         task_id: Uuid::new_v4().to_string(),
@@ -1691,8 +1691,8 @@ fn build_control_task(
     session_id: &str,
     user_id: &str,
     extra_context_json: &str,
-) -> crate::pb::pilot::Task {
-    use crate::pb::pilot::Task;
+) -> crate::pb::planner::Task {
+    use crate::pb::planner::Task;
     const INTENT_SOURCE_TEXT: u32 = 0;
     let mut ctx: serde_json::Value =
         serde_json::from_str(extra_context_json.trim()).unwrap_or_else(|_| serde_json::json!({}));
@@ -1710,52 +1710,52 @@ fn build_control_task(
     }
 }
 
-async fn notify_session_end(liaison_endpoint: &str, session_id: &str, user_id: &str) -> Result<()> {
-    use crate::pb::contracts::robonix_system_liaison_submit_client::RobonixSystemLiaisonSubmitClient;
+async fn notify_session_end(gateway_endpoint: &str, session_id: &str, user_id: &str) -> Result<()> {
+    use crate::pb::contracts::robonix_system_gateway_submit_client::RobonixSystemGatewaySubmitClient;
 
-    let mut client = RobonixSystemLiaisonSubmitClient::connect(liaison_endpoint.to_string())
+    let mut client = RobonixSystemGatewaySubmitClient::connect(gateway_endpoint.to_string())
         .await
-        .context("failed to connect to Liaison for session_end")?;
+        .context("failed to connect to Gateway for session_end")?;
 
     let task = build_control_task(session_id, user_id, r#"{"session_end":true}"#);
     let mut stream = client
         .submit_task(tonic::Request::new(task))
         .await
-        .context("Liaison Stream session_end failed")?
+        .context("Gateway Stream session_end failed")?
         .into_inner();
     while stream.next().await.is_some() {}
     Ok(())
 }
 
-async fn abort_session(liaison_endpoint: &str, session_id: &str, user_id: &str) -> Result<()> {
-    use crate::pb::contracts::robonix_system_liaison_submit_client::RobonixSystemLiaisonSubmitClient;
+async fn abort_session(gateway_endpoint: &str, session_id: &str, user_id: &str) -> Result<()> {
+    use crate::pb::contracts::robonix_system_gateway_submit_client::RobonixSystemGatewaySubmitClient;
 
-    let mut client = RobonixSystemLiaisonSubmitClient::connect(liaison_endpoint.to_string())
+    let mut client = RobonixSystemGatewaySubmitClient::connect(gateway_endpoint.to_string())
         .await
-        .context("failed to connect to Liaison for abort_turn")?;
+        .context("failed to connect to Gateway for abort_turn")?;
 
     let task = build_control_task(session_id, user_id, r#"{"abort_turn":true}"#);
     let _ = client
         .submit_task(tonic::Request::new(task))
         .await
-        .context("Liaison abort_turn Stream failed")?;
+        .context("Gateway abort_turn Stream failed")?;
     Ok(())
 }
 
 /// Fire-and-forget a mid-turn VOICE steer (Ctrl+V during a running turn):
 /// record + ASR another utterance via a fresh voice session and let its
-/// transcript submit — Pilot steers it into the active turn. TTS is disabled
+/// transcript submit — Planner steers it into the active turn. TTS is disabled
 /// here (the per-segment playback rides the main turn's stream); we just drain
 /// this session's events on a spawned task.
 fn spawn_voice_steer(
-    liaison_endpoint: &str,
+    gateway_endpoint: &str,
     session_id: &str,
     user_id: &str,
     chat_cfg: &ChatConfig,
 ) {
-    use crate::pb::contracts::robonix_system_liaison_voice_client::RobonixSystemLiaisonVoiceClient;
-    use crate::pb::liaison::StartVoiceSessionRequest;
-    let ep = liaison_endpoint.to_string();
+    use crate::pb::contracts::robonix_system_gateway_voice_client::RobonixSystemGatewayVoiceClient;
+    use crate::pb::gateway::StartVoiceSessionRequest;
+    let ep = gateway_endpoint.to_string();
     let req = StartVoiceSessionRequest {
         session_id: session_id.to_string(),
         client_user_id: user_id.to_string(),
@@ -1773,7 +1773,7 @@ fn spawn_voice_steer(
         context_json: String::new(),
     };
     tokio::spawn(async move {
-        if let Ok(mut client) = RobonixSystemLiaisonVoiceClient::connect(ep).await
+        if let Ok(mut client) = RobonixSystemGatewayVoiceClient::connect(ep).await
             && let Ok(resp) = client.start_voice_session(tonic::Request::new(req)).await
         {
             let mut s = resp.into_inner();
@@ -1786,7 +1786,7 @@ fn spawn_voice_steer(
 
 #[allow(clippy::too_many_arguments)]
 async fn run_text_intent_with_esc_abort(
-    liaison_endpoint: &str,
+    gateway_endpoint: &str,
     session_id: &str,
     user_id: &str,
     user_msg: &str,
@@ -1796,16 +1796,16 @@ async fn run_text_intent_with_esc_abort(
     input: &str,
     scroll: &mut u16,
 ) -> Result<()> {
-    use crate::pb::contracts::robonix_system_liaison_submit_client::RobonixSystemLiaisonSubmitClient;
-    use crate::pb::pilot::PilotEvent;
+    use crate::pb::contracts::robonix_system_gateway_submit_client::RobonixSystemGatewaySubmitClient;
+    use crate::pb::planner::PlannerEvent;
     use tonic::Status;
 
-    let (tx, mut rx) = tokio::sync::mpsc::channel::<Result<PilotEvent, Status>>(64);
-    let liaison_ep = liaison_endpoint.to_string();
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<Result<PlannerEvent, Status>>(64);
+    let gateway_ep = gateway_endpoint.to_string();
     let task = build_text_task(session_id, user_id, user_msg);
 
     let _stream_task = tokio::spawn(async move {
-        let mut client = match RobonixSystemLiaisonSubmitClient::connect(liaison_ep.clone()).await {
+        let mut client = match RobonixSystemGatewaySubmitClient::connect(gateway_ep.clone()).await {
             Ok(c) => c,
             Err(e) => {
                 let _ = tx.send(Err(Status::unavailable(e.to_string()))).await;
@@ -1828,7 +1828,7 @@ async fn run_text_intent_with_esc_abort(
     });
 
     // Mid-task input: the user can keep typing while the turn runs. Enter sends
-    // the text as a steer (a new Task on the same session); pilot routes it to
+    // the text as a steer (a new Task on the same session); planner routes it to
     // the running turn instead of starting a second one. The local buffer is
     // separate from the idle-draft `input` so the two never collide.
     let _ = input;
@@ -1841,13 +1841,13 @@ async fn run_text_intent_with_esc_abort(
                 match item {
                     None => break,
                     Some(Ok(event)) => {
-                        apply_pilot_event(&messages, forest, &event)?;
+                        apply_planner_event(&messages, forest, &event)?;
                         draw(terminal, &messages.borrow(), &forest.borrow(), &steer_input, 0, true)?;
                     }
                     Some(Err(e)) => {
                         messages.borrow_mut().push(ChatMessage {
                             role: Role::Status,
-                            text: format!("Liaison stream error: {e}"),
+                            text: format!("Gateway stream error: {e}"),
                         });
                         draw(terminal, &messages.borrow(), &forest.borrow(), &steer_input, 0, true)?;
                         break;
@@ -1859,7 +1859,7 @@ async fn run_text_intent_with_esc_abort(
                     && let Event::Key(key) = event::read()? {
                         match key.code {
                             KeyCode::Esc => {
-                                let _ = abort_session(liaison_endpoint, session_id, user_id).await;
+                                let _ = abort_session(gateway_endpoint, session_id, user_id).await;
                                 messages.borrow_mut().push(ChatMessage {
                                     role: Role::Status,
                                     text: "Esc — abort_turn sent (in-flight turn should stop)."
@@ -1876,7 +1876,7 @@ async fn run_text_intent_with_esc_abort(
                                         text: format!("(steer) {steer}"),
                                     });
                                     if let Err(e) =
-                                        send_steer(liaison_endpoint, session_id, user_id, &steer)
+                                        send_steer(gateway_endpoint, session_id, user_id, &steer)
                                             .await
                                     {
                                         messages.borrow_mut().push(ChatMessage {
@@ -1913,24 +1913,24 @@ async fn run_text_intent_with_esc_abort(
     Ok(())
 }
 
-/// Submit `text` as a mid-task steer on an already-running session. Pilot routes
+/// Submit `text` as a mid-task steer on an already-running session. Planner routes
 /// it to the live turn's steer queue and returns an empty stream, which we drain.
 async fn send_steer(
-    liaison_endpoint: &str,
+    gateway_endpoint: &str,
     session_id: &str,
     user_id: &str,
     text: &str,
 ) -> Result<()> {
-    use crate::pb::contracts::robonix_system_liaison_submit_client::RobonixSystemLiaisonSubmitClient;
+    use crate::pb::contracts::robonix_system_gateway_submit_client::RobonixSystemGatewaySubmitClient;
 
-    let mut client = RobonixSystemLiaisonSubmitClient::connect(liaison_endpoint.to_string())
+    let mut client = RobonixSystemGatewaySubmitClient::connect(gateway_endpoint.to_string())
         .await
-        .context("failed to connect to Liaison for steer")?;
+        .context("failed to connect to Gateway for steer")?;
     let task = build_text_task(session_id, user_id, text);
     let mut stream = client
         .submit_task(tonic::Request::new(task))
         .await
-        .context("Liaison steer submit failed")?
+        .context("Gateway steer submit failed")?
         .into_inner();
     while stream.next().await.is_some() {}
     Ok(())
@@ -1940,7 +1940,7 @@ async fn send_steer(
 
 #[allow(clippy::too_many_arguments)]
 async fn run_voice_session_with_esc_abort(
-    liaison_endpoint: &str,
+    gateway_endpoint: &str,
     session_id: &str,
     user_id: &str,
     messages: Rc<RefCell<Vec<ChatMessage>>>,
@@ -1950,8 +1950,8 @@ async fn run_voice_session_with_esc_abort(
     scroll: &mut u16,
     chat_cfg: &ChatConfig,
 ) -> Result<()> {
-    use crate::pb::contracts::robonix_system_liaison_voice_client::RobonixSystemLiaisonVoiceClient;
-    use crate::pb::liaison::{StartVoiceSessionRequest, VoiceEvent};
+    use crate::pb::contracts::robonix_system_gateway_voice_client::RobonixSystemGatewayVoiceClient;
+    use crate::pb::gateway::{StartVoiceSessionRequest, VoiceEvent};
     use tonic::Status;
 
     let req = StartVoiceSessionRequest {
@@ -1972,10 +1972,10 @@ async fn run_voice_session_with_esc_abort(
     };
 
     let (tx, mut rx) = tokio::sync::mpsc::channel::<Result<VoiceEvent, Status>>(64);
-    let liaison_ep = liaison_endpoint.to_string();
+    let gateway_ep = gateway_endpoint.to_string();
 
     let _stream_task = tokio::spawn(async move {
-        let mut client = match RobonixSystemLiaisonVoiceClient::connect(liaison_ep.clone()).await {
+        let mut client = match RobonixSystemGatewayVoiceClient::connect(gateway_ep.clone()).await {
             Ok(c) => c,
             Err(e) => {
                 let _ = tx.send(Err(Status::unavailable(e.to_string()))).await;
@@ -1999,7 +1999,7 @@ async fn run_voice_session_with_esc_abort(
 
     // Mid-task steer during a voice turn (mirrors the text turn): type + Enter
     // sends a text steer; Ctrl+V records another utterance as a voice steer.
-    // Pilot routes either into the running turn instead of starting a new one.
+    // Planner routes either into the running turn instead of starting a new one.
     let _ = input;
     let mut steer_input = String::new();
 
@@ -2033,15 +2033,15 @@ async fn run_voice_session_with_esc_abort(
                                 role: Role::Voice,
                                 text: "Ctrl+V — voice steer: speak your addition…".to_string(),
                             });
-                            spawn_voice_steer(liaison_endpoint, session_id, user_id, chat_cfg);
+                            spawn_voice_steer(gateway_endpoint, session_id, user_id, chat_cfg);
                             draw(terminal, &messages.borrow(), &forest.borrow(), &steer_input, *scroll, true)?;
                         } else {
                             match key.code {
                                 KeyCode::Esc => {
-                                    let _ = abort_session(liaison_endpoint, session_id, user_id).await;
+                                    let _ = abort_session(gateway_endpoint, session_id, user_id).await;
                                     messages.borrow_mut().push(ChatMessage {
                                         role: Role::Status,
-                                        text: "Esc — abort_turn sent (Pilot stops; voice playback may still finish).".to_string(),
+                                        text: "Esc — abort_turn sent (Planner stops; voice playback may still finish).".to_string(),
                                     });
                                     draw(terminal, &messages.borrow(), &forest.borrow(), &steer_input, *scroll, true)?;
                                 }
@@ -2054,7 +2054,7 @@ async fn run_voice_session_with_esc_abort(
                                             text: format!("(steer) {steer}"),
                                         });
                                         if let Err(e) =
-                                            send_steer(liaison_endpoint, session_id, user_id, &steer).await
+                                            send_steer(gateway_endpoint, session_id, user_id, &steer).await
                                         {
                                             messages.borrow_mut().push(ChatMessage {
                                                 role: Role::Status,
@@ -2115,7 +2115,7 @@ fn voice_node(env_key: &str) -> String {
 
 /// Same as `voice_node` but falls back to `cfg_value` (from chat.yaml)
 /// when the env var is unset / empty. Empty result still means "let
-/// liaison auto-pick from atlas".
+/// gateway auto-pick from src".
 fn voice_node_with_cfg(env_key: &str, cfg_value: Option<&str>) -> String {
     if let Ok(v) = std::env::var(env_key)
         && !v.is_empty()
@@ -2127,12 +2127,12 @@ fn voice_node_with_cfg(env_key: &str, cfg_value: Option<&str>) -> String {
 
 // ── Event → ChatMessage rendering ────────────────────────────────────────────
 
-fn apply_pilot_event(
+fn apply_planner_event(
     messages: &Rc<RefCell<Vec<ChatMessage>>>,
     forest: &Rc<RefCell<ForestView>>,
-    event: &crate::pb::pilot::PilotEvent,
+    event: &crate::pb::planner::PlannerEvent,
 ) -> Result<()> {
-    // event_kind discriminants — see PilotEvent.msg.
+    // event_kind discriminants — see PlannerEvent.msg.
     const EVT_TEXT_CHUNK: u32 = 0;
     const EVT_PLAN: u32 = 1;
     const EVT_BATCH_RESULT: u32 = 2;
@@ -2227,7 +2227,7 @@ fn apply_pilot_event(
 /// ├─ navigate(kitchen)
 /// └─ grasp(water cup)
 /// ```
-fn render_plan_tree(plan: &crate::pb::pilot::Plan) -> String {
+fn render_plan_tree(plan: &crate::pb::planner::Plan) -> String {
     let mut lines = vec![format!("[plan {}]", plan.plan_id)];
     if (plan.root_index as usize) < plan.nodes.len() {
         render_plan_node(plan, plan.root_index as usize, "", true, true, &mut lines);
@@ -2236,7 +2236,7 @@ fn render_plan_tree(plan: &crate::pb::pilot::Plan) -> String {
 }
 
 fn render_plan_node(
-    plan: &crate::pb::pilot::Plan,
+    plan: &crate::pb::planner::Plan,
     idx: usize,
     prefix: &str,
     is_root: bool,
@@ -2274,7 +2274,7 @@ fn render_plan_node(
 fn apply_voice_event(
     messages: &Rc<RefCell<Vec<ChatMessage>>>,
     forest: &Rc<RefCell<ForestView>>,
-    event: &crate::pb::liaison::VoiceEvent,
+    event: &crate::pb::gateway::VoiceEvent,
 ) -> Result<()> {
     // Mirror the kinds in voice.rs / VoiceEvent.msg
     const KIND_SESSION_STARTED: u32 = 0;
@@ -2283,7 +2283,7 @@ fn apply_voice_event(
     const KIND_ASR_PARTIAL: u32 = 3;
     const KIND_ASR_FINAL: u32 = 4;
     const KIND_USER_IDENTIFIED: u32 = 5;
-    const KIND_PILOT: u32 = 6;
+    const KIND_PLANNER: u32 = 6;
     const KIND_TTS_STARTED: u32 = 7;
     const KIND_TTS_DONE: u32 = 8;
     const KIND_SESSION_DONE: u32 = 9;
@@ -2322,9 +2322,9 @@ fn apply_voice_event(
                 text: label,
             });
         }
-        KIND_PILOT => {
-            if let Some(ref pe) = event.pilot {
-                apply_pilot_event(messages, forest, pe)?;
+        KIND_PLANNER => {
+            if let Some(ref pe) = event.planner {
+                apply_planner_event(messages, forest, pe)?;
             }
         }
         KIND_TTS_STARTED => {
@@ -2387,8 +2387,8 @@ fn draw(
                         .add_modifier(Modifier::BOLD),
                 ),
                 // "Robonix:" — the user-facing system name. The reply
-                // went through Liaison → Pilot → tools → Liaison → here,
-                // so naming it after one internal crate ("Pilot") leaks
+                // went through Gateway → Planner → tools → Gateway → here,
+                // so naming it after one internal crate ("Planner") leaks
                 // an architectural detail that the user has no reason
                 // to know or care about.
                 Role::Agent => ("Robonix: ", "         ", Style::default().fg(Color::Green)),
@@ -2469,14 +2469,14 @@ fn now_ms() -> u64 {
         .as_millis() as u64
 }
 
-/// Pilot/Liaison bind IPv4 (`0.0.0.0`). Resolving `localhost` often prefers
+/// Planner/Gateway bind IPv4 (`0.0.0.0`). Resolving `localhost` often prefers
 /// `::1`, so the gRPC client hits IPv6 and gets connection refused — force IPv4 loopback.
 fn localhost_to_ipv4_loopback(url: &str) -> String {
     url.replace("localhost", "127.0.0.1")
 }
 
 /// Tiny username probe — avoids pulling in `whoami` for the CLI by reading
-/// $USER/$USERNAME with a "user" fallback. Liaison uses the real `whoami`
+/// $USER/$USERNAME with a "user" fallback. Gateway uses the real `whoami`
 /// crate when it stamps the canonical `local:<user>` identity.
 fn whoami_username() -> String {
     std::env::var("USER")

@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MulanPSL-2.0
 # audio_driver runtime — runs on host (no sim container). Uses arecord /
 # aplay against the host's ALSA stack to expose
-# robonix/primitive/audio/{mic,speaker,driver} on atlas.
+# robonix/primitive/audio/{mic,speaker,driver} on src.
 set -eo pipefail
 
 PKG_ROOT="${RBNX_PACKAGE_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"

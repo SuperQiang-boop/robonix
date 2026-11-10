@@ -1,6 +1,6 @@
 """VLM helpers — image description and question answering.
 
-Reuses Pilot's VLM config (VLM_BASE_URL / VLM_API_KEY / VLM_MODEL).
+Reuses Planner's VLM config (VLM_BASE_URL / VLM_API_KEY / VLM_MODEL).
 Falls back to template-based summary when VLM is unavailable.
 
 Image saving is handled by ``RememberPipeline`` — when ``image_base64``
@@ -22,7 +22,7 @@ from .types import ObjectCoord
 
 log = logging.getLogger("scribe_mem")
 
-# ── VLM config (reuses Pilot's env vars) ───────────────────────────────────
+# ── VLM config (reuses Planner's env vars) ───────────────────────────────────
 
 def _vlm_config() -> dict:
     return {
@@ -230,5 +230,4 @@ def _template_summary(objects: List[ObjectCoord], scene_type: str) -> str:
     obj_str = ", ".join(labels) if labels else "surroundings"
     loc = scene_type.replace("_", " ") if scene_type else "current area"
     return f"observed {obj_str} in the {loc}"
-
 

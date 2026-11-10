@@ -2,7 +2,7 @@
 
 This package provides the G1 built-in microphone and speaker as a Robonix audio primitive.
 The `speech` service can send text to G1's built-in speech service, or
-synthesize PCM for the `g1_audio` speaker. Liaison can consume the onboard
+synthesize PCM for the `g1_audio` speaker. Gateway can consume the onboard
 microphone through the standard `robonix/primitive/audio/mic` stream.
 
 The microphone is captured on demand. When a client opens the mic stream, the
@@ -40,7 +40,7 @@ rbnx caps -v | grep -E 'g1_audio|speech/speak'
 ## Speak a test phrase
 
 Call the `robonix/service/speech/speak` MCP capability from a Robonix-connected
-MCP client (for example, the project's Pilot/client) with:
+MCP client (for example, the project's Planner/client) with:
 
 ```json
 {"target":"g1_audio","text":"你好，这是 G1 语音播报测试。"}

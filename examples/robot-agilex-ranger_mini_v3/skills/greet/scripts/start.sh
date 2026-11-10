@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MulanPSL-2.0
-# greet skill start (native). Runs the atlas bridge under the skill venv,
+# greet skill start (native). Runs the src bridge under the skill venv,
 # with ROS + codegen + robonix-api on PYTHONPATH.
 set -euo pipefail
 PKG="${RBNX_PACKAGE_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
@@ -26,6 +26,6 @@ if ROBONIX_PY="$(rbnx path robonix-api 2>/dev/null)"; then
 fi
 export GREET_YOLO_WEIGHTS="${GREET_YOLO_WEIGHTS:-$PKG/weights/yolov8n.pt}"
 
-# -u: unbuffered stdio so log lines flush immediately and scribe (boot's
+# -u: unbuffered stdio so log lines flush immediately and log (boot's
 # stdout collector) captures them — otherwise greet.log stays empty.
-exec "$PKG/.venv/bin/python" -u -m greet_skill.atlas_bridge
+exec "$PKG/.venv/bin/python" -u -m greet_skill.src_bridge

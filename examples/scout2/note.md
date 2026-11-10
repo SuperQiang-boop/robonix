@@ -11,8 +11,8 @@
 
 ## 实现过程
 
-1. Scout2 部署配置启用 `SCENE_RESTORE_ON_START: "true"`，Scene 启动时将对象状态绑定到配置的地图 ID `scout2_main`。
-2. Scene 后台任务默认每 3 秒把当前地图中非机器人对象的位置写入对象数据库。该间隔可由 `SCENE_OBJECT_PERSIST_INTERVAL_S` 调整。地图切换或坐标系世代变化时，Scene 清理旧活动分区，避免把旧地图坐标误认为新地图坐标。
+1. Scout2 部署配置启用 `WORLD_RESTORE_ON_START: "true"`，Scene 启动时将对象状态绑定到配置的地图 ID `scout2_main`。
+2. Scene 后台任务默认每 3 秒把当前地图中非机器人对象的位置写入对象数据库。该间隔可由 `WORLD_OBJECT_PERSIST_INTERVAL_S` 调整。地图切换或坐标系世代变化时，Scene 清理旧活动分区，避免把旧地图坐标误认为新地图坐标。
 3. Scene 容器通过持久化数据目录挂载保存对象数据库，因此容器退出或项目重启后数据库仍在。显式保存地图时，Scene 也会把物体快照写入独立分区，并将该分区记录在地图元数据中，供加载已保存地图时恢复。
 4. 新增 `GET /api/maps/{map_id}/objects`，按地图 ID 查询对象坐标等信息。
 
@@ -23,9 +23,9 @@
 | 数据 | 默认位置 | 内容 |
 | --- | --- | --- |
 | 地图 | `services/service-map-rbnx/maps/<map_id>/`，Scout2 示例为 `services/service-map-rbnx/maps/scout2_main/` | RTAB-Map 地图数据库 `rtabmap.db` 及地图预览、元数据等文件 |
-| Scene 物体 | `system/scene/rbnx-build/data/robonix/scene_memory/objects.db` | SQLite 对象记录；活动记录按地图 ID 分区，显式地图快照使用独立分区 |
+| Scene 物体 | `system/world/rbnx-build/data/robonix/scene_memory/objects.db` | SQLite 对象记录；活动记录按地图 ID 分区，显式地图快照使用独立分区 |
 
-Scene 启动脚本将主机上的 `system/scene/rbnx-build/data/robonix/` 挂载为容器内 `/data/robonix/`。因此对象库**不放在** `maps/` 目录中。Scene 数据根目录可通过 `SCENE_DATA_DIR` 覆盖，对象库文件可通过 `SCENE_OBJECT_MEMORY_DB` 覆盖；地图目录可通过 `MAPPING_MAPS_DIR` 覆盖。部署时应保证这些目录位于持久化存储上。
+Scene 启动脚本将主机上的 `system/world/rbnx-build/data/robonix/` 挂载为容器内 `/data/robonix/`。因此对象库**不放在** `maps/` 目录中。Scene 数据根目录可通过 `WORLD_DATA_DIR` 覆盖，对象库文件可通过 `WORLD_OBJECT_MEMORY_DB` 覆盖；地图目录可通过 `MAPPING_MAPS_DIR` 覆盖。部署时应保证这些目录位于持久化存储上。
 
 地图 ID 是两类数据的关联键。Scout2 当前使用 `scout2_main`；查询该地图时，Scene 从对象库选择相应活动分区，或在活动分区为空时使用地图元数据指定的快照分区。加载已保存地图后，Scene 根据地图元数据恢复对应的对象快照。地图文件和对象库需要一起保留，才能跨重启恢复完整的地图与物体信息。
 
@@ -44,7 +44,7 @@ GET /api/maps/scout2_main/objects
 ## 验证记录
 
 本次相关代码已执行 Python 语法检查、启动脚本 `bash -n` 检查及 `git diff --check`。Scene 版本隔离、快照关联和删除清理测试已通过：
-`PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest -q system/scene/tests/test_map_epoch.py system/scene/tests/test_persistence.py system/scene/tests/test_annotations.py`
+`PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest -q system/world/tests/test_map_epoch.py system/world/tests/test_persistence.py system/world/tests/test_annotations.py`
 结果为 `25 passed, 24 skipped`。跳过项依赖未安装的 Milvus 运行时。
 
 ## 同名地图重建时的物体错配与删除方案
@@ -83,7 +83,7 @@ curl -X POST http://localhost:8091/api/maps/delete \
 
 如果部分清理失败，响应会包含 `scene_cleanup_error`；对象快照删除失败时会保留地图元数据，便于再次调用接口重试。8091 页面原有的 `POST /api/delete` 只处理地图文件，不能单独用于删除地图对应的 Scene 物体。
 
-现已将 8091 的 `POST /api/delete` 接口改为联动删除：Mapping 成功删除地图文件后，会向 Scene 的 `POST /api/maps/delete` 发送同一个 `map_id`，清理对象、元数据和标注。Scene 地址由 `SCENE_WEB_URL` 配置，默认值为 `http://127.0.0.1:50107`。如果 Scene 未启动或调用失败，8091 仍返回地图删除结果，并在 `scene_cleanup_error` 中报告物体清理失败，便于重试 Scene 删除。
+现已将 8091 的 `POST /api/delete` 接口改为联动删除：Mapping 成功删除地图文件后，会向 Scene 的 `POST /api/maps/delete` 发送同一个 `map_id`，清理对象、元数据和标注。Scene 地址由 `WORLD_WEB_URL` 配置，默认值为 `http://127.0.0.1:50107`。如果 Scene 未启动或调用失败，8091 仍返回地图删除结果，并在 `scene_cleanup_error` 中报告物体清理失败，便于重试 Scene 删除。
 
 ### 8091 联动删除实现
 
@@ -97,7 +97,7 @@ curl -X POST http://localhost:8091/api/delete \
   -d '{"map_id":"scout2_main"}'
 ```
 
-Scene 服务地址可通过 `SCENE_WEB_URL` 覆盖，默认是 `http://127.0.0.1:50107`。若 Scene 删除失败，8091 响应仍会返回 Mapping 的地图删除结果，并增加 `scene_cleanup_error` 字段。修改后需要重新构建并重启 Mapping 服务，才能让运行中的 8091 使用新逻辑。
+Scene 服务地址可通过 `WORLD_WEB_URL` 覆盖，默认是 `http://127.0.0.1:50107`。若 Scene 删除失败，8091 响应仍会返回 Mapping 的地图删除结果，并增加 `scene_cleanup_error` 字段。修改后需要重新构建并重启 Mapping 服务，才能让运行中的 8091 使用新逻辑。
 
 ## 删除正在加载的地图
 
@@ -116,7 +116,7 @@ Scene 服务地址可通过 `SCENE_WEB_URL` 覆盖，默认是 `http://127.0.0.1
 Scout2 原有部分 primitive 和 skill 启动脚本写死了旧用户目录，例如
 `/home/user/miniforge3`、`/home/szh/miniforge3` 和
 `/home/user/robonix`。切换到 `root`、`test` 或其他用户后，这些目录可能
-不存在，或其中的 Python 环境不可访问，导致 primitive 在注册 Atlas 前
+不存在，或其中的 Python 环境不可访问，导致 primitive 在注册 Src 前
 退出或超时。
 
 当前脚本不再依赖旧用户的绝对路径，Python 运行环境按以下顺序选择：
@@ -170,7 +170,7 @@ rbnx boot
 在 `/data/robonix/examples/scout2/.venv` 激活后，Python 环境检查通过；
 `audio_driver`、`robot_description` 和 `scout2_chassis` 在真实启动中完成
 注册，后两者进入 ACTIVE。`scout2_camera` 和 `scout2_lidar` 也已完成注册，
-不再出现旧 Conda 路径、缺少 `anyio` 或 Atlas 注册超时问题。
+不再出现旧 Conda 路径、缺少 `anyio` 或 Src 注册超时问题。
 
 完整启动仍可能因 ROS 传感器没有实际数据而失败。最近一次验证中，Domain
 42 可以看到 `/camera/camera/color/image_raw` 和 `/scan`，但在超时时间内
@@ -191,7 +191,7 @@ FASTDDS_BUILTIN_TRANSPORTS: UDPv4
 同一个 Linux 用户，并避免重复启动 Velodyne 驱动；当前主机曾同时存在两套
 `velodyne_container`，应在正式启动前只保留一套。
 
-再次执行 `rbnx boot --no-update-check` 时，Soma stage 1 的五个 primitive 均
+再次执行 `rbnx boot --no-update-check` 时，Robotdesc stage 1 的五个 primitive 均
 进入 ACTIVE，证明该配置修复了本次相机和雷达收不到数据的问题。后续 Scene
 Docker 镜像因安装了不兼容的 MCP 2.x 而未能注册；已将 Scene 依赖约束为
 `mcp<2`，本机 `robonix-scene:latest` 镜像也已更新并通过 FastMCP 导入检查。
@@ -257,7 +257,7 @@ docker ps -a --format '{{.Names}} {{.Status}}' \
   | grep -E 'robonix|mapping|scene' || true
 
 ps -ef \
-  | grep -E 'robonix-(atlas|soma|executor|pilot|liaison|vitals)|scene_service|mapping_rbnx|rtabmap' \
+  | grep -E 'robonix-(src|robotdesc|executor|planner|gateway|monitor)|world_service|mapping_rbnx|rtabmap' \
   | grep -v grep || true
 ```
 
@@ -268,7 +268,7 @@ ps -ef \
 
 ```bash
 MAPS=/data/robonix/examples/scout2/services/service-map-rbnx/maps
-SCENE=/data/robonix/system/scene/rbnx-build/data/robonix
+SCENE=/data/robonix/system/world/rbnx-build/data/robonix
 
 ls -la "$MAPS" "$SCENE"
 find "$MAPS" -maxdepth 3 -print
@@ -317,6 +317,6 @@ done
 和 Scene 会按需重新创建空目录、运行数据库和对象库，这是正常行为。
 
 如果启动前设置过 `MAPPING_MAPS_DIR`、`MAPPING_RUNTIME_DB_DIR`、
-`SCENE_DATA_DIR`、`SCENE_OBJECT_MEMORY_DB`、`SCENE_ANNOTATIONS_DIR`、
-`SCENE_MAP_META_DIR` 或 `SCENE_GRAPH_CACHE_DIR`，实际数据可能位于覆盖路径。
+`WORLD_DATA_DIR`、`WORLD_OBJECT_MEMORY_DB`、`WORLD_ANNOTATIONS_DIR`、
+`WORLD_MAP_META_DIR` 或 `WORLD_GRAPH_CACHE_DIR`，实际数据可能位于覆盖路径。
 必须先核对这些环境变量并清理其指向目录，不能仅清理上述默认位置。

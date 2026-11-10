@@ -10,7 +10,7 @@ if ! docker ps --format '{{.Names}}' | grep -qx "$SIM_CT"; then
   exit 1
 fi
 
-# Resolve an endpoint that host-side Soma can dial back into the container.
+# Resolve an endpoint that host-side Robotdesc can dial back into the container.
 resolve_advertise_host() {
   if [[ -n "${ROBONIX_ADVERTISE_HOST:-}" ]]; then
     printf '%s\n' "$ROBONIX_ADVERTISE_HOST"
@@ -33,7 +33,7 @@ resolve_advertise_host() {
 ADVERTISE_HOST="$(resolve_advertise_host)"
 
 exec docker exec \
-  -e ROBONIX_ATLAS="${ROBONIX_SIM_ATLAS:-${ROBONIX_ATLAS:-127.0.0.1:50051}}" \
+  -e ROBONIX_SRC="${ROBONIX_SIM_SRC:-${ROBONIX_SRC:-127.0.0.1:50051}}" \
   -e ROBONIX_ADVERTISE_HOST="$ADVERTISE_HOST" \
   -e ROBONIX_PKG_HOST_DIR="$(cd "$(dirname "$0")/.." && pwd)" \
   -e PYTHONPATH="/robonix_pkgs/pylib/robonix-api:/robonix_pkgs/primitives/tiago_health/rbnx-build/codegen/proto_gen" \

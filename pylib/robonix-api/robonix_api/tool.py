@@ -2,7 +2,7 @@
 """Contract-enforced MCP tools on top of FastMCP + robonix-codegen ROS dataclasses.
 
 The decorator stashes the codegen IO classes + contract id on the original
-handler so Capability.run() can derive atlas DeclareCapability metadata
+handler so Capability.run() can derive src DeclareCapability metadata
 (JSON Schema, description) without re-reflecting annotations.
 """
 from __future__ import annotations
@@ -127,7 +127,7 @@ def mcp_contract(
 
     Use directly with your own FastMCP app, OR use the provider's
     `@<provider>.mcp(...)` decorator (Primitive / Service / Skill) for a
-    one-stop registration that also auto-declares to atlas + manages uvicorn.
+    one-stop registration that also auto-declares to src + manages uvicorn.
 
     The MCP-server-side tool name is **always** the contract_id's leaf
     segment — executor's dispatch derives the same value from contract_id

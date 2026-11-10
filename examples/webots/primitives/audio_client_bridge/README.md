@@ -2,7 +2,7 @@
 
 Audio primitive that runs on the Robonix host but routes mic + speaker through
 the selected `robonix-client` device. It implements the same audio contracts
-as `audio_driver`; both providers can be registered at once, and Liaison uses
+as `audio_driver`; both providers can be registered at once, and Gateway uses
 the provider selected by the client for F2, voice-steer, and hands-free turns.
 
 Both halves (the Linux primitive package and the macOS server) live
@@ -25,10 +25,10 @@ audio_client_bridge/
 ## Transport
 
 The default is a reverse WebSocket transport. During driver init the primitive
-binds `0.0.0.0:60002`, publishes its endpoint through Atlas, and waits for
+binds `0.0.0.0:60002`, publishes its endpoint through Src, and waits for
 `robonix-client` to connect. The deployment never stores a client IP.
 
-The client discovers this endpoint through Atlas after the operator selects
+The client discovers this endpoint through Src after the operator selects
 `audio_client_bridge` as an input or output route. Its Audio page owns local
 device selection, audio level display, and the reverse connection lifecycle.
 

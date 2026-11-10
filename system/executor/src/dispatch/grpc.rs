@@ -5,8 +5,8 @@
 // exists for future Robonix-internal contracts that consumers may invoke via
 // gRPC after `ConnectCapability` returns endpoint + GrpcParams.
 
-use crate::pb::pilot::{CapabilityCall, CapabilityCallResult};
-use robonix_scribe::warn;
+use crate::pb::planner::{CapabilityCall, CapabilityCallResult};
+use robonix_log::warn;
 
 #[allow(dead_code)]
 pub async fn execute(call: &CapabilityCall, endpoint: &str) -> CapabilityCallResult {

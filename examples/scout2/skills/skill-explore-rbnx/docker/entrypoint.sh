@@ -2,11 +2,11 @@
 # SPDX-License-Identifier: MulanPSL-2.0
 # explore_rbnx container entrypoint.
 #
-# Single long-running process: explore_skill.atlas_bridge runs an
-# rclpy node, registers 3 MCP capabilities with atlas, and serves
+# Single long-running process: explore_skill.src_bridge runs an
+# rclpy node, registers 3 MCP capabilities with src, and serves
 # them via FastMCP HTTP. The skill's task lifecycle (driving the
 # robot through frontier-based exploration) is internal to that
-# process; map / nav are atlas-resolved.
+# process; map / nav are src-resolved.
 set -eo pipefail
 
 source /opt/ros/humble/setup.bash
@@ -44,7 +44,7 @@ cd /explore
 # start.sh generates these stubs with this image and bind-masks host proto_gen.
 # Fail before importing the skill so protobuf compatibility errors are explicit.
 PROTO_GEN=/explore/rbnx-build/codegen/proto_gen
-if [ ! -f "$PROTO_GEN/atlas_pb2.py" ] \
+if [ ! -f "$PROTO_GEN/src_pb2.py" ] \
     || [ ! -f "$PROTO_GEN/explore_pb2.py" ] \
     || [ ! -f "$PROTO_GEN/robonix_contracts_pb2_grpc.py" ]; then
     echo "[entrypoint] missing runtime-compatible protobuf stubs in $PROTO_GEN; rebuild and restart explore" >&2
@@ -63,4 +63,4 @@ mkdir -p /explore/rbnx-build/data
 # `sed` block-buffers in a pipe, so the skill's log lines never flushed to the
 # container's stdout and `rbnx logs -t com.robonix.skill.explore` showed
 # nothing. rbnx already tags each component's output, so no prefix is needed.
-exec python3 -u -m explore_skill.atlas_bridge
+exec python3 -u -m explore_skill.src_bridge

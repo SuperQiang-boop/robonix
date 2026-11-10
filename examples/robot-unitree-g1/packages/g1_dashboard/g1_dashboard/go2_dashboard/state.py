@@ -29,12 +29,12 @@ VOICE_STATUSES = frozenset(
         "idle",
         "accepted",
         "connecting",
-        "liaison",
+        "gateway",
         "recording",
         "asr",
         "recognized",
         "authorized",
-        "pilot",
+        "planner",
         "completed",
         "failed",
     }
@@ -198,11 +198,11 @@ class DashboardState:
             "intent_target": "",
             "intent_summary": "",
             "blocked_reason": "",
-            "pilot_task_status": "",
+            "planner_task_status": "",
             "capability_calls_observed": 0,
             "updated_at": float(wall_fn()),
             "limits": {},
-            "delegates_to": "robonix/system/liaison/voice",
+            "delegates_to": "robonix/system/gateway/voice",
             "direct_robot_control": False,
             "audio_persisted": False,
         }
@@ -355,7 +355,7 @@ class DashboardState:
         limits: Mapping[str, Any],
         execution_mode: str = "preview",
     ) -> dict[str, Any]:
-        """Declare the optional Liaison-only browser voice surface."""
+        """Declare the optional Gateway-only browser voice surface."""
 
         normalized_mode = _bounded_text(execution_mode, 16).lower()
         if normalized_mode not in VOICE_EXECUTION_MODES:
@@ -378,7 +378,7 @@ class DashboardState:
                     "intent_target": "",
                     "intent_summary": "",
                     "blocked_reason": "",
-                    "pilot_task_status": "",
+                    "planner_task_status": "",
                     "capability_calls_observed": 0,
                     "updated_at": float(self._wall()),
                     "limits": copy.deepcopy(dict(limits)),
@@ -421,7 +421,7 @@ class DashboardState:
         intent_target: str | None = None,
         intent_summary: str | None = None,
         blocked_reason: str | None = None,
-        pilot_task_status: str | None = None,
+        planner_task_status: str | None = None,
         capability_calls_observed: int | None = None,
     ) -> dict[str, Any]:
         normalized_status = _bounded_text(status, 32).lower()
@@ -457,7 +457,7 @@ class DashboardState:
                 ("intent_target", intent_target, 128),
                 ("intent_summary", intent_summary, 300),
                 ("blocked_reason", blocked_reason, 500),
-                ("pilot_task_status", pilot_task_status, 64),
+                ("planner_task_status", planner_task_status, 64),
             )
             for key, value, limit in optional_text:
                 if value is not None:

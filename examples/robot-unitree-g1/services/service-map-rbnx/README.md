@@ -6,7 +6,7 @@ grid**, a **3D point cloud**, and a **SLAM-corrected pose**, published under a
 fixed, engine-agnostic capability surface (`robonix/service/map/*`), and
 persists named maps so a robot can re-localize across restarts.
 
-It is a Robonix **service** package: it registers with `atlas`, discovers its
+It is a Robonix **service** package: it registers with `src`, discovers its
 sensor inputs by capability contract (never hardcoded topics), and is brought
 up by `rbnx boot`. Consumers (`scene`, `nav`) bind the contracts, not the
 SLAM engine.
@@ -36,7 +36,7 @@ robot-specific branches.
 
 1. **Register your sensors** as Robonix primitives under the standard
    contracts (`robonix/primitive/lidar/lidar3d`, `.../camera/depth`,
-   `.../chassis/odom`, …). mapping discovers them via atlas.
+   `.../chassis/odom`, …). mapping discovers them via src.
 2. **Pick a deployment target** and reference the matching package manifest
    from your deploy `robonix_manifest.yaml`:
 
@@ -60,7 +60,7 @@ robot-specific branches.
    ```
 3. `rbnx build -f robonix_manifest.yaml` then `rbnx boot -f robonix_manifest.yaml`.
 4. Consume the map: subscribe to `robonix/service/map/occupancy_grid` /
-   `.../pointcloud` / `.../pose` (resolve them via atlas).
+   `.../pointcloud` / `.../pose` (resolve them via src).
 
 [`config/rtabmap_params.template.yaml`](config/rtabmap_params.template.yaml) is
 only a starting template. Copy it into the robot deployment repository and set
@@ -298,7 +298,7 @@ reads the live `/map` + pose straight off the bridge's rclpy node.
 - **Live lidar overlay** — the current range returns are drawn on the map in
   green (2-D scan) and blue (point cloud). This is the check that answers "is
   localization right": if the returns do not sit on the walls of the map, the
-  pose is wrong. Topics come from whatever Atlas resolved for
+  pose is wrong. Topics come from whatever Src resolved for
   `robonix/primitive/lidar/lidar` and `robonix/primitive/lidar/lidar3d`, so the
   overlay follows the deployment's capability bindings. When no 2-D scan
   capability is bound the page looks for a `LaserScan` on the graph instead and
@@ -313,7 +313,7 @@ reads the live `/map` + pose straight off the bridge's rclpy node.
   `MAPPING_WEBUI_MAX_POINTS` (default 1200).
 
 These are the same operations exposed as runtime **RPC + MCP capabilities**
-(so Pilot can drive them too): `save_map`, `load_map`, `pose_estimate`,
+(so Planner can drive them too): `save_map`, `load_map`, `pose_estimate`,
 `switch_mode` (the webui adds `reset` + `delete` on top). All work on the
 running rtabmap without a redeploy — `load`/`switch_mode` call rtabmap's
 runtime services and fall back to a restart with the config's `map_mode` /
@@ -330,7 +330,7 @@ mapping_rbnx/
 ├── package_manifest.jetson-docker.yaml   arm64 Jetson + docker
 ├── package_manifest.jetson-native.yaml   arm64 Jetson + host ROS2
 ├── CAPABILITY.md                         capability surface + config spec
-├── src/mapping_rbnx/atlas_bridge.py      cap registration, sensor discovery, persistence
+├── src/mapping_rbnx/src_bridge.py      cap registration, sensor discovery, persistence
 ├── src/mapping_rbnx/webui.py             operator page server + ROS subscriptions
 ├── src/mapping_rbnx/webui_static/        the page itself (index.html, app.js, style.css)
 ├── src/mapping_rbnx/map_to_odom_bridge.py optional split-odometry TF bridge

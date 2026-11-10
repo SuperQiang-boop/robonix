@@ -34,7 +34,7 @@ RBNX_CODEGEN_PYTHON="$VENV/bin/python" \
 
 # Import the actual provider, not only its bridge-specific dependency.  This
 # catches missing protobuf/grpc/robonix-api runtime dependencies during build
-# instead of letting Soma discover them when the package starts.
+# instead of letting Robotdesc discover them when the package starts.
 CODEGEN_ROOT="$BUILD/codegen"
 PYTHONPATH="$ROBONIX_API:$PKG:$CODEGEN_ROOT/proto_gen:$CODEGEN_ROOT/robonix_mcp_types:${PYTHONPATH:-}" \
   "$VENV/bin/python" -c 'import audio_pb2; import audio_client_bridge.main'

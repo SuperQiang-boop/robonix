@@ -2,7 +2,7 @@
 """robonix-api — Python helpers for writing Robonix CapabilityProviders.
 
 A package instantiates exactly one of `Primitive`, `Service`, or
-`Skill`. The framework talks to atlas, serves the Driver lifecycle
+`Skill`. The framework talks to src, serves the Driver lifecycle
 gRPC, and wraps the common middleware patterns (rclpy / FastMCP /
 grpcio).
 
@@ -16,11 +16,11 @@ Layered API:
              `@provider.provides_mcp(contract)`, ROS create_publisher /
              create_subscription. Skip if you want to drive rclpy /
              FastMCP / grpcio directly -- just call
-             `provider.declare_capability(...)` to register with atlas.
+             `provider.declare_capability(...)` to register with src.
 
 Typical usage:
 
-    from robonix_api import ATLAS, Primitive, Ok, Err, Deferred
+    from robonix_api import SRC, Primitive, Ok, Err, Deferred
 
     camera = Primitive(
         id="camera",
@@ -45,8 +45,8 @@ Typical usage:
 """
 from __future__ import annotations
 
-from .atlas import ATLAS
-from .atlas_types import (
+from .src import SRC
+from .src_types import (
     Capability,
     CapabilityProvider,
     Channel,
@@ -58,7 +58,7 @@ from .atlas_types import (
     Ros2Params,
     Transport,
 )
-from . import scribe_logger
+from . import log_logger
 from .capability import Primitive, Service, Skill
 from .result import Deferred, Err, Ok, Result
 from .tool import mcp_contract
@@ -68,7 +68,7 @@ from .tool import mcp_contract
 # Walk the import-time call stack to find the user's first frame, locate
 # its package_manifest.yaml, and add the package's
 # `rbnx-build/codegen/{proto_gen,robonix_mcp_types}` to sys.path so the
-# generated atlas_pb2 / contracts modules import cleanly at top-of-file.
+# generated src_pb2 / contracts modules import cleanly at top-of-file.
 
 def _bootstrap_codegen_paths_from_caller() -> None:
     import inspect
@@ -96,15 +96,15 @@ del _bootstrap_codegen_paths_from_caller
 
 __all__ = [
     # Unified logging facade.
-    "scribe_logger",
+    "log_logger",
     # CapabilityProvider classes (three kinds).
     "Primitive", "Service", "Skill",
-    # Global atlas singleton (uppercase per Python registry convention,
+    # Global src singleton (uppercase per Python registry convention,
     # cf. prometheus_client.REGISTRY).
-    "ATLAS",
+    "SRC",
     # Lifecycle handler return type.
     "Ok", "Err", "Deferred", "Result",
-    # Atlas dataclass mirrors.
+    # Src dataclass mirrors.
     "Capability", "CapabilityProvider", "Channel", "ContractDescriptor",
     "GrpcParams", "Ros2Params", "McpParams",
     "Kind", "LifecycleState", "Transport",

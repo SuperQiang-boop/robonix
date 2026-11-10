@@ -1,12 +1,12 @@
 # explore_rbnx — autonomous frontier-based exploration skill.
 #
-# kind: skill (user-invocable atomic intent). LLM/pilot calls
+# kind: skill (user-invocable atomic intent). LLM/planner calls
 # robonix/skill/explore/explore() to start; returns a task_id; status
 # + cancel are sibling MCP tools. Internally orchestrates:
 #   - service/map/occupancy_grid     (read; pick frontier targets)
 #   - service/navigation/navigate    (drive to chosen frontier)
 #   - service/navigation/navigate/status      (poll goal completion)
-#   - system/scene/list_objects      (optional; glass door detection)
+#   - system/world/list_objects      (optional; glass door detection)
 #
 # Doesn't subscribe to lidar / odom directly — collision avoidance is
 # the nav service's job, this skill only chooses goals. Same design
@@ -25,8 +25,8 @@ package:
 build: bash scripts/build.sh
 start: bash scripts/start.sh
 
-# Fixed capability surface — everything we declare on atlas at startup
-# is listed here. New caps == bump version + update atlas_bridge.
+# Fixed capability surface — everything we declare on src at startup
+# is listed here. New caps == bump version + update src_bridge.
 stop: bash scripts/stop.sh
 
 capabilities:

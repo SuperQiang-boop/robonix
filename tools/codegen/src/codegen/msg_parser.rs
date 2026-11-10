@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MulanPSL-2.0
 // Shared ROS .msg / .srv file parser — used by proto_gen, mcp_python_gen,
-// and atlas's contract registry.
+// and src's contract registry.
 
 use anyhow::{Context, Result, bail};
 use std::collections::{BTreeSet, HashMap};

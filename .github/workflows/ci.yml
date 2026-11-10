@@ -63,8 +63,8 @@ jobs:
       - name: cargo build
         run: cargo build --workspace
 
-      # Unit tests: per-crate #[cfg(test)] mods (atlas registry, pilot helpers, …).
-      # System tests: robonix-atlas/tests/end_to_end.rs spawns Atlas on an
+      # Unit tests: per-crate #[cfg(test)] mods (src registry, planner helpers, …).
+      # System tests: robonix-src/tests/end_to_end.rs spawns Src on an
       # ephemeral port and drives it through the SDK — exercises RegisterNode /
       # DeclareInterface / QueryNodes / NegotiateChannel end-to-end.
       - name: cargo test --workspace --all-targets

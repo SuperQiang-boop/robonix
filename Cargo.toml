@@ -1,22 +1,22 @@
 [workspace]
 # The 12 Robonix system components live one-per-directory under `system/`.
 # Four currently have a Rust implementation:
-#   - atlas    (capability discovery)
+#   - src    (capability discovery)
 #   - executor (capability orchestration; embeds sentinel for v0.1)
-#   - liaison  (human-machine interaction)
-#   - pilot    (planning + decision + memory + world model)
+#   - gateway  (human-machine interaction)
+#   - planner  (planning + decision + memory + world model)
 # Repo-side dev tooling lives under `tools/` (rbnx CLI + codegen).
 # Python-only system components (scene) and reference service implementations
 # (services/{memsearch,voiceprint,speech}) are managed by uv and not part of
 # this Cargo workspace.
 members = [
-    "system/atlas",
+    "system/src",
     "system/executor",
-    "system/liaison",
-    "system/pilot",
-    "system/scribe",
-    "system/soma",
-    "system/vitals",
+    "system/gateway",
+    "system/planner",
+    "system/log",
+    "system/robotdesc",
+    "system/monitor",
     "tools/rbnx",
     "tools/codegen",
 ]
@@ -46,7 +46,7 @@ clap = { version = "4", features = ["derive", "env"] }
 anyhow = "1.0"
 thiserror = "2.0.18"
 
-# Logging (all crates use robonix-scribe macros)
+# Logging (all crates use robonix-log macros)
 # gRPC
 tonic = "0.14"
 prost = "0.14"
@@ -78,4 +78,4 @@ crossterm = "0.29.0"
 
 # Internal crates
 robonix-codegen = { path = "tools/codegen" }
-robonix-scribe = { path = "system/scribe" }
+robonix-log = { path = "system/log" }

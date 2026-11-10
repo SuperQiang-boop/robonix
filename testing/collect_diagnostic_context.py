@@ -149,7 +149,7 @@ def _rank_log(path: Path) -> tuple[int, str]:
     full = path.as_posix().lower()
     if name in {"rbnx-boot.log", "summary.json"}:
         return (0, full)
-    if "soma" in name or "error" in name or "scenario" in full:
+    if "robotdesc" in name or "error" in name or "scenario" in full:
         return (1, full)
     if "provider" in full or "logs" in full:
         return (2, full)

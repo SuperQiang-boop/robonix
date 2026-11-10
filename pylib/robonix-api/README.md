@@ -1,8 +1,8 @@
 # robonix-api
 
-Python client library for writing [Robonix](https://github.com/syswonder/robonix) capability providers — primitives, services, and skills — and talking to the Atlas registry.
+Python client library for writing [Robonix](https://github.com/syswonder/robonix) capability providers — primitives, services, and skills — and talking to the Src registry.
 
-> Robonix is an embodied-AI operating system. `robonix-api` is the **client-side helper**: it gives you `Primitive` / `Service` / `Skill` classes that handle Atlas registration, the Driver lifecycle gRPC server, and thin wrappers over `rclpy` / `FastMCP` / `grpcio`. The Atlas server itself is a separate Rust binary (`robonix-atlas`, see the main repo).
+> Robonix is an embodied-AI operating system. `robonix-api` is the **client-side helper**: it gives you `Primitive` / `Service` / `Skill` classes that handle Src registration, the Driver lifecycle gRPC server, and thin wrappers over `rclpy` / `FastMCP` / `grpcio`. The Src server itself is a separate Rust binary (`robonix-src`, see the main repo).
 
 ## Install
 
@@ -44,11 +44,11 @@ if __name__ == "__main__":
     primitive.run()
 ```
 
-That's a complete Robonix primitive — registers with Atlas, serves the Driver lifecycle, waits for the upstream topic, declares a ROS 2 capability for downstream consumers, and blocks on SIGTERM.
+That's a complete Robonix primitive — registers with Src, serves the Driver lifecycle, waits for the upstream topic, declares a ROS 2 capability for downstream consumers, and blocks on SIGTERM.
 
 `namespace` declares the provider's primary contract grouping. Regular
 contracts normally use that prefix. Declaring another contract is allowed;
-robonix-api and Atlas emit a visible warning unless the contract TOML marks it
+robonix-api and Src emit a visible warning unless the contract TOML marks it
 as `cross_namespace = true`. The warning is diagnostic and never blocks boot,
 discovery, or calls.
 
@@ -59,13 +59,13 @@ current form as a compatibility path.
 
 ## What's in the box
 
-- **`ATLAS`** — module-level singleton client (`ATLAS.register`, `ATLAS.find_primitive`, `ATLAS.connect`, ...)
+- **`SRC`** — module-level singleton client (`SRC.register`, `SRC.find_primitive`, `SRC.connect`, ...)
 - **`Primitive` / `Service` / `Skill`** — provider base classes with `on_init` / `on_activate` / `on_deactivate` / `on_shutdown` decorators
 - **`@provider.provides_grpc(contract)` / `@provider.provides_mcp(contract)`** — Layer-2 sugar for typed handlers
 - **`Ok` / `Err` / `Deferred`** — lifecycle return values
-- **`mcp_contract`** — standalone FastMCP decorator (use when you manage your own FastMCP app, e.g. in `scene_service`)
+- **`mcp_contract`** — standalone FastMCP decorator (use when you manage your own FastMCP app, e.g. in `world_service`)
 
-The Atlas wire protocol (atlas_pb2 / atlas_pb2_grpc) is pre-generated and bundled in the wheel. Per-contract stubs (`robonix_contracts_pb2`, MCP typed dataclasses) are generated **per deployment** by `rbnx codegen` against your contract TOMLs — `robonix-api` automatically picks them up from `<pkg>/rbnx-build/codegen/` at runtime.
+The Src wire protocol (src_pb2 / src_pb2_grpc) is pre-generated and bundled in the wheel. Per-contract stubs (`robonix_contracts_pb2`, MCP typed dataclasses) are generated **per deployment** by `rbnx codegen` against your contract TOMLs — `robonix-api` automatically picks them up from `<pkg>/rbnx-build/codegen/` at runtime.
 
 ## Provider network binding
 
@@ -80,7 +80,7 @@ export ROBONIX_ADVERTISE_HOST=127.0.0.1
 
 `ROBONIX_PROVIDER_BIND_HOST` must be an IPv4 address literal and controls every
 server socket owned by `robonix-api`. When it is a non-wildcard address and no
-advertise override is set, that same address is advertised to Atlas
+advertise override is set, that same address is advertised to Src
 automatically. Cross-host deployments should retain `0.0.0.0` and set
 `ROBONIX_ADVERTISE_HOST` to the provider address reachable by consumers.
 
@@ -88,11 +88,11 @@ automatically. Cross-host deployments should retain `0.0.0.0` and set
 
 `robonix-api` tracks the Robonix v0.1.x series. Wire format and public API are frozen within v0.1.x. Pre-release builds (`0.1.0rc*`) are published to Test PyPI first; stable releases to PyPI.
 
-The Atlas server (Rust crate `robonix-atlas`) must be on a compatible minor version. Mixing `robonix-api 0.1.x` with an Atlas server on a different minor version is unsupported.
+The Src server (Rust crate `robonix-src`) must be on a compatible minor version. Mixing `robonix-api 0.1.x` with an Src server on a different minor version is unsupported.
 
 ## Links
 
-- [Robonix monorepo](https://github.com/syswonder/robonix) — Atlas server, `rbnx` CLI, examples, full developer guide
+- [Robonix monorepo](https://github.com/syswonder/robonix) — Src server, `rbnx` CLI, examples, full developer guide
 - [Issues](https://github.com/syswonder/robonix/issues)
 
 ## License

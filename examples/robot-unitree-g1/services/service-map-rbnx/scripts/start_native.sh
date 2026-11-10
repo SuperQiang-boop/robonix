@@ -6,7 +6,7 @@
 # ROBONIX_MAPPING_PLATFORM matches the native whitelist — jetson_orin).
 #
 # Same sibling-process flow as the container path:
-#   1. atlas_bridge   — registers cap, resolves sensors via atlas,
+#   1. src_bridge   — registers cap, resolves sensors via src,
 #                       writes /tmp/<algo>_resolved.yaml, declares outputs.
 #   2. SLAM engine    — start_engine.sh → ros2 launch rtabmap_2d.launch.py
 #                       (MAPPING_LAUNCH_DIR points at the package's launch/).
@@ -59,7 +59,7 @@ fi
 mkdir -p "$PKG/rbnx-build/data"
 
 # ── Env (mirror the docker -e block) ───────────────────────────────────
-export ROBONIX_ATLAS="${ROBONIX_ATLAS:-127.0.0.1:50051}"
+export ROBONIX_SRC="${ROBONIX_SRC:-127.0.0.1:50051}"
 export ROBONIX_CAPABILITY_ID="${ROBONIX_CAPABILITY_ID:-mapping}"
 export ROBONIX_PKG_HOST_DIR="$PKG"
 export ROS_DOMAIN_ID="${ROS_DOMAIN_ID:-0}"
@@ -81,11 +81,11 @@ find "$MAPPING_RUNTIME_DB_DIR" -maxdepth 1 -type f \
 
 PYBIN="${MAPPING_NATIVE_PYTHON:-python3}"
 
-ATLAS_PID=
+SRC_PID=
 ENGINE_PID=
 cleanup() {
     [ -n "$ENGINE_PID" ] && kill -TERM "$ENGINE_PID" 2>/dev/null || true
-    [ -n "$ATLAS_PID" ]  && kill -TERM "$ATLAS_PID"  2>/dev/null || true
+    [ -n "$SRC_PID" ]  && kill -TERM "$SRC_PID"  2>/dev/null || true
     pkill -TERM -P $$ 2>/dev/null || true
 }
 trap cleanup EXIT INT TERM
@@ -96,11 +96,11 @@ trap cleanup EXIT INT TERM
 # the bridge BEFORE rbnx delivers CMD_INIT — Cancelling all calls error.
 rm -f /tmp/mapping_algo /tmp/*_resolved.yaml
 
-# ── 1. atlas_bridge (the cap) ──────────────────────────────────────────
-"$PYBIN" -u -m mapping_rbnx.atlas_bridge 2>&1 | sed 's/^/[bridge] /' &
-ATLAS_PID=$!
+# ── 1. src_bridge (the cap) ──────────────────────────────────────────
+"$PYBIN" -u -m mapping_rbnx.src_bridge 2>&1 | sed 's/^/[bridge] /' &
+SRC_PID=$!
 
-# Gate on atlas_bridge writing /tmp/mapping_algo + /tmp/<algo>_resolved.yaml.
+# Gate on src_bridge writing /tmp/mapping_algo + /tmp/<algo>_resolved.yaml.
 for _ in $(seq 1 60); do
     [ -f /tmp/mapping_algo ] && break
     sleep 0.5

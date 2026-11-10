@@ -28,11 +28,11 @@ struct ContractMeta {
     /// IDL reference: full path under one of the merged lib roots
     /// (`<robonix>/capabilities/lib/` or `<pkg>/capabilities/lib/`),
     /// with the `.srv` / `.msg` extension. Examples:
-    ///   `system/pilot/srv/SubmitTask.srv`        → lib/.../srv/SubmitTask.srv
+    ///   `system/planner/srv/SubmitTask.srv`        → lib/.../srv/SubmitTask.srv
     ///   `common_interfaces/sensor_msgs/msg/Image.msg` → lib/.../msg/Image.msg
     idl: String,
     /// Documentation-only meaning of this abstract contract. This is not the
-    /// provider/runtime capability description declared to Atlas.
+    /// provider/runtime capability description declared to Src.
     #[serde(default)]
     description: String,
 }
@@ -81,7 +81,7 @@ pub fn collect_referenced_srvs(contracts_dir: &Path) -> Result<BTreeSet<(String,
 
 /// Lightweight per-contract view for documentation generation. Built from
 /// the same TOML parse + directory walk as proto generation, so the docs
-/// reference can't drift from what codegen / atlas actually read.
+/// reference can't drift from what codegen / src actually read.
 pub struct ContractSummary {
     pub id: String,
     pub version: String,
@@ -95,7 +95,7 @@ pub struct ContractSummary {
 }
 
 /// Load every contract under `dirs` (recursively, skipping `lib/`), de-duped
-/// by id (later dir wins, matching atlas merge semantics), sorted by id.
+/// by id (later dir wins, matching src merge semantics), sorted by id.
 /// Backs `robonix-codegen --lang docs`.
 pub fn load_contract_summaries(dirs: &[PathBuf]) -> Result<Vec<ContractSummary>> {
     let mut by_id: std::collections::BTreeMap<String, ContractSummary> =
@@ -147,7 +147,7 @@ pub fn generate(
         return Ok(());
     }
 
-    // De-dup on contract id: later root wins, matching atlas's
+    // De-dup on contract id: later root wins, matching src's
     // contract-registry merge semantics. This lets a per-package
     // contract override a global one of the same id during codegen.
     let mut by_id: std::collections::BTreeMap<String, (PathBuf, ContractToml)> =

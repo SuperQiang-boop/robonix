@@ -6,7 +6,7 @@ Drop-in replacement for yolo_world_rbnx. Uses an OpenAI-compatible VLM
 API (e.g. Gemini, Qwen-VL, GPT-4o) to detect objects in camera frames.
 Owns ``robonix/service/perception/object_detect/*``.
 
-Exposes one atlas-routed MCP surface:
+Exposes one src-routed MCP surface:
 
     robonix/service/perception/object_detect/detect_object
 
@@ -16,7 +16,7 @@ in bbox back-projected through the camera_info K matrix).
 
 Lifecycle:
     on_init      — parse config (LLM endpoint, model, prompts), resolve
-                   atlas camera contracts, spawn rclpy background thread.
+                   src camera contracts, spawn rclpy background thread.
     on_deactivate — stop rclpy thread.
 """
 from __future__ import annotations
@@ -35,7 +35,7 @@ import numpy as np
 import toml
 from openai import OpenAI
 
-from robonix_api import ATLAS, Service, Ok, Err  # noqa: E402
+from robonix_api import SRC, Service, Ok, Err  # noqa: E402
 
 # ── logging setup ───────────────────────────────────────────────────────────
 # Use the same pattern as mid360_lidar_rbnx: simple basicConfig for stderr,
@@ -135,7 +135,7 @@ def _resolve_topic(key: str, cfg: dict) -> str:
 
     Priority:
       1. cfg[f'{key}_topic'] — explicit override
-      2. atlas find_capability(<contract>, transport=ros2, provider_id=...)
+      2. src find_capability(<contract>, transport=ros2, provider_id=...)
          → endpoint
       3. _DEFAULT_TOPICS[key]
     """
@@ -147,23 +147,23 @@ def _resolve_topic(key: str, cfg: dict) -> str:
     contract_id = _DEP_CONTRACTS[key]
     provider_id = str(cfg.get("camera_provider_id") or "").strip()
     try:
-        caps = ATLAS.find_capability(
+        caps = SRC.find_capability(
             contract_id=contract_id,
             transport="ros2",
             provider_id=provider_id,
         )
     except Exception as e:  # noqa: BLE001
-        log.warning("atlas query %s failed: %s — falling back to default",
+        log.warning("src query %s failed: %s — falling back to default",
                     contract_id, e)
         caps = []
 
-    # Log every candidate atlas returned so multi-camera setups are debuggable.
+    # Log every candidate src returned so multi-camera setups are debuggable.
     # `provider_id` is the only knob object_detect has for picking one — if you
     # see multiple lines here and the wrong one gets chosen, set
     # `camera_provider_id` in the deploy manifest to the desired provider.
     if caps:
         log.info(
-            "topic[%s] atlas returned %d candidate(s) for %s "
+            "topic[%s] src returned %d candidate(s) for %s "
             "(transport=ros2, provider_id_filter=%r):",
             key, len(caps), contract_id, provider_id or "<any>",
         )
@@ -195,20 +195,20 @@ def _resolve_topic(key: str, cfg: dict) -> str:
             except Exception:  # noqa: BLE001
                 pass
             if ep:
-                log.info("topic[%s] resolved via atlas: %s (provider=%s)",
+                log.info("topic[%s] resolved via src: %s (provider=%s)",
                          key, ep, caps[0].provider_id)
                 return ep
         except Exception as e:  # noqa: BLE001
-            log.warning("atlas connect %s failed: %s", contract_id, e)
+            log.warning("src connect %s failed: %s", contract_id, e)
 
     fallback = _DEFAULT_TOPICS[key]
     if provider_id:
         log.warning(
-            "topic[%s] no atlas provider %s for %s; using default %s",
+            "topic[%s] no src provider %s for %s; using default %s",
             key, provider_id, contract_id, fallback,
         )
     else:
-        log.warning("topic[%s] no atlas provider; using default %s", key, fallback)
+        log.warning("topic[%s] no src provider; using default %s", key, fallback)
     return fallback
 
 
@@ -957,7 +957,7 @@ def init(cfg):
     """Driver(CMD_INIT). Steps:
       1. parse cfg + initialize LLM client
       2. load prompts from config/prompts.toml
-      3. resolve atlas camera contracts → topic names
+      3. resolve src camera contracts → topic names
       4. spawn rclpy thread (camera subscribers only)
     """
     global _initialized, _llm_client, _llm_model, _llm_temperature
@@ -1029,7 +1029,7 @@ def init(cfg):
         return Err(f"Failed to load prompts: {e}")
     log.info("loaded %d prompt templates from %s", len(_prompts), prompts_path)
 
-    # 3. Resolve atlas camera contracts.
+    # 3. Resolve src camera contracts.
     rgb_topic   = _resolve_topic("rgb",         cfg)
     info_topic  = _resolve_topic("camera_info", cfg)
     if _skip_depth:
@@ -1086,7 +1086,7 @@ def deactivate():
     return Ok()
 
 
-# ── atlas-routed MCP handler (Pilot's view) ─────────────────────────────────
+# ── src-routed MCP handler (Planner's view) ─────────────────────────────────
 from perception_mcp import (  # noqa: E402  pylint: disable=wrong-import-position
     DetectObject_Request, DetectObject_Response,
 )

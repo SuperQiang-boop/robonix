@@ -162,7 +162,7 @@ pub fn status_of(p: &RemoteProvider) -> RemoteStatus {
     // notice, but a plain `git fetch` against an unreachable/slow remote
     // can block on TCP connect for ~130s — and since boot/build call this
     // for EVERY url-provider, an offline or throttled github stalls the
-    // whole boot before atlas even starts. Wrap in `timeout(1)` so a
+    // whole boot before src even starts. Wrap in `timeout(1)` so a
     // wedged fetch is abandoned in seconds and the check just reports
     // "skipped". `http.lowSpeedLimit/Time` additionally kills a transfer
     // that connects but then stalls mid-stream. If the `timeout` binary

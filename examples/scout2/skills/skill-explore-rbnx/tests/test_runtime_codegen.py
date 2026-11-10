@@ -16,7 +16,7 @@ class RuntimeCodegenTest(unittest.TestCase):
         package.mkdir()
         fake_bin.mkdir()
         runtime_proto.mkdir()
-        (runtime_proto / "atlas.proto").write_text('syntax = "proto3";\n')
+        (runtime_proto / "src.proto").write_text('syntax = "proto3";\n')
         staging = package / "rbnx-build" / "proto-staging"
         staging.mkdir(parents=True)
         (staging / "explore.proto").write_text('syntax = "proto3";\n')
@@ -42,7 +42,7 @@ class RuntimeCodegenTest(unittest.TestCase):
             '    *:/proto-gen)\n'
             '      [[ "${FAKE_CODEGEN_FAIL:-0}" == 1 ]] && exit 41\n'
             '      out="${arg%:/proto-gen}"\n'
-            '      touch "$out/atlas_pb2.py" "$out/atlas_pb2_grpc.py" '
+            '      touch "$out/src_pb2.py" "$out/src_pb2_grpc.py" '
             '"$out/explore_pb2.py" "$out/explore_pb2_grpc.py" '
             '"$out/robonix_contracts_pb2_grpc.py"\n'
             "      ;;\n"

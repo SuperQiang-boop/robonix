@@ -13,7 +13,7 @@ Three endpoints, all `ws://0.0.0.0:60000/...`:
   /mic       server streams 16 kHz / mono / s16le PCM frames in
              ~100 ms chunks (3200 bytes). One concurrent client is
              enough — CoreAudio supports multiple capture handles
-             but the typical robonix flow is "liaison opens one
+             but the typical robonix flow is "gateway opens one
              stream during a voice turn".
   /speaker   server consumes 16 kHz / mono / s16le PCM chunks pushed
              by the client and feeds them straight into the default
@@ -171,7 +171,7 @@ async def serve_speaker(ws, output_device: int | None) -> None:
 
     # Bytearray buffer + lock — the previous queue-of-opaque-chunks
     # design dropped any bytes beyond `len(outdata)` per callback,
-    # so an 8 KiB liaison TTS chunk played only the first 3.2 KiB
+    # so an 8 KiB gateway TTS chunk played only the first 3.2 KiB
     # and silently discarded the rest of the utterance.
     buf = bytearray()
     buf_lock = threading.Lock()

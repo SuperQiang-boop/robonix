@@ -3,8 +3,8 @@
 
 use crate::pb::executor::rtdl_event::RtdlEventEnum;
 use crate::pb::executor::{RtdlEvent, RtdlPlanComplete, RtdlPlanStarted};
-use crate::pb::pilot::rtdl_node_state::RtdlNodeStateEnum;
-use crate::pb::pilot::{CapabilityCallResult, RtdlNodeState};
+use crate::pb::planner::rtdl_node_state::RtdlNodeStateEnum;
+use crate::pb::planner::{CapabilityCallResult, RtdlNodeState};
 
 #[derive(Clone)]
 pub struct NodeEventContext {

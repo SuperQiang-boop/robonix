@@ -41,8 +41,8 @@ if [[ "$CLEAN" == "1" ]]; then
 fi
 mkdir -p "$BUILD/data"
 
-# ── 1. Codegen (proto stubs for atlas + IDL types + MCP types) — every target ─
-# --mcp is REQUIRED: atlas_bridge.py imports `map_mcp` (SaveMap/LoadMap/
+# ── 1. Codegen (proto stubs for src + IDL types + MCP types) — every target ─
+# --mcp is REQUIRED: src_bridge.py imports `map_mcp` (SaveMap/LoadMap/
 # PoseEstimate/SwitchMode request/response dataclasses for the MCP tools).
 # Without it codegen emits only proto stubs, `map_mcp` is missing, and the
 # bridge dies at import with ModuleNotFoundError → the service never registers.
@@ -61,7 +61,7 @@ if command -v rbnx >/dev/null 2>&1; then
 
     CODEGEN_PYTHONPATH="$PKG/$BUILD/codegen/proto_gen:$PKG/$BUILD/codegen/robonix_mcp_types"
     PYTHONPATH="$CODEGEN_PYTHONPATH:${PYTHONPATH:-}" "$PYBIN" - <<'PY'
-import atlas_pb2_grpc
+import src_pb2_grpc
 import map_mcp
 import robonix_contracts_pb2_grpc
 

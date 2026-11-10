@@ -15,15 +15,15 @@ Lead maintainer: Yulong Han ([@enkerewpo](https://github.com/enkerewpo), wheatfo
 
 | Component | What it does | Path | Maintainer(s) | Issue |
 |-----------|--------------|------|---------------|-------|
-| atlas | Capability registry and discovery | `system/atlas` | Yulong Han ([@enkerewpo](https://github.com/enkerewpo), wheatfox17@icloud.com) | - |
+| src | Capability registry and discovery | `system/src` | Yulong Han ([@enkerewpo](https://github.com/enkerewpo), wheatfox17@icloud.com) | - |
 | executor | RTDL plan execution and capability dispatch | `system/executor` | Guowei Li ([@kouweilee](https://github.com/kouweilee), 2401213322@stu.pku.edu.cn); Longchun Zhao ([@1mujue](https://github.com/1mujue)) | [#52](https://github.com/syswonder/robonix/issues/52) |
-| pilot | VLM planning and decision loop | `system/pilot` | Yulong Han ([@enkerewpo](https://github.com/enkerewpo), wheatfox17@icloud.com) | [#53](https://github.com/syswonder/robonix/issues/53) |
-| liaison | Human interaction (chat / voice / TUI) | `system/liaison` | Kaile Liu ([@kaileliu](https://github.com/kaileliu)) | [#70](https://github.com/syswonder/robonix/issues/70) |
-| scene | Scene state, semantic map, object registry | `system/scene` | Feiyang Li ([@HeartLinked](https://github.com/HeartLinked), lifeiyang@zju.edu.cn) | [#42](https://github.com/syswonder/robonix/issues/42) |
-| soma | Robot self-description (body model) | `system/soma` | Yanting Chen ([@Chenyantt](https://github.com/Chenyantt)) | - |
+| planner | VLM planning and decision loop | `system/planner` | Yulong Han ([@enkerewpo](https://github.com/enkerewpo), wheatfox17@icloud.com) | [#53](https://github.com/syswonder/robonix/issues/53) |
+| gateway | Human interaction (chat / voice / TUI) | `system/gateway` | Kaile Liu ([@kaileliu](https://github.com/kaileliu)) | [#70](https://github.com/syswonder/robonix/issues/70) |
+| world | World state, semantic map, object registry | `system/world` | Feiyang Li ([@HeartLinked](https://github.com/HeartLinked), lifeiyang@zju.edu.cn) | [#42](https://github.com/syswonder/robonix/issues/42) |
+| robotdesc | Robot self-description (body model) | `system/robotdesc` | Yanting Chen ([@Chenyantt](https://github.com/Chenyantt)) | - |
 | sentinel | Rule-based safety gate before dispatch | `system/sentinel` | Zhaobo Zhang ([@HustWolfzzb](https://github.com/HustWolfzzb), hustwolfzzb@gmail.com) | [#69](https://github.com/syswonder/robonix/issues/69) |
-| scribe | Structured logging / replay / audit | `system/scribe` | Yunlong Hou ([@ohhhHwH](https://github.com/ohhhHwH)) | [#63](https://github.com/syswonder/robonix/issues/63) |
-| vitals | Power and component-health monitoring | `system/vitals` | Jinyang Xu ([@AuYang261](https://github.com/AuYang261)) | [#68](https://github.com/syswonder/robonix/issues/68) |
+| log | Structured logging / replay / audit | `system/log` | Yunlong Hou ([@ohhhHwH](https://github.com/ohhhHwH)) | [#63](https://github.com/syswonder/robonix/issues/63) |
+| monitor | Power and component-health monitoring | `system/monitor` | Jinyang Xu ([@AuYang261](https://github.com/AuYang261)) | [#68](https://github.com/syswonder/robonix/issues/68) |
 | keystone | Identity, config, access policy | `system/keystone` | Kaile Liu ([@kaileliu](https://github.com/kaileliu)) | [#67](https://github.com/syswonder/robonix/issues/67) |
 | nexus | gRPC / MCP / ROS 2 comms libraries | `system/nexus` | Jun Zeng ([@ZZJJWarth](https://github.com/ZZJJWarth)) | - |
 | chronos | Unified clock / timestamp alignment | `system/chronos` | _unassigned_ | [#62](https://github.com/syswonder/robonix/issues/62) |
@@ -42,7 +42,7 @@ Lead maintainer: Yulong Han ([@enkerewpo](https://github.com/enkerewpo), wheatfo
 |--------|--------------|------|---------------|
 | rbnx | Robonix CLI: build / boot / codegen / chat / clean | `tools/rbnx` | Yulong Han ([@enkerewpo](https://github.com/enkerewpo), wheatfox17@icloud.com) |
 | codegen | Contract IDL to proto / Rust / MCP-type codegen | `tools/codegen` | Yulong Han ([@enkerewpo](https://github.com/enkerewpo), wheatfox17@icloud.com) |
-| robonix-api | Python framework: Primitive/Service/Skill bases, atlas client, Driver lifecycle | `pylib/robonix-api` | Yulong Han ([@enkerewpo](https://github.com/enkerewpo), wheatfox17@icloud.com) |
+| robonix-api | Python framework: Primitive/Service/Skill bases, src client, Driver lifecycle | `pylib/robonix-api` | Yulong Han ([@enkerewpo](https://github.com/enkerewpo), wheatfox17@icloud.com) |
 
 ## Upstream packages
 

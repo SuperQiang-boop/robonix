@@ -18,7 +18,7 @@
 // in favour of "capability"; "runtime" is "system".
 
 use anyhow::{Context, Result};
-use robonix_scribe::warn;
+use robonix_log::warn;
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -44,7 +44,7 @@ pub fn deploy_repo_dir_name(url: &str) -> String {
 
 /// Apply deployment `env:` and expand `$VAR` / `${VAR}` in every scalar.
 ///
-/// `rbnx` and Soma call this same entry point before parsing a deployment so
+/// `rbnx` and Robotdesc call this same entry point before parsing a deployment so
 /// they cannot disagree about paths, selected manifests, or package config.
 pub fn prepare_deployment_manifest(
     mut root: serde_yaml::Value,
@@ -74,7 +74,7 @@ pub fn prepare_deployment_manifest(
     Ok(root)
 }
 
-/// Validate Atlas provider identities owned by deployment package entries.
+/// Validate Src provider identities owned by deployment package entries.
 pub fn validate_deployment_instance_names(root: &serde_yaml::Value) -> Result<()> {
     let mut seen = HashSet::new();
     let mut record = |name: &str, location: &str| -> Result<()> {
@@ -271,7 +271,7 @@ struct RawManifest {
     #[serde(default)]
     depends: Vec<DependsRef>,
     /// Legacy `provider_id:` field. Removed from spec — accepted by serde but
-    /// ignored. rbnx-boot now discovers the provider_id by polling atlas for any provider
+    /// ignored. rbnx-boot now discovers the provider_id by polling src for any provider
     /// that registered after `start.sh` spawned. Future warning: emit deprecation.
     #[serde(default)]
     #[allow(dead_code)]
@@ -474,7 +474,7 @@ mod tests {
             r#"
 manifestVersion: 1
 package:
-  name: com.robonix.system.scene
+  name: com.robonix.system.world
   version: 0.1.0
   vendor: robonix
   description: Legacy package metadata example.

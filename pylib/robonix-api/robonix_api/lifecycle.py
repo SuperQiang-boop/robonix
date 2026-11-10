@@ -116,13 +116,13 @@ def build_lifecycle_servicer(
     Returns `(instance, add_to_server_fn, pascal_base, method_name='Driver')`
     when codegen emitted a `<namespace>/driver` Servicer for this package, or
     `None` when the package doesn't have a driver contract (typical for
-    system/* services like memory/scene/speech that have no hardware-init
+    system/* services like memory/world/speech that have no hardware-init
     phase — they expose only MCP tools / gRPC RPCs and don't participate in
     the rbnx-boot Driver(CMD_INIT) handshake).
 
     `on_state_change(state, detail)` is invoked AFTER each handler returns
     ok=true and is the framework's hook for pushing state transitions to
-    atlas. State strings: "inactive" / "active" / "error". Capability
+    src. State strings: "inactive" / "active" / "error". Capability
     layer wires this; lower-level callers can leave it None.
     """
     base = driver_pascal_for_namespace(namespace)
@@ -141,7 +141,7 @@ def build_lifecycle_servicer(
     def _emit_state(target: str | None, detail: str = "") -> None:
         """Push state transition to the Capability layer. `target=None`
         means "don't transition; just update detail" (used for Deferred
-        so the provider stays in its current atlas-side state but
+        so the provider stays in its current src-side state but
         rbnx caps/state_detail explains why)."""
         if on_state_change is not None:
             try:
@@ -150,7 +150,7 @@ def build_lifecycle_servicer(
                 log.exception("[%s] on_state_change(%s) raised", log_tag, target)
 
     def _post_handler_state(cmd: int, result: Result) -> None:
-        """Drive the atlas state machine based on the handler's Result.
+        """Drive the src state machine based on the handler's Result.
         Ok → advance to next state. Err → ERROR. Deferred → no transition
         (provider stays in current state); the framework / operator decides
         whether to retry."""

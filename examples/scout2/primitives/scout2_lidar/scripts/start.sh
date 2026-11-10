@@ -5,7 +5,7 @@
 # this script bootstraps a Python 3.10 environment with
 # ROS2 sys.path + driver code path, then calls Driver(CMD_INIT).
 #
-# Lifecycle is owned by rbnx/Soma: Driver(CMD_SHUTDOWN), then this
+# Lifecycle is owned by rbnx/Robotdesc: Driver(CMD_SHUTDOWN), then this
 # package's manifest stop hook, then wrapper PGID TERM/KILL.
 set -euo pipefail
 
@@ -41,6 +41,6 @@ else
 fi
 
 env \
-  ROBONIX_ATLAS="${ROBONIX_SIM_ATLAS:-${ROBONIX_ATLAS:-127.0.0.1:50051}}" \
+  ROBONIX_SRC="${ROBONIX_SIM_SRC:-${ROBONIX_SRC:-127.0.0.1:50051}}" \
   ROBONIX_ADVERTISE_HOST="${ROBONIX_ADVERTISE_HOST:-127.0.0.1}" \
   "$CONDA_PY" "$BOOT"

@@ -1,11 +1,11 @@
 """memsearch_service — long-term memory store + 3 MCP search/save/compact tools.
 
 Indexes markdown notes under AGENT_MEMORY_DIR with milvus-lite (ONNX
-embeddings). VLM credentials reused from pilot's env (VLM_BASE_URL /
+embeddings). VLM credentials reused from planner's env (VLM_BASE_URL /
 VLM_API_KEY / VLM_MODEL) so memory doesn't need a separate API key.
 
-Logging: routed entirely through Scribe via
-`scribe_logger.install_stdlib_bridge("memory")`, so the full startup trace —
+Logging: routed entirely through Log via
+`log_logger.install_stdlib_bridge("memory")`, so the full startup trace —
 phase markers, env summary, error causes, stack traces — shows up under
 `rbnx logs -t memory`, and the package owns no log file or stdout sink of its
 own. Without that bridge a startup that stalls in phase 3 (embedding-model
@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from robonix_api import scribe_logger
+from robonix_api import log_logger
 import os
 import platform
 import sys
@@ -43,14 +43,14 @@ def _redact_url(url: str | None) -> str:
     netloc = f"{host}:{u.port}" if u.port else host
     return u._replace(netloc=netloc).geturl()
 
-# ── 0. Logging setup: route everything through Scribe.
-# Install the shared stdlib-logging → Scribe bridge on the root logger BEFORE
+# ── 0. Logging setup: route everything through Log.
+# Install the shared stdlib-logging → Log bridge on the root logger BEFORE
 # importing robonix_api / memsearch / milvus, so their imports' logging is
 # captured too. The bridge drops any stdout/file handlers and forwards every
-# record to Scribe under the "memory" tag, so `rbnx logs -t memory` sees the
+# record to Log under the "memory" tag, so `rbnx logs -t memory` sees the
 # whole startup trace and the package owns no log file of its own.
 _LOG_LEVEL = os.environ.get("MEMSEARCH_LOG_LEVEL", "INFO").upper()
-scribe_logger.install_stdlib_bridge(
+log_logger.install_stdlib_bridge(
     "memory", level=getattr(logging, _LOG_LEVEL, logging.INFO)
 )
 log = logging.getLogger("memsearch")
@@ -61,9 +61,9 @@ os.environ.setdefault("GRPC_VERBOSITY", "ERROR")
 os.environ.setdefault("GLOG_minloglevel", "2")
 logging.getLogger("absl").setLevel(logging.ERROR)
 
-# Transitional: also emit key lifecycle events through Scribe so the
+# Transitional: also emit key lifecycle events through Log so the
 # unified `rbnx logs` tool can see them alongside other components.
-scribe_logger.info("memory", "memory service starting")
+log_logger.info("memory", "memory service starting")
 
 def _log_environment() -> None:
     """Print a compact environment summary at boot. Many of the reported
@@ -80,11 +80,11 @@ def _log_environment() -> None:
         if p:
             log.info("  - %s%s", p, "" if Path(p).exists() else "  (MISSING)")
     log.info("env (non-secret):")
-    _URL_KEYS = {"VLM_BASE_URL", "OPENAI_BASE_URL", "ROBONIX_ATLAS"}
+    _URL_KEYS = {"VLM_BASE_URL", "OPENAI_BASE_URL", "ROBONIX_SRC"}
     for k in ("AGENT_MEMORY_DIR", "AGENT_MILVUS_URI",
               "MEMSEARCH_LOG_LEVEL",
               "VLM_BASE_URL", "VLM_MODEL", "OPENAI_BASE_URL", "OPENAI_MODEL",
-              "ROBONIX_ATLAS"):
+              "ROBONIX_SRC"):
         v = os.environ.get(k)
         if v and k in _URL_KEYS:
             v = _redact_url(v)
@@ -207,7 +207,7 @@ async def compact(msg: Empty) -> String:
     """Compact and summarize recent memories. Call this at the end of a session.
     Returns std_msgs/String JSON. Contract: robonix/service/memory/compact.
 
-    Reuses pilot's OpenAI-compatible LLM endpoint so memory doesn't need a
+    Reuses planner's OpenAI-compatible LLM endpoint so memory doesn't need a
     separate API key. Reads VLM_BASE_URL / VLM_API_KEY / VLM_MODEL (or the
     OPENAI_* equivalents as fallback)."""
     _ = msg

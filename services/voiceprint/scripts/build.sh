@@ -8,7 +8,7 @@
 # no downloads at request time.
 #
 # gRPC stubs are generated below by the `rbnx codegen -p <pkg> --mcp`
-# step, which materialises atlas-managed contract bundles into
+# step, which materialises src-managed contract bundles into
 # rbnx-build/codegen/proto_gen/. `rbnx build` itself only runs this
 # manifest's `build:` body — packages call codegen explicitly here,
 # same as services/memsearch and services/speech.
@@ -18,7 +18,7 @@
 #
 # Layout under rbnx-build/:
 #   rbnx-build/venv/                per-package Python venv (uv)
-#   rbnx-build/codegen/proto_gen/   atlas-managed stubs (created by `rbnx codegen`)
+#   rbnx-build/codegen/proto_gen/   src-managed stubs (created by `rbnx codegen`)
 #   rbnx-build/models/              ECAPA-TDNN weights
 #   rbnx-build/data/                runtime state (enrolled.json)
 

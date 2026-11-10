@@ -8,15 +8,15 @@
 *                          @enkerewpo
 
 # --- System components ---
-/system/atlas/             @enkerewpo
+/system/src/             @enkerewpo
 /system/executor/          @kouweilee @1mujue
-/system/pilot/             @enkerewpo
-/system/liaison/           @kaileliu
-/system/scene/             @HeartLinked
-/system/soma/              @Chenyantt
+/system/planner/             @enkerewpo
+/system/gateway/           @kaileliu
+/system/world/             @HeartLinked
+/system/robotdesc/              @Chenyantt
 /system/sentinel/          @HustWolfzzb
-/system/scribe/            @ohhhHwH
-/system/vitals/            @AuYang261
+/system/log/            @ohhhHwH
+/system/monitor/            @AuYang261
 /system/keystone/          @kaileliu
 /system/nexus/             @ZZJJWarth
 # chronos: unassigned

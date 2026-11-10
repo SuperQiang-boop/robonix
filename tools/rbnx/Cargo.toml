@@ -30,8 +30,8 @@ hostname = "0.4"
 colored = "3.0"
 git2 = "0.20.4"
 resvg = "0.47.0"
-robonix-atlas = { path = "../../system/atlas" }
-robonix-scribe.workspace = true
+robonix-src = { path = "../../system/src" }
+robonix-log.workspace = true
 
 [build-dependencies]
 robonix-codegen.workspace = true

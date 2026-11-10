@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MulanPSL-2.0
 """Deterministic fake VLM for robonix CI.
 
-Pilot talks to an OpenAI-compatible ``/v1/chat/completions`` endpoint in
+Planner talks to an OpenAI-compatible ``/v1/chat/completions`` endpoint in
 streaming mode and expects one RTDL envelope as assistant content. This server
 serves scenario-defined RTDL trees so planning is deterministic while every leaf
 capability call still executes through the live Robonix deployment.
@@ -11,7 +11,7 @@ Scenario model:
 * one ``steps[]`` entry = one VLM planning round;
 * ``steps[].rtdl`` is the RTDL tree returned for that round;
 * test-only keys such as ``id``, ``expect``, ``capture``, and ``once`` are never
-  sent to Pilot;
+  sent to Planner;
 * variables captured from earlier leaf outputs can be referenced in later args
   with ``{var: name}`` or string interpolation like ``"$name"``.
 """

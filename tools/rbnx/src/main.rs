@@ -6,7 +6,7 @@
 use anyhow::Result;
 use clap::Parser;
 use robonix_cli::Config;
-use robonix_scribe::warn;
+use robonix_log::warn;
 use std::path::{Path, PathBuf};
 
 mod cmd;
@@ -23,13 +23,13 @@ struct Cli {
 
 /// Ensure the loopback control plane is never tunneled through an HTTP proxy.
 ///
-/// Robonix's atlas (gRPC), the executor↔package MCP calls (HTTP), and the CLI
+/// Robonix's src (gRPC), the executor↔package MCP calls (HTTP), and the CLI
 /// itself all talk over `127.0.0.1` / `localhost`. If the environment has
 /// `http_proxy` set without those hosts in `no_proxy`, every local call gets
 /// routed through the proxy and fails (gRPC "Socket closed", MCP "502 Bad
 /// Gateway"). Merge the loopback hosts into `no_proxy`/`NO_PROXY` (preserving
 /// any existing entries, case-insensitively) so this process and every child
-/// it spawns — atlas, executor, pilot, the Python packages — bypass the proxy
+/// it spawns — src, executor, planner, the Python packages — bypass the proxy
 /// for the local control plane.
 fn ensure_loopback_bypasses_proxy() {
     const LOOPBACK: [&str; 3] = ["127.0.0.1", "localhost", "::1"];
@@ -85,8 +85,8 @@ fn prepare_boot_log_dir(command: &cmd::Commands) -> Result<()> {
             let _ = std::fs::remove_file(path);
         }
     }
-    // Safety: startup is still single-threaded and Scribe has not been used.
-    unsafe { std::env::set_var("SCRIBE_LOG_DIR", &log_dir) };
+    // Safety: startup is still single-threaded and Log has not been used.
+    unsafe { std::env::set_var("ROBONIX_LOG_DIR", &log_dir) };
     Ok(())
 }
 
@@ -98,25 +98,25 @@ async fn main() -> Result<()> {
     let verbose_boot = matches!(&cli.command, cmd::Commands::Boot { verbose: true, .. });
     prepare_boot_log_dir(&cli.command)?;
 
-    // Select the Scribe console threshold before its LazyLock is initialized.
+    // Select the Log console threshold before its LazyLock is initialized.
     // Normal boot keeps package logs in files; verbose boot streams the same
-    // Scribe records to the terminal without introducing a second log path.
+    // Log records to the terminal without introducing a second log path.
     // Safety: no other threads exist yet (tokio runtime not started).
     unsafe {
         std::env::set_var(
-            "SCRIBE_CONSOLE_LEVEL",
+            "ROBONIX_LOG_CONSOLE_LEVEL",
             if verbose_boot { "info" } else { "error" },
         );
     }
 
-    robonix_scribe::init("rbnx");
+    robonix_log::init("rbnx");
 
     let config = Config::load()?;
     config.ensure_storage_dir()?;
 
     // Enforce robonix_source_path migration: subcommands that build / start packages
     // need the new ~/.robonix/config.yaml field. Exempt commands that bootstrap the
-    // config itself (Setup), read it (Config, Path), or operate purely on atlas (Nodes,
+    // config itself (Setup), read it (Config, Path), or operate purely on src (Nodes,
     // Describe, Tools, Channels, Inspect, Chat, Graph, List, Info).
     let needs_source = matches!(
         &cli.command,
@@ -196,14 +196,14 @@ mod tests {
 
     /// Keep boot help aligned with the supported built-in system components.
     #[test]
-    fn boot_help_lists_vitals() {
+    fn boot_help_lists_monitor() {
         let mut command = Cli::command();
         let help = command
             .find_subcommand_mut("boot")
             .expect("boot subcommand")
             .render_long_help()
             .to_string();
-        assert!(help.contains("vitals"));
+        assert!(help.contains("monitor"));
     }
 
     #[test]

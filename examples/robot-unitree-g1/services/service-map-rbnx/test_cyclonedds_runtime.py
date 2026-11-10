@@ -23,7 +23,7 @@ class CycloneDDSRuntimeTests(unittest.TestCase):
             fake_bin.mkdir()
             fake_x11.mkdir()
             runtime_proto.mkdir()
-            (runtime_proto / "atlas.proto").write_text(
+            (runtime_proto / "src.proto").write_text(
                 'syntax = "proto3";\n', encoding="utf-8"
             )
             proto_staging = package / "rbnx-build" / "proto-staging"

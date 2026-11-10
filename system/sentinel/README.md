@@ -10,15 +10,15 @@ Sentinel is not implemented on `dev` yet. There is no `robonix-sentinel`
 binary, no `system/executor/src/dispatch/sentinel.rs`, and no `sentinel.yaml`
 rule loader in Executor.
 
-Executor currently dispatches validated RTDL `do` nodes directly through Atlas
+Executor currently dispatches validated RTDL `do` nodes directly through Src
 to the selected primitive, service, or skill provider. The only safety-related
 controls in the current path are local to the components that already exist,
 for example:
 
 - Executor plan cancellation and stop points (`cancel_plan`, `stop_plan_at`,
   `cancel_all_plans`).
-- Liaison access control for text/API users and voiceprint-verified speakers
-  before work enters Pilot/TTS.
+- Gateway access control for text/API users and voiceprint-verified speakers
+  before work enters Planner/TTS.
 - Provider-side validation in individual primitives and services.
 
 Do not rely on this directory for runtime enforcement today.
@@ -30,7 +30,7 @@ dispatches side-effecting work. The policy decision should be based on:
 
 - the requested contract and arguments,
 - the operator identity and permissions from [keystone](../keystone/),
-- current robot/body health from [vitals](../vitals/),
-- current environment state from [scene](../scene/),
+- current robot/body health from [monitor](../monitor/),
+- current environment state from [world](../world/),
 - explicit safety policy such as allow/deny lists, rate limits, workspace
   limits, stop windows, and emergency-stop state.

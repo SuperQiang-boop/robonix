@@ -3,7 +3,7 @@
 #
 # Lightweight ROS Humble base with rclpy + numpy/scipy for grid math.
 # No SLAM packages here — this skill consumes mapping's output via
-# atlas-resolved /map and drives via the navigation service's gRPC.
+# src-resolved /map and drives via the navigation service's gRPC.
 # --network host + --ipc=host at runtime so DDS reaches /map and the
 # nav service is reachable on 127.0.0.1.
 ARG ROS_BASE_IMAGE=robonix-ros:humble-ros-base
@@ -50,7 +50,7 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 
 # Python deps:
-#   grpcio/protobuf — atlas client
+#   grpcio/protobuf — src client
 #   fastmcp/uvicorn — MCP server for the 3 skill tools (LLM-callable)
 RUN pip install --no-cache-dir \
         grpcio==1.80.0 \

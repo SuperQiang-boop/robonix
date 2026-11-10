@@ -1,17 +1,17 @@
 // SPDX-License-Identifier: MulanPSL-2.0
 // Poll async MCP capabilities via `<contract_id>/status` until terminal state.
 
-use robonix_scribe::warn;
+use robonix_log::warn;
 use std::time::Duration;
 
 use crate::dispatch::{self, async_registry::AsyncGroup};
 use crate::pb::executor::RtdlEvent;
-use crate::pb::pilot::rtdl_node_state::RtdlNodeStateEnum;
-use crate::pb::pilot::{CapabilityCall, CapabilityCallResult};
+use crate::pb::planner::rtdl_node_state::RtdlNodeStateEnum;
+use crate::pb::planner::{CapabilityCall, CapabilityCallResult};
 use crate::plan_runtime::{PlanRuntime, RunningAsyncCall};
 use crate::rtdl_wire::{self, NodeEventContext};
-use robonix_atlas::client::AtlasClient;
-use robonix_atlas::pb as atlas_pb;
+use robonix_src::client::SrcClient;
+use robonix_src::pb as src_pb;
 use tokio::sync::mpsc::Sender;
 use tokio::time;
 
@@ -22,12 +22,12 @@ pub async fn run_until_terminal(
     call: &CapabilityCall,
     group: &AsyncGroup,
     self_provider_id: &str,
-    atlas: &mut AtlasClient,
+    src: &mut SrcClient,
     tx: &Sender<Result<RtdlEvent, tonic::Status>>,
     node: &NodeEventContext,
     runtime: &PlanRuntime,
 ) -> CapabilityCallResult {
-    let initial = dispatch::dispatch(call, self_provider_id, atlas, runtime, &node.plan_id).await;
+    let initial = dispatch::dispatch(call, self_provider_id, src, runtime, &node.plan_id).await;
     if !initial.success {
         let _ = tx
             .send(Ok(rtdl_wire::node_state_from_result(
@@ -50,7 +50,7 @@ pub async fn run_until_terminal(
                 run_id: run_id.clone(),
             },
             self_provider_id,
-            atlas,
+            src,
         )
         .await;
     if !accepted {
@@ -73,7 +73,7 @@ pub async fn run_until_terminal(
         interval.tick().await;
         if runtime.is_cancelled(&node.plan_id).await {
             runtime
-                .cancel_async_call_for_plan(&node.plan_id, &call.call_id, self_provider_id, atlas)
+                .cancel_async_call_for_plan(&node.plan_id, &call.call_id, self_provider_id, src)
                 .await;
             let result = canceled_result(call, "plan was cancelled");
             let _ = tx
@@ -90,7 +90,7 @@ pub async fn run_until_terminal(
             &call.provider_id,
             &group.status_contract,
             &run_id,
-            atlas,
+            src,
         )
         .await
         {
@@ -155,7 +155,7 @@ async fn poll_status(
     provider_id: &str,
     status_contract: &str,
     run_id: &str,
-    atlas: &mut AtlasClient,
+    src: &mut SrcClient,
 ) -> anyhow::Result<String> {
     let args = if run_id.is_empty() {
         "{}".to_string()
@@ -168,16 +168,16 @@ async fn poll_status(
         contract_id: status_contract.to_string(),
         args_json: args,
     };
-    let (channel_id, endpoint, _) = atlas
+    let (channel_id, endpoint, _) = src
         .connect_capability(
             consumer_id,
             provider_id,
             status_contract,
-            atlas_pb::Transport::Mcp,
+            src_pb::Transport::Mcp,
         )
         .await?;
     let result = crate::dispatch::mcp::execute(&status_call, &endpoint).await;
-    let _ = atlas.disconnect_capability(&channel_id).await;
+    let _ = src.disconnect_capability(&channel_id).await;
     if result.success {
         Ok(result.output)
     } else {

@@ -1,7 +1,7 @@
 # Robot Description primitive
 
-This primitive publishes the robot body model managed by Soma through ROS 2
-`robot_state_publisher`. Soma's `robonix/system/soma/get_urdf` gRPC API is the
+This primitive publishes the robot body model managed by Robotdesc through ROS 2
+`robot_state_publisher`. Robotdesc's `robonix/system/robotdesc/get_urdf` gRPC API is the
 only URDF input. The package has no URDF path, model file, or per-deployment
 body configuration of its own.
 
@@ -16,6 +16,5 @@ ROS 2 consumers use the resulting TF tree directly.
 
 Both modes default to `RMW_IMPLEMENTATION=rmw_zenoh_cpp` and use the deployment's
 existing `ROBONIX_ZENOH_ROUTER`, `ROBONIX_ZENOH_MODE`, and
-`ROBONIX_ZENOH_LISTEN` settings. Soma supplies `ROBONIX_SOMA_ENDPOINT` to every
+`ROBONIX_ZENOH_LISTEN` settings. Robotdesc supplies `ROBONIX_ROBOTDESC_ENDPOINT` to every
 primitive it launches; operators do not configure this package separately.
-

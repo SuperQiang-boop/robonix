@@ -43,8 +43,8 @@ class GuardFailureTest(unittest.TestCase):
         self.assertIsNone(read_guard_failure(self.root, "../../bad"))
 
     def _result(self, user_cancel=False, handle_uuid=None, status=5):
-        """Execute production result functions without importing or starting the ROS/Atlas bridge."""
-        source = Path(__file__).parent / "nav2_wrapper" / "atlas_bridge.py"
+        """Execute production result functions without importing or starting the ROS/Src bridge."""
+        source = Path(__file__).parent / "nav2_wrapper" / "src_bridge.py"
         selected = {"_result_cb", "_goal_status_name", "_canonical_state"}
         parsed = ast.parse(source.read_text())
         module = ast.Module(body=[node for node in parsed.body
@@ -71,7 +71,7 @@ class GuardFailureTest(unittest.TestCase):
         return namespace["_goal_states"]["run"]
 
     def test_safety_cancel_becomes_failed_with_reason_and_final_error(self):
-        """Pilot receives the real cause and does not mistake a guard stop for user intent."""
+        """Planner receives the real cause and does not mistake a guard stop for user intent."""
         write_guard_failure(self.root, self.uuid, "terminal correction blocked by local costmap",
                             (0.3, 0.4, 0.1), (0.0, 0.0, 0.0))
         state = self._result()

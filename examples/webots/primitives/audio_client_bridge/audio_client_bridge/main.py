@@ -8,7 +8,7 @@ this host — it's relayed over a WebSocket to a small daemon (see
 sibling `client_audio_server/server.py`) running on an client machine across the LAN.
 
 Wire format both directions: 16 kHz, mono, s16le PCM, ~100 ms chunks
-(3200 bytes each). Identical to `audio_driver` so liaison's voice
+(3200 bytes each). Identical to `audio_driver` so gateway's voice
 pipeline never needs to know which backend is loaded.
 
 Config (RBNX_CAP_CONFIG_JSON):
@@ -76,7 +76,7 @@ def _ws_connect(path: str, **kwargs):
 
 @audio_client_bridge.grpc("robonix/primitive/audio/bridge_info")
 def bridge_info(request, context):
-    """Return the client-facing reverse endpoint through Atlas discovery."""
+    """Return the client-facing reverse endpoint through Src discovery."""
     if reverse_bridge is None:
         return audio_pb2.GetAudioBridgeInfo_Response(
             reverse=False,
@@ -171,7 +171,7 @@ def speaker_stream(request_iterator, context):
     The gRPC call must not return immediately after the last frame is sent:
     macOS playback continues asynchronously inside sounddevice. Holding the
     speaker lock for the estimated PCM duration keeps consecutive TTS
-    utterances serialized even when Liaison speaks sentence by sentence."""
+    utterances serialized even when Gateway speaks sentence by sentence."""
     if reverse_bridge is not None:
         return reverse_bridge.speaker_stream(request_iterator, context, Empty)
     if bridge_host is None:
@@ -346,7 +346,7 @@ def select_device(request, context):
 @audio_client_bridge.on_init
 def init(cfg):
     """Read host/port from cfg + env, probe the client audio device server's `/health`
-    endpoint once. Refuse to come up if it's unreachable — atlas defers
+    endpoint once. Refuse to come up if it's unreachable — src defers
     instead of advertising dead interfaces, and consumers see a clear
     error rather than mysteriously empty mic streams."""
     global bridge_host, bridge_port, reverse_bridge, reverse_endpoint

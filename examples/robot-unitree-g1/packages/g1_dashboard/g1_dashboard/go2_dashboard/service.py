@@ -1,4 +1,4 @@
-"""Robonix provider owning telemetry and optional Liaison voice UI child."""
+"""Robonix provider owning telemetry and optional Gateway voice UI child."""
 
 from __future__ import annotations
 

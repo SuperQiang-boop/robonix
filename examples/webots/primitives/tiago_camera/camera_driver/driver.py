@@ -471,7 +471,7 @@ def init(cfg):
             return Err(f"no RGB on {rgb_topic} within {waited:.1f}s")
         print(f"[tiago_camera] RGB sample confirmed via ros2 CLI fallback on {rgb_topic}")
 
-    # data interfaces are ready — declare them on atlas
+    # data interfaces are ready — declare them on src
     tiago_camera.declare_ros2_topic("robonix/primitive/camera/rgb",   rgb_topic,   qos="best_effort")
     tiago_camera.declare_ros2_topic("robonix/primitive/camera/depth", depth_topic, qos="best_effort")
     return Ok()

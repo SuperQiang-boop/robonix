@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MulanPSL-2.0
 #
 # Build phase: run rbnx codegen --mcp so:
-#   * atlas_pb2 / atlas_pb2_grpc Python stubs exist.
+#   * src_pb2 / src_pb2_grpc Python stubs exist.
 #   * perception_mcp.py is generated from
 #     capabilities/lib/perception/srv/DetectObject.srv with
 #     DetectObject_Request / DetectObject_Response dataclasses.
@@ -10,7 +10,7 @@
 # Note: we do NOT vendor openai / numpy — those come from pip install.
 #
 # Output layout:
-#   rbnx-build/codegen/proto_gen/                atlas stubs
+#   rbnx-build/codegen/proto_gen/                src stubs
 #   rbnx-build/codegen/robonix_mcp_types/        perception_mcp.py
 set -euo pipefail
 PKG="${RBNX_PACKAGE_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"

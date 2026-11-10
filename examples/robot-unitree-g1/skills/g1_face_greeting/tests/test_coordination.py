@@ -1,4 +1,4 @@
-"""Offline regressions for the opt-in greeting/Pilot handoff."""
+"""Offline regressions for the opt-in greeting/Planner handoff."""
 import json
 import os
 import sys
@@ -72,7 +72,7 @@ class CoordinationTests(unittest.TestCase):
         self.assertTrue(self.read()["movement_allowed"])
         self.assertEqual(self.read()["state"], "SUCCEEDED")
 
-    def test_no_voice_request_still_leaves_resume_to_pilot(self):
+    def test_no_voice_request_still_leaves_resume_to_planner(self):
         with patch.object(coordination, "listen", return_value=False):
             main._greet(self.event)
         self.assertIn("no voice request", self.read()["detail"])

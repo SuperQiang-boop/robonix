@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MulanPSL-2.0
-"""Voiceprint gRPC service entry point (atlas-codegen flavour).
+"""Voiceprint gRPC service entry point (src-codegen flavour).
 
 Replaces the original bespoke-proto implementation (system/voiceprint/proto/
 voiceprint.proto + voiceprint_pb2) with the standard robonix v0.1 flow:
@@ -12,15 +12,15 @@ voiceprint.proto + voiceprint_pb2) with the standard robonix v0.1 flow:
      (one big proto bundle, three gRPC services).
   3. This file imports those generated stubs, subclasses each Servicer
      base, and `attach_grpc_servicer`s them onto a single
-     robonix_api.Service. Atlas registration + Driver(CMD_INIT) +
+     robonix_api.Service. Src registration + Driver(CMD_INIT) +
      heartbeat all run through Service.run() — no hand-rolled
      grpc.server() any more.
 
-Three RPCs land on the same listener under the same atlas Service:
+Three RPCs land on the same listener under the same src Service:
 
   * robonix/service/voiceprint/identify           — Identify(...)
-      Frozen v0.1 capability surface; Liaison's voice path resolves it
-      via atlas and calls it directly.
+      Frozen v0.1 capability surface; Gateway's voice path resolves it
+      via src and calls it directly.
   * robonix/service/voiceprint/enroll    — Enroll(...)
       Admin RPC, used by `rbnx chat`'s Ctrl+U modal to register a fresh
       sample. Mutates enrolled.json on success.
@@ -47,7 +47,7 @@ from pathlib import Path
 
 import numpy as np
 
-# Atlas-codegen stubs — produced by `rbnx build -p voiceprint` into
+# Src-codegen stubs — produced by `rbnx build -p voiceprint` into
 # rbnx-build/codegen/proto_gen/ and put on sys.path by robonix_api at
 # import time. Stub class names follow PascalCase of the contract_id
 # segments (see tools/codegen/src/contract_gen.rs).
@@ -60,13 +60,13 @@ import robonix_contracts_pb2_grpc as pb_grpc  # type: ignore[import-not-found]
 # request/response dataclasses.
 import voiceprint_pb2 as vp  # type: ignore[import-not-found]
 from voiceprint_mcp import ListEnrolled_Request, ListEnrolled_Response  # type: ignore[import-not-found]
-from robonix_api import Service, Ok, Err, scribe_logger  # noqa: E402
+from robonix_api import Service, Ok, Err, log_logger  # noqa: E402
 
 from voiceprint_service.engine import EcapaTdnnEngine
 
-# Route all stdlib logging through Scribe so `rbnx logs -t voiceprint` sees the
+# Route all stdlib logging through Log so `rbnx logs -t voiceprint` sees the
 # full trace and the package owns no log file or stdout sink of its own.
-scribe_logger.install_stdlib_bridge("voiceprint")
+log_logger.install_stdlib_bridge("voiceprint")
 log = logging.getLogger("voiceprint_service")
 
 
@@ -204,7 +204,7 @@ def _ensure_ready(cfg: dict | None = None) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# gRPC servicers — one per atlas-registered contract, all sharing _engine + _db.
+# gRPC servicers — one per src-registered contract, all sharing _engine + _db.
 #
 # Each Servicer subclasses a codegen-generated base class. Method names mirror
 # the .srv filename (PascalCase), and the request/response types live in the

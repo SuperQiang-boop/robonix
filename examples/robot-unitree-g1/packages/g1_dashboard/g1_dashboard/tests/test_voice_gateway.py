@@ -65,7 +65,7 @@ class VoiceConfigTests(unittest.TestCase):
     def test_all_network_targets_are_literal_loopback(self) -> None:
         with self.assertRaisesRegex(ValueError, "literal loopback"):
             VoiceConfig.from_environment(
-                {"GO2_DASHBOARD_LIAISON_ENDPOINT": "192.168.123.18:50081"}
+                {"GO2_DASHBOARD_GATEWAY_ENDPOINT": "192.168.123.18:50081"}
             )
         with self.assertRaisesRegex(ValueError, "ws://127.0.0.1"):
             VoiceConfig.from_environment(
@@ -80,7 +80,7 @@ class VoiceConfigTests(unittest.TestCase):
                 }
             )
         with self.assertRaisesRegex(ValueError, "literal loopback"):
-            VoiceConfig(enabled=True, liaison_endpoint="example.test:50081")
+            VoiceConfig(enabled=True, gateway_endpoint="example.test:50081")
 
     def test_duration_and_timeout_limits_fail_closed(self) -> None:
         with self.assertRaisesRegex(ValueError, "below"):
@@ -155,9 +155,9 @@ class BrowserBoundaryTests(unittest.TestCase):
             validate_wav_upload(b"x" * 300_001, "audio/wav", config)
 
 
-class PilotDisplayEventTests(unittest.TestCase):
+class PlannerDisplayEventTests(unittest.TestCase):
     def test_preview_task_state_exposes_target_and_blocker_without_a_call(self) -> None:
-        pilot = SimpleNamespace(
+        planner = SimpleNamespace(
             event_kind=6,
             task_state=SimpleNamespace(
                 goal="语义导航预览：自动售货机",
@@ -173,11 +173,11 @@ class PilotDisplayEventTests(unittest.TestCase):
             text="",
             status_message="",
             error="",
-            pilot=pilot,
+            planner=planner,
         )
         update = _event_update(_voice_event_payload(event), "preview")
         self.assertEqual(update["intent_target"], "自动售货机")
-        self.assertEqual(update["pilot_task_status"], "done")
+        self.assertEqual(update["planner_task_status"], "done")
         self.assertIn("GO2_ALLOW_MOTION=false", update["blocked_reason"])
         self.assertEqual(update["capability_calls_observed"], 0)
         self.assertIn("未执行", update["message"])
@@ -189,7 +189,7 @@ class PilotDisplayEventTests(unittest.TestCase):
             contract_id="contract",
             args_json="{}",
         )
-        pilot = SimpleNamespace(
+        planner = SimpleNamespace(
             event_kind=1,
             plan=SimpleNamespace(nodes=[SimpleNamespace(call=call)]),
         )
@@ -198,7 +198,7 @@ class PilotDisplayEventTests(unittest.TestCase):
             text="",
             status_message="",
             error="",
-            pilot=pilot,
+            planner=planner,
         )
         update = _event_update(_voice_event_payload(event), "preview")
         self.assertEqual(update["capability_calls_observed"], 1)

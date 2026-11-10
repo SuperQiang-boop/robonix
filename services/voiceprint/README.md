@@ -2,7 +2,7 @@
 
 ECAPA-TDNN speaker-identification service. Implements the frozen v0.1
 capability `robonix/service/voiceprint/identify` (one-shot `Identify`)
-consumed by Liaison's voice-gating path, and adds two package-private
+consumed by Gateway's voice-gating path, and adds two package-private
 admin RPCs (`Enroll`, `ListEnrolled`) for off-line enrollment tooling.
 
 ## Layout
@@ -68,5 +68,5 @@ This package serves
 whose IDL is
 [`capabilities/lib/voiceprint/srv/Identify.srv`](../../capabilities/lib/voiceprint/srv/Identify.srv).
 The two extra RPCs (`Enroll`, `ListEnrolled`) are package-private and are
-NOT registered as Atlas capabilities; they exist only on the local
+NOT registered as Src capabilities; they exist only on the local
 service port for admin tooling.

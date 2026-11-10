@@ -28,7 +28,7 @@ end_effector:=pal-gripper`. Both use `base_type:=pmb2`,
 `is_public_sim:=true`, and `use_sim_time:=false`.
 
 `examples/webots/sim/vendor_tiago_visuals.py` validates every asset reference,
-copies it beside the Soma URDF, merges the Webots device and control nodes,
+copies it beside the Robotdesc URDF, merges the Webots device and control nodes,
 rewrites each resource to a URDF-local relative URL, and records file hashes in
 `tiago_visuals.manifest.json`.
 
@@ -67,5 +67,5 @@ python3 examples/webots/sim/vendor_tiago_visuals.py \
 
 Before requesting `get_urdf(include_assets=true)`, every path in
 `tiago_visuals.manifest.json` must exist below `resource/` with the recorded
-checksum. The Client does not download missing files from PAL Robotics; Soma
+checksum. The Client does not download missing files from PAL Robotics; Robotdesc
 loads these local files on demand and transfers them with the URDF.

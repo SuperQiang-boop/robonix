@@ -1,7 +1,7 @@
 # service-navigation-rbnx
 
 Robonix wrapper around a system-installed ROS 2 Nav2 stack. The service
-discovers map, odometry, and lidar inputs through Atlas and exposes
+discovers map, odometry, and lidar inputs through Src and exposes
 `robonix/service/navigation/*` over gRPC and MCP.
 
 When `ROBONIX_GREETING_STATE_PATH` is set, navigation admission, queued dispatch
@@ -11,7 +11,7 @@ the restriction; cancel and status remain available. New G1 goals also wait for
 any previous navigation to become terminal, rather than treating cancellation
 acceptance as completion. Unset the variable in other deployments to retain
 their existing behavior. Rebuild/reload navigation together with the G1 greeting
-skill, Pilot, Executor and Liaison when enabling this mode.
+skill, Planner, Executor and Gateway when enabling this mode.
 
 For Fast DDS on a host with multiple network interfaces, export
 `RMW_IMPLEMENTATION=rmw_fastrtps_cpp` and `FASTRTPS_DEFAULT_PROFILES_FILE`
@@ -137,8 +137,8 @@ the configured `trajectory_log_dir` (default `rbnx-build/data/trajectories`).
 The result callback reads only the matching UUID: safety stops become `FAILED`
 with `safety_stop` and actual XY/yaw errors, while explicit user cancellation
 remains `CANCELED`. Normal success still requires Nav2's real successful result.
-This preserves the failure cause for Pilot rather than masking an unfinished
-goal; Pilot may still fail if bounded recovery cannot complete navigation.
+This preserves the failure cause for Planner rather than masking an unfinished
+goal; Planner may still fail if bounded recovery cannot complete navigation.
 Offline result/UUID regression: `PYTHONPATH=. python3 -m unittest test_guard_failure`.
 The deployment's `packages/g1_chassis/tests/nav2_guard_smoke.py` exercises the
 production ROS guard with a synthetic cancellation service in a network-isolated
@@ -158,7 +158,7 @@ connecting a chassis. It does not establish physical in-place turning accuracy.
 
 At `Driver(CMD_INIT)`, the wrapper:
 
-1. resolves the selected Atlas providers;
+1. resolves the selected Src providers;
 2. resolves and materializes the deployment-owned Nav2 YAML;
 3. starts an optional PointCloud2-to-LaserScan adapter;
 4. starts Nav2 and waits for the `navigate_to_pose` action server;
@@ -170,7 +170,7 @@ failure returns `error` and tears down every child process.
 
 ## Build and tests
 
-Navigation generates only its Atlas MCP bindings on every deployment target.
+Navigation generates only its Src MCP bindings on every deployment target.
 It deliberately does not generate, build, or source a Robonix ROS 2 IDL
 overlay: the provider talks to Nav2 through the ROS 2 interfaces supplied by
 the selected Humble installation, while its own public capability transport is

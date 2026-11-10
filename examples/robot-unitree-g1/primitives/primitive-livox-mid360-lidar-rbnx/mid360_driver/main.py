@@ -25,8 +25,8 @@ Config (from manifest's `config:` block, delivered via Driver(CMD_INIT)):
                        (radians). When present we spawn a
                        static_transform_publisher parent_frame → frame_id
                        so consumers (mapping etc.) see a complete TF
-                       tree without needing chassis or soma. Skip when
-                       a chassis driver / soma URDF already publishes
+                       tree without needing chassis or robotdesc. Skip when
+                       a chassis driver / robotdesc URDF already publishes
                        the same edge — double-publishing TFs causes
                        'TF_REPEATED_DATA ignoring data' warnings.
     sentinel_timeout_s default 30.0
@@ -54,7 +54,7 @@ cap = Primitive(id="mid360_lidar", namespace="robonix/primitive/lidar")
 
 
 def _pump_output(stream, tag: str) -> None:
-    """Forward a child process's merged stdout/stderr into scribe via the
+    """Forward a child process's merged stdout/stderr into the log facade via the
     package logger — one unified log stream, no side-car *.log file."""
     for raw in iter(stream.readline, b""):
         line = raw.decode(errors="replace").rstrip()
@@ -162,7 +162,7 @@ def _spawn_stp(cfg: dict) -> None:
     global _stp_proc
     ext = cfg.get("extrinsics")
     if not ext:
-        log.info("no extrinsics in cfg; assuming chassis/soma publishes "
+        log.info("no extrinsics in cfg; assuming chassis/robotdesc publishes "
                  "parent_frame → frame_id elsewhere")
         return
     parent = str(cfg.get("parent_frame", "base_link"))
@@ -216,7 +216,7 @@ def _wait_for_pointcloud(topic: str, timeout_s: float) -> bool:
         log.warning("rclpy unavailable (%s); skipping sentinel wait", e)
         return True
     rclpy.init(args=None)
-    node = Node("mid360_atlas_sentinel")
+    node = Node("mid360_src_sentinel")
     qos = QoSProfile(
         reliability=ReliabilityPolicy.BEST_EFFORT,
         durability=DurabilityPolicy.VOLATILE,

@@ -1,4 +1,4 @@
-# mapping_rbnx — FASTLIO2 SLAM nodes + Atlas bridge
+# mapping_rbnx — FASTLIO2 SLAM nodes + Src bridge
 # Works on both x86 and ARM (Jetson Orin) via multi-arch ros:humble-ros-base.
 
 services:
@@ -24,7 +24,7 @@ services:
       ros2 launch /ws/launch/slam_mapping.launch.py
     restart: unless-stopped
 
-  atlas-bridge:
+  src-bridge:
     build:
       context: ..
       dockerfile: docker/Dockerfile
@@ -33,7 +33,7 @@ services:
     container_name: mapping_rbnx_bridge
     network_mode: host
     environment:
-      - ROBONIX_ATLAS=${ROBONIX_ATLAS:-localhost:50051}
+      - ROBONIX_SRC=${ROBONIX_SRC:-localhost:50051}
       - MAPPING_GRPC_PORT=${MAPPING_GRPC_PORT:-50120}
       - SLAM_MODE=${SLAM_MODE:-mapping}
       - MAP_FILE=${MAP_FILE:-}
@@ -42,7 +42,7 @@ services:
       - RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
     volumes:
       - ${MAP_SAVE_DIR:-./maps}:/maps
-    command: python3 -m mapping_rbnx.atlas_bridge
+    command: python3 -m mapping_rbnx.src_bridge
     depends_on:
       - fastlio2
     restart: unless-stopped

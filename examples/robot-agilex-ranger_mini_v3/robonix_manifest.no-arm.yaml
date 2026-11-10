@@ -10,7 +10,7 @@ catalog:
   version: 0.2.0
   description: Robonix deployment for the AgileX Ranger Mini v3 robot.
   license: Apache-2.0
-  tags: [robot, deploy, agilex, ranger_mini_v3, jetson, lidar, rgbd, scene, mapping, navigation]
+  tags: [robot, deploy, agilex, ranger_mini_v3, jetson, lidar, rgbd, world, mapping, navigation]
   maintainers:
     - wheatfox <wheatfox17@icloud.com>
 
@@ -21,9 +21,9 @@ env:
   RMW_IMPLEMENTATION: rmw_zenoh_cpp
 
   MAPPING_MAPS_DIR: ${HOME}/.robonix/maps
-  SCENE_OBJECT_MEMORY_DB: ${HOME}/.robonix/scene/objects.db
-  SCENE_GRAPH_CACHE_DIR: ${HOME}/.robonix/scene/graph
-  SCENE_ANNOTATIONS_DIR: ${HOME}/.robonix/scene/annotations
+  WORLD_OBJECT_MEMORY_DB: ${HOME}/.robonix/scene/objects.db
+  WORLD_GRAPH_CACHE_DIR: ${HOME}/.robonix/scene/graph
+  WORLD_ANNOTATIONS_DIR: ${HOME}/.robonix/scene/annotations
 
   # Build-time mirrors only. All model weights are prepared by build scripts;
   # start must not download models.
@@ -35,34 +35,34 @@ env:
   SPEECH_BACKEND: tencent
 
 system:
-  atlas:
+  src:
     listen: 0.0.0.0:50051
   executor:
     listen: 0.0.0.0:50061
-  pilot:
+  planner:
     listen: 127.0.0.1:50071
     vlm:
       upstream: ${VLM_BASE_URL}
       api_key: ${VLM_API_KEY}
       model: ${VLM_MODEL}
       api_format: openai
-  liaison:
+  gateway:
     listen: 0.0.0.0:50081
-  soma:
+  robotdesc:
     listen: 127.0.0.1:50091
-    robot_yaml: ${ROBONIX_DEPLOY_DIR}/soma.yaml
-  vitals:
-    # Vitals consumes Soma's body-health stream and aggregates Robonix module
+    robot_yaml: ${ROBONIX_DEPLOY_DIR}/robotdesc.yaml
+  monitor:
+    # Monitor consumes Robotdesc's body-health stream and aggregates Robonix module
     # health. Bind externally so trusted operator clients can read dashboards.
     listen: 0.0.0.0:50093
-  scene:
+  world:
     manifest: package_manifest.jetson-native.yaml
     camera_provider_id: orbbec_camera
     web_port: 50107
 
 primitive:
-  # Publishes the Soma-owned URDF as /robot_description and the standard TF
-  # tree. This has no body config of its own; Soma is the only URDF source.
+  # Publishes the Robotdesc-owned URDF as /robot_description and the standard TF
+  # tree. This has no body config of its own; Robotdesc is the only URDF source.
   - name: robot_description
     url: https://github.com/syswonder/primitive-robot-description-rbnx
     branch: main
@@ -77,7 +77,7 @@ primitive:
       lidar_ip: 192.168.1.161
       host_ip: 192.168.1.50
       xfer_format: 0
-      # Three attempts including cleanup stay below Soma's 90 s INIT deadline.
+      # Three attempts including cleanup stay below Robotdesc's 90 s INIT deadline.
       sentinel_timeout_s: 20.0
 
   - name: mid360_imu
@@ -137,7 +137,7 @@ primitive:
       speaker_sample_rate: 16000
 
   # Client-side audio is a separate provider. The client discovers this
-  # listener through Atlas and connects outward, so deployment never stores a
+  # listener through Src and connects outward, so deployment never stores a
   # client address or a client-owned port. Speech/speak remains pinned to the
   # robot USB provider unless a caller explicitly selects this provider.
   - name: audio_client_bridge
@@ -214,14 +214,14 @@ skill:
     config: {}
 
   # Long-lived passerby greeting watch. Its Qwen3 VLM configuration is
-  # independent from Pilot, and the skill never commands robot motion.
+  # independent from Planner, and the skill never commands robot motion.
   - name: greet
     path: ./skills/greet
     config:
-      # Bind the front RGB stream explicitly so Atlas ordering cannot select a
+      # Bind the front RGB stream explicitly so Src ordering cannot select a
       # different camera when the full arm profile is restored.
       camera_provider_id: orbbec_camera
-      soma_provider_id: soma
+      robotdesc_provider_id: robotdesc
       chassis_provider_id: ranger_chassis
       vlm:
         upstream: ${GREET_VLM_BASE_URL}

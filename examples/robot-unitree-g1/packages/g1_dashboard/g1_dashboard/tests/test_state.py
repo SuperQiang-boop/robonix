@@ -256,7 +256,7 @@ class StateTests(unittest.TestCase):
             intent_target="自动售货机",
             intent_summary="语义导航预览：自动售货机",
             blocked_reason="GO2_ALLOW_MOTION=false",
-            pilot_task_status="done",
+            planner_task_status="done",
             capability_calls_observed=0,
         )
         self.assertEqual(len(current["transcript"]), 300)
@@ -267,7 +267,7 @@ class StateTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "stale"):
             self.state.update_voice(
                 session_id="b" * 32,
-                status="pilot",
+                status="planner",
                 message="wrong session",
                 active=True,
             )
@@ -294,7 +294,7 @@ class StateTests(unittest.TestCase):
         self.state.configure_voice(True, {}, execution_mode="preview")
         current = self.state.update_voice(
             session_id="a" * 32,
-            status="pilot",
+            status="planner",
             message="plan observed",
             active=True,
             capability_calls_observed=1,

@@ -1,5 +1,5 @@
-# Enumerate audio/speaker primitives registered in atlas.
-# MCP tool — Pilot / RTDL calls this to discover a `target` for speak.
+# Enumerate audio/speaker primitives registered in src.
+# MCP tool — Planner / RTDL calls this to discover a `target` for speak.
 [contract]
 id      = "robonix/service/speech/list_speakers"
 version = "1"

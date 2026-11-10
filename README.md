@@ -193,14 +193,14 @@ Robonix divides the work of an embodied brain across twelve system components, k
 
 | Component                        | What it is                                                                               |
 | -------------------------------- | ---------------------------------------------------------------------------------------- |
-| **[atlas](system/atlas/)**       | The catalog of every running primitive / service / skill and its contract; components find and connect to capabilities through it |
-| **[soma](system/soma/)**         | Serves the robot's body description — `soma.yaml` and its URDF — to every other component |
-| **[scene](system/scene/)**       | Current best estimate of the environment: tracked objects with pose and class, their relations, and a 2D occupancy grid |
-| **[pilot](system/pilot/)**       | Builds the prompt from the capability catalog, asks the VLM, and turns the answer into an executable plan |
-| **[executor](system/executor/)** | Executes those plans — dispatches each step to a primitive, service, or skill through atlas, with observable task state |
-| **[liaison](system/liaison/)**   | The user-input gateway in front of pilot: text and push-to-talk voice, identity, and access policy |
-| **[vitals](system/vitals/)**     | Monitors onboard health — temperatures, voltage, joint motors — and evaluates thresholds |
-| **[scribe](system/scribe/)**     | The structured logging library every component writes its journal through |
+| **[src](system/src/)**       | The catalog of every running primitive / service / skill and its contract; components find and connect to capabilities through it |
+| **[robotdesc](system/robotdesc/)**         | Serves the robot's body description — `robotdesc.yaml` and its URDF — to every other component |
+| **[world](system/world/)**       | Current best estimate of the environment: tracked objects with pose and class, their relations, and a 2D occupancy grid |
+| **[planner](system/planner/)**       | Builds the prompt from the capability catalog, asks the VLM, and turns the answer into an executable plan |
+| **[executor](system/executor/)** | Executes those plans — dispatches each step to a primitive, service, or skill through src, with observable task state |
+| **[gateway](system/gateway/)**   | The user-input gateway in front of planner: text and push-to-talk voice, identity, and access policy |
+| **[monitor](system/monitor/)**     | Monitors onboard health — temperatures, voltage, joint motors — and evaluates thresholds |
+| **[log](system/log/)**     | The structured logging library every component writes its journal through |
 | **[sentinel](system/sentinel/)** | Decides whether a capability call is allowed under the current robot state, operator, and policy |
 | **[keystone](system/keystone/)** | Stores the body's identity, persistent configuration, and operator access policy |
 | **[chronos](system/chronos/)**   | A single time source that aligns timestamps across sensors, actuators, and components |

@@ -97,11 +97,11 @@ class TestTagSet:
 
 class TestLogRecord:
     def test_roundtrip(self):
-        lr = LogRecord(ts=123456789, level="Info", tag="pilot", msg="task started")
+        lr = LogRecord(ts=123456789, level="Info", tag="planner", msg="task started")
         lr2 = LogRecord.from_dict(lr.to_dict())
         assert lr2.ts == 123456789
         assert lr2.level == "Info"
-        assert lr2.tag == "pilot"
+        assert lr2.tag == "planner"
 
 
 class TestMemoryNode:

@@ -16,7 +16,7 @@ from memory_service.core.remember import RememberPipeline, _rule_based_tag_extra
 
 class TestTagExtraction:
     def test_scene_extraction(self):
-        lr = LogRecord(ts=100, level="Info", tag="pilot",
+        lr = LogRecord(ts=100, level="Info", tag="planner",
                        msg="robot grasped the red cup in the kitchen")
         tags = _rule_based_tag_extraction(lr, None)
         assert tags.scene_type == "kitchen"
@@ -28,7 +28,7 @@ class TestTagExtraction:
         assert tags.action_type == "grasp"
 
     def test_task_extraction(self):
-        lr = LogRecord(ts=100, level="Info", tag="pilot",
+        lr = LogRecord(ts=100, level="Info", tag="planner",
                        msg="robot went to fetch the cup")
         tags = _rule_based_tag_extraction(lr, None)
         assert tags.task_type == "fetch"

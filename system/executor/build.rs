@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MulanPSL-2.0
 // Executor proto codegen: ROS IDL + contract TOML → .proto (via robonix-codegen
 // as a library) → tonic Rust stubs. All artefacts in OUT_DIR; nothing
-// committed. Atlas wire types are NOT regenerated here — executor reaches
-// them via `robonix_atlas::pb` from the atlas crate.
+// committed. Src wire types are NOT regenerated here — executor reaches
+// them via `robonix_src::pb` from the src crate.
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;

@@ -30,7 +30,7 @@ class RuntimeIntegrationTest(unittest.TestCase):
             deploy.mkdir()
             fake_bin.mkdir()
             runtime_proto.mkdir()
-            (runtime_proto / "atlas.proto").write_text(
+            (runtime_proto / "src.proto").write_text(
                 'syntax = "proto3";\n', encoding="utf-8"
             )
             proto_staging = package / "rbnx-build" / "proto-staging"
@@ -47,7 +47,7 @@ class RuntimeIntegrationTest(unittest.TestCase):
                 '    for arg in "$@"; do\n'
                 '      if [[ "$arg" == *:/proto-gen ]]; then\n'
                 '        output="${arg%:/proto-gen}"\n'
-                '        touch "$output/atlas_pb2.py"\n'
+                '        touch "$output/src_pb2.py"\n'
                 '        touch "$output/navigation_pb2.py"\n'
                 '        touch "$output/robonix_contracts_pb2_grpc.py"\n'
                 '      fi\n'
@@ -102,21 +102,21 @@ class RuntimeIntegrationTest(unittest.TestCase):
             )
 
     def test_nav_consumes_provider_pinned_canonical_odom(self):
-        source = (ROOT / "nav2_wrapper" / "atlas_bridge.py").read_text()
+        source = (ROOT / "nav2_wrapper" / "src_bridge.py").read_text()
         self.assertIn('"odom",  "robonix/primitive/chassis/odom"', source)
         self.assertIn('providers = dict(cfg.get("provider_ids", {}) or {})', source)
         self.assertIn("provider_id=provider_id", source)
         self.assertNotIn('("odom",  "robonix/service/map/odom"', source)
 
     def test_pointcloud_projection_is_explicit(self):
-        source = (ROOT / "nav2_wrapper" / "atlas_bridge.py").read_text()
+        source = (ROOT / "nav2_wrapper" / "src_bridge.py").read_text()
         self.assertIn("scan_projection_config(cfg)", source)
         self.assertIn('"rtabmap_util", "lidar_deskewing"', source)
         self.assertIn('"scan:=/scanner/scan_raw"', source)
         self.assertIn('"-m", "nav2_wrapper.scan_filter"', source)
 
     def test_final_velocity_guard_owns_cmd_vel(self):
-        source = (ROOT / "nav2_wrapper" / "atlas_bridge.py").read_text()
+        source = (ROOT / "nav2_wrapper" / "src_bridge.py").read_text()
         guard = (ROOT / "nav2_wrapper" / "velocity_guard.py").read_text()
         self.assertIn("('cmd_vel', 'cmd_vel_guard_input')", source)
         self.assertIn("('cmd_vel_smoothed', 'cmd_vel_guard_input')", source)
@@ -131,7 +131,7 @@ class RuntimeIntegrationTest(unittest.TestCase):
         self.assertIn('"${VELOCITY_OUTPUT_ARGS[@]}"', start)
 
     def test_dynamic_speed_uses_nav2_live_speed_limit_without_replacing_goal(self):
-        source = (ROOT / "nav2_wrapper" / "atlas_bridge.py").read_text()
+        source = (ROOT / "nav2_wrapper" / "src_bridge.py").read_text()
         guard = (ROOT / "nav2_wrapper" / "velocity_guard.py").read_text()
         manifests = [
             (ROOT / name).read_text()
@@ -177,14 +177,14 @@ class RuntimeIntegrationTest(unittest.TestCase):
             )
 
     def test_invalid_velocity_topic_is_rejected_before_dependency_discovery(self):
-        source = (ROOT / "nav2_wrapper" / "atlas_bridge.py").read_text()
+        source = (ROOT / "nav2_wrapper" / "src_bridge.py").read_text()
         validation = source.index("resolve_velocity_output_topic(cfg)", source.index("def init"))
         discovery = source.index("_build_remap_args(cfg)", source.index("def init"))
         self.assertLess(validation, discovery)
         self.assertIn('return Err(f"invalid velocity_output_topic: {error}")', source)
 
     def test_failed_init_cleans_up_nav_children(self):
-        source = (ROOT / "nav2_wrapper" / "atlas_bridge.py").read_text()
+        source = (ROOT / "nav2_wrapper" / "src_bridge.py").read_text()
         self.assertIn(
             'except Exception as e:  # noqa: BLE001\n        _kill_nav2()\n'
             '        return Err(f"spawn nav2 failed: {e}")',
@@ -192,7 +192,7 @@ class RuntimeIntegrationTest(unittest.TestCase):
         )
 
     def test_cancel_is_latched_before_action_handle_exists(self):
-        source = (ROOT / "nav2_wrapper" / "atlas_bridge.py").read_text()
+        source = (ROOT / "nav2_wrapper" / "src_bridge.py").read_text()
         self.assertIn('state["cancel_requested"] = True', source)
         self.assertIn('state["state"] = "CANCELED"', source)
         self.assertIn("cancel queued until goal acceptance", source)

@@ -16,7 +16,7 @@ NO_MOTION_MANIFEST="$DIR/robonix_manifest.no-motion.yaml"
 if [ ! -f "$NO_MOTION_MANIFEST" ]; then
   echo "[scout2] generating no-motion manifest..."
   # Remove the chassis primitive entry from the manifest
-  # Keep: atlas, scene, executor, pilot, liaison
+  # Keep: src, scene, executor, planner, gateway
   # Keep: camera, lidar primitives
   # Skip: scout2_chassis primitive
   # Keep: all services, skills

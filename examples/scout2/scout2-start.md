@@ -17,4 +17,4 @@ rbnx boot -f robonix_manifest.yaml --no-update-check
 
 启动后通过重定位 `get_status` 检查状态。只有 `localization_valid=true` 才表示重定位成功；`active=true` 只表示服务已启动。定位未通过时 navigation 拒绝自主导航。首次建图保持其他用户已开启的 `can0`，mapping 会按 30 秒周期自动保存，并在正常关闭时再保存一次。
 
-若 Pilot 配置需要 VLM 凭据，应先在当前 shell 中设置 `VLM_API_KEY`，不要把密钥写入 manifest 或此文件。
+若 Planner 配置需要 VLM 凭据，应先在当前 shell 中设置 `VLM_API_KEY`，不要把密钥写入 manifest 或此文件。

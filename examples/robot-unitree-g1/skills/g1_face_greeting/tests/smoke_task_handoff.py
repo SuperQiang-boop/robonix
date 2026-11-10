@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise real Atlas/Executor/Pilot against a deterministic local model.
+"""Exercise real Src/Executor/Planner against a deterministic local model.
 
 Uses isolated ports and harmless shell markers instead of robot hardware. This
 checks execution ordering and failure/Stop behavior, not model language accuracy.
@@ -27,7 +27,7 @@ sys.path.insert(0, str(PACKAGE / "rbnx-build/codegen/proto_gen"))
 sys.path.insert(0, str(PACKAGE))
 sys.path.insert(0, str(SOURCE / "pylib/robonix-api"))
 import grpc
-import pilot_pb2
+import planner_pb2
 import robonix_contracts_pb2_grpc as contracts
 
 
@@ -154,7 +154,7 @@ async def scenario(stub, model, snapshot, name, runtime=None):
                 frontend_events.append(event)
 
     publish(True)
-    collectors = [asyncio.create_task(collect(stub.SubmitTask(pilot_pb2.Task(
+    collectors = [asyncio.create_task(collect(stub.SubmitTask(planner_pb2.Task(
         task_id=name + "-A", session_id=session, text="go to A")), True))]
     await wait_until(lambda: "A_START" in model.labels(), "A started")
     publish(False)
@@ -162,9 +162,9 @@ async def scenario(stub, model, snapshot, name, runtime=None):
         from g1_face_greeting import coordination
         admitted = await asyncio.to_thread(coordination.listen, runtime,
             {"session_id": session, "event_id": name})
-        assert admitted, "Liaison did not admit the greeting voice command"
+        assert admitted, "Gateway did not admit the greeting voice command"
     else:
-        collectors.append(asyncio.create_task(collect(stub.SubmitTask(pilot_pb2.Task(
+        collectors.append(asyncio.create_task(collect(stub.SubmitTask(planner_pb2.Task(
             task_id=name + "-B", session_id=session, text="first B",
             context_json=json.dumps({"greeting_event_id": name}))))))
     await asyncio.sleep(1)
@@ -172,7 +172,7 @@ async def scenario(stub, model, snapshot, name, runtime=None):
     publish(True)
     await wait_until(lambda: "B_START" in model.labels(), "B started after cancellation")
     if name == "stop":
-        async for _ in stub.SubmitTask(pilot_pb2.Task(task_id=name + "-stop", session_id=session,
+        async for _ in stub.SubmitTask(planner_pb2.Task(task_id=name + "-stop", session_id=session,
                 context_json='{"abort_turn":true}')):
             pass
         await asyncio.sleep(1)
@@ -195,7 +195,7 @@ async def scenario(stub, model, snapshot, name, runtime=None):
         assert "B_DONE" not in labels
         # A late authorized voice transcript from the same encounter must be rejected.
         try:
-            async for _ in stub.SubmitTask(pilot_pb2.Task(task_id="late-" + name,
+            async for _ in stub.SubmitTask(planner_pb2.Task(task_id="late-" + name,
                     session_id=session, text="first B", context_json=json.dumps({"greeting_event_id": name}))):
                 pass
             raise AssertionError("late greeting voice task bypassed Stop")
@@ -213,44 +213,44 @@ async def main():
     model = Model(work)
     server = ThreadingHTTPServer(("127.0.0.1", 0), handler(model))
     threading.Thread(target=server.serve_forever, daemon=True).start()
-    atlas, executor, pilot, liaison = [f"127.0.0.1:{port()}" for _ in range(4)]
+    src, executor, planner, gateway = [f"127.0.0.1:{port()}" for _ in range(4)]
     snapshot = work / "greeting.json"
     snapshot.write_text('{"movement_allowed":true}')
     environment = {key: value for key, value in os.environ.items()
                    if key in {"PATH", "HOME", "USER", "LANG", "LD_LIBRARY_PATH"}}
     environment.update(ROBONIX_SOURCE_PATH=str(SOURCE), ROBONIX_GREETING_STATE_PATH=str(snapshot),
-                       ROBONIX_LIAISON_VOICE_MOCK="1", ROBONIX_LIAISON_VOICE_MOCK_TEXT="first B",
-                       ROBONIX_LIAISON_ACCESS_ENABLED="false",
-                       SCRIBE_STDOUT_LEVEL="debug", SCRIBE_FILE_LEVEL="off", XDG_STATE_HOME=str(work))
+                       ROBONIX_GATEWAY_VOICE_MOCK="1", ROBONIX_GATEWAY_VOICE_MOCK_TEXT="first B",
+                       ROBONIX_GATEWAY_ACCESS_ENABLED="false",
+                       ROBONIX_LOG_STDOUT_LEVEL="debug", ROBONIX_LOG_FILE_LEVEL="off", XDG_STATE_HOME=str(work))
     commands = [
-        ["robonix-atlas", "--listen", atlas, "--capabilities", str(SOURCE / "capabilities")],
-        ["robonix-executor", "--atlas", atlas, "--listen", executor, "--id", "executor"],
-        ["robonix-pilot", "--atlas", atlas, "--listen", pilot, "--id", "pilot",
+        ["robonix-src", "--listen", src, "--capabilities", str(SOURCE / "capabilities")],
+        ["robonix-executor", "--src", src, "--listen", executor, "--id", "executor"],
+        ["robonix-planner", "--src", src, "--listen", planner, "--id", "planner",
          "--vlm-upstream", f"http://127.0.0.1:{server.server_port}/v1", "--vlm-api-key", "local-smoke",
          "--vlm-model", "local-smoke", "--vlm-format", "openai"],
-        ["robonix-liaison", "--atlas", atlas, "--listen", liaison, "--pilot-endpoint", pilot],
+        ["robonix-gateway", "--src", src, "--listen", gateway, "--planner-endpoint", planner],
     ]
     processes = []
     outputs = []
     try:
-        for command, endpoint in zip(commands, [atlas, executor, pilot, liaison]):
+        for command, endpoint in zip(commands, [src, executor, planner, gateway]):
             output = (work / (command[0] + ".log")).open("w")
             outputs.append(output)
             command[0] = str(SOURCE / "target/debug" / command[0])
             processes.append(subprocess.Popen(command, env=environment, cwd=work, stdout=output, stderr=subprocess.STDOUT))
             async with grpc.aio.insecure_channel(endpoint) as channel:
                 await asyncio.wait_for(channel.channel_ready(), 15)
-        async with grpc.aio.insecure_channel(pilot) as channel:
-            stub = contracts.RobonixSystemPilotStub(channel)
-            os.environ["ROBONIX_ATLAS"] = atlas
+        async with grpc.aio.insecure_channel(planner) as channel:
+            stub = contracts.RobonixSystemPlannerStub(channel)
+            os.environ["ROBONIX_SRC"] = src
             os.environ["ROBONIX_GREETING_STATE_PATH"] = str(snapshot)
-            from robonix_api import ATLAS, Skill
-            ATLAS.register_skill("greeting-probe", "robonix/skill/greeting-probe")
+            from robonix_api import SRC, Skill
+            SRC.register_skill("greeting-probe", "robonix/skill/greeting-probe")
             runtime = SimpleNamespace(skill=Skill(id="greeting-probe", namespace="robonix/skill/greeting-probe"),
                                       _stop=threading.Event(), log=logging.getLogger("greeting-probe"))
             for name in ["success", "failure", "replace", "stop", "voice"]:
                 await scenario(stub, model, snapshot, name, runtime)
-        print("PASS real Pilot/Executor task handoff; artifacts:", work)
+        print("PASS real Planner/Executor task handoff; artifacts:", work)
     finally:
         for process in reversed(processes):
             process.terminate()

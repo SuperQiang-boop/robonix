@@ -8,7 +8,7 @@ from pathlib import Path
 
 import grpc
 import robonix_contracts_pb2_grpc as contracts_grpc
-import soma_pb2
+import robotdesc_pb2
 from robonix_api import Err, Ok, Primitive
 
 from .runtime import command_for, inspect_urdf, stop_process, write_params
@@ -24,18 +24,18 @@ _process: subprocess.Popen[bytes] | None = None
 
 
 def _fetch_urdf() -> tuple[str, str]:
-    endpoint = os.environ.get("ROBONIX_SOMA_ENDPOINT", "").strip()
+    endpoint = os.environ.get("ROBONIX_ROBOTDESC_ENDPOINT", "").strip()
     if not endpoint:
-        raise RuntimeError("ROBONIX_SOMA_ENDPOINT was not supplied by Soma")
+        raise RuntimeError("ROBONIX_ROBOTDESC_ENDPOINT was not supplied by Robotdesc")
     channel = grpc.insecure_channel(endpoint)
     grpc.channel_ready_future(channel).result(timeout=10)
     try:
-        stub = contracts_grpc.RobonixSystemSomaGetUrdfStub(channel)
-        response = stub.GetUrdf(soma_pb2.GetUrdf_Request(robot_id=""), timeout=10)
+        stub = contracts_grpc.RobonixSystemRobotdescGetUrdfStub(channel)
+        response = stub.GetUrdf(robotdesc_pb2.GetUrdf_Request(robot_id=""), timeout=10)
     finally:
         channel.close()
     if not response.urdf_xml.strip():
-        raise RuntimeError("Soma returned an empty URDF")
+        raise RuntimeError("Robotdesc returned an empty URDF")
     return response.robot_id, response.urdf_xml
 
 
@@ -52,7 +52,7 @@ def init(_cfg: dict):
         mode = os.environ.get("ROBONIX_ROBOT_DESCRIPTION_MODE", "docker").strip().lower()
         command = command_for(mode, params_path, CONTAINER_NAME)
         log.info(
-            "Soma robot=%s root=%s links=%d joints=%d mode=%s rmw=%s",
+            "Robotdesc robot=%s root=%s links=%d joints=%d mode=%s rmw=%s",
             robot_id,
             root_link,
             links,
@@ -83,4 +83,3 @@ def shutdown():
 if __name__ == "__main__":
     os.environ.setdefault("RMW_IMPLEMENTATION", "rmw_zenoh_cpp")
     cap.run()
-

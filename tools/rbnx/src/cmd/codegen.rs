@@ -25,7 +25,7 @@
 use anyhow::{Context, Result};
 use colored::*;
 use robonix_cli::{Config, SourcePathKey};
-use robonix_scribe::debug;
+use robonix_log::debug;
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -92,14 +92,14 @@ pub async fn execute(
     // layout. When present we add it both as an IDL include
     // (`<pkg>/capabilities/lib/`) and as a contracts root, so packages
     // can ship their own msg/srv/contracts that merge with the global
-    // set (symmetric with how atlas's contract registry merges roots).
+    // set (symmetric with how src's contract registry merges roots).
     let pkg_caps = pkg_root.join("capabilities");
     let pkg_caps_lib: Option<PathBuf> = {
         let p = pkg_caps.join("lib");
         p.is_dir().then_some(p)
     };
     // <pkg>/capabilities/ also gets passed to --contracts so per-package
-    // contracts merge with the global tree (atlas does the same merge
+    // contracts merge with the global tree (src does the same merge
     // at the registry level — this keeps codegen consistent).
     let pkg_caps_root: Option<PathBuf> = pkg_caps.is_dir().then_some(pkg_caps);
 

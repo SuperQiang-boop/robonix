@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: Apache-2.0
-# nav2_wrapper native (no-docker) launcher. Runs the atlas bridge as a host
+# nav2_wrapper native (no-docker) launcher. Runs the src bridge as a host
 # process against a host-installed ROS2 + Nav2. Picked by scripts/start.sh
 # when ROBONIX_NAV2_FORCE=native (or ROBONIX_NAV2_PLATFORM matches the
 # native whitelist). The bridge spawns `ros2 launch nav2_bringup
@@ -38,4 +38,4 @@ if ROBONIX_PY="$(rbnx path robonix-api 2>/dev/null)"; then
 fi
 
 mkdir -p "$PKG/rbnx-build/data"
-exec python3 -m nav2_wrapper.atlas_bridge
+exec python3 -m nav2_wrapper.src_bridge

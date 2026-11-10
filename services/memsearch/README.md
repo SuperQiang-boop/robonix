@@ -1,7 +1,7 @@
 # memsearch — reference memory service
 
 `memsearch` is the **default reference implementation** of
-`robonix/service/memory/*`. It backs the pilot's memory layer with a
+`robonix/service/memory/*`. It backs the planner's memory layer with a
 small SQLite-backed `(when, what, who)` event store plus a vector index
 for semantic retrieval.
 

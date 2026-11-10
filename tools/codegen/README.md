@@ -3,7 +3,7 @@
 `robonix-codegen` turns Robonix contracts (TOML) + ROS-style IDL
 (`.msg` / `.srv`) into language-specific stubs that components can
 import directly. It runs as a library inside the Rust build (via the
-`build.rs` of atlas / executor / liaison / pilot / rbnx) and as a CLI
+`build.rs` of src / executor / gateway / planner / rbnx) and as a CLI
 that packages call from their own `scripts/build.sh`.
 
 ## What it generates

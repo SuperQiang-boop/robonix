@@ -1,4 +1,4 @@
-"""One isolated production-entry regression: Atlas, native matching and ROS handoff."""
+"""One isolated production-entry regression: Src, native matching and ROS handoff."""
 import json
 import os
 from pathlib import Path
@@ -17,15 +17,15 @@ from geometry_msgs.msg import PoseWithCovarianceStamped, TransformStamped
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import PointCloud2, PointField
 from tf2_ros import StaticTransformBroadcaster, TransformBroadcaster
-import atlas_pb2
+import src_pb2
 import map_pb2
 import robonix_contracts_pb2_grpc as contracts
-from e2e_atlas import AtlasIntegrationTests, wait_for
+from e2e_src import SrcIntegrationTests, wait_for
 from backend_matching import MatchingTests
 from relocalization_rbnx.coordination import MapWriter
 from relocalization_rbnx.navigation import check
 
-class FullCheck(AtlasIntegrationTests):
+class FullCheck(SrcIntegrationTests):
     def command(self, command):
         """Send the configured production profile through the real Driver."""
         import lifecycle_pb2
@@ -62,9 +62,9 @@ class FullCheck(AtlasIntegrationTests):
         contracts.add_RobonixServiceMapPoseEstimateServicer_to_server(Mapping(),server)
         port = server.add_insecure_port('127.0.0.1:0'); server.start()
         self.addCleanup(lambda:server.stop(0).wait())
-        self.atlas.DeclareCapability(atlas_pb2.DeclareCapabilityRequest(provider_id='mapping_e2e',
-            contract_id='robonix/service/map/pose_estimate',transport=atlas_pb2.TRANSPORT_GRPC,
-            endpoint=f'127.0.0.1:{port}',params=atlas_pb2.TransportParams(grpc=atlas_pb2.GrpcParams(
+        self.src.DeclareCapability(src_pb2.DeclareCapabilityRequest(provider_id='mapping_e2e',
+            contract_id='robonix/service/map/pose_estimate',transport=src_pb2.TRANSPORT_GRPC,
+            endpoint=f'127.0.0.1:{port}',params=src_pb2.TransportParams(grpc=src_pb2.GrpcParams(
                 service_name='RobonixServiceMapPoseEstimate',method='PoseEstimate'))),timeout=3)
         old = dict(os.environ)
         os.environ.update(self.env)

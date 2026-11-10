@@ -6,7 +6,7 @@ gRPC, MCP, and ROS 2 client/server stacks that every component links
 directly. There is nothing to start.
 
 Robonix contracts are transport-agnostic; `rbnx codegen` projects each
-onto gRPC / MCP / ROS 2, and those three stacks are nexus. atlas declares
+onto gRPC / MCP / ROS 2, and those three stacks are nexus. src declares
 per interface which transport a capability is reachable over, and
 consumers dial it with the matching nexus library. The dev guide section
 *Capabilities and Capability Interfaces* covers that mechanism.

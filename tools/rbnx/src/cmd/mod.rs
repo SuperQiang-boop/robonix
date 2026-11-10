@@ -93,7 +93,7 @@ pub enum Commands {
     /// Boot the whole stack from a `robonix_manifest.yaml` (until Ctrl-C)
     ///
     /// Brings up declared built-in system components
-    /// (atlas/executor/soma/pilot/vitals/liaison), other system packages, and
+    /// (src/executor/robotdesc/planner/monitor/gateway), other system packages, and
     /// every package declared under `primitive`/`service`/`skill`.
     /// `rbnx deploy` is kept as an alias for back-compat.
     #[command(alias = "deploy")]
@@ -104,7 +104,7 @@ pub enum Commands {
         /// Directory for per-component logs (default: `<manifest-dir>/rbnx-boot/logs`).
         #[arg(long)]
         log_dir: Option<PathBuf>,
-        /// Skip starting the `system:` block (atlas/pilot/etc). Useful when
+        /// Skip starting the `system:` block (src/planner/etc). Useful when
         /// those are already running externally.
         #[arg(long)]
         skip_system: bool,
@@ -113,7 +113,7 @@ pub enum Commands {
         /// hurry.
         #[arg(long)]
         no_update_check: bool,
-        /// Stream append-only, Scribe-backed component logs during boot.
+        /// Stream append-only, Log-backed component logs during boot.
         /// Disables animated cursor updates so output can be read or piped
         /// like a Linux/FreeBSD kernel boot log or Android logcat.
         #[arg(short, long)]
@@ -265,8 +265,8 @@ pub enum Commands {
     /// Pass -v to expand the per-provider capability list, lspci -tv style.
     #[command(alias = "nodes")]
     Caps {
-        /// robonix-atlas endpoint
-        #[arg(long, env = "ROBONIX_ATLAS", default_value = DEFAULT_ENDPOINT)]
+        /// robonix-src endpoint
+        #[arg(long, env = "ROBONIX_SRC", default_value = DEFAULT_ENDPOINT)]
         server: String,
         /// Output as JSON (forces full detail regardless of -v)
         #[arg(long)]
@@ -276,13 +276,13 @@ pub enum Commands {
         #[arg(short = 'v', long)]
         verbose: bool,
     },
-    /// List atlas's loaded contract registry
+    /// List src's loaded contract registry
     ///
-    /// Every `<root>/capabilities/**/*.toml` atlas parsed at startup. -v for
+    /// Every `<root>/capabilities/**/*.toml` src parsed at startup. -v for
     /// field-level schemas + source paths; -p/--prefix filters by namespace.
     Contracts {
-        /// robonix-atlas endpoint
-        #[arg(long, env = "ROBONIX_ATLAS", default_value = DEFAULT_ENDPOINT)]
+        /// robonix-src endpoint
+        #[arg(long, env = "ROBONIX_SRC", default_value = DEFAULT_ENDPOINT)]
         server: String,
         /// Filter by id prefix (e.g. `robonix/primitive/camera/`)
         #[arg(short = 'p', long)]
@@ -296,8 +296,8 @@ pub enum Commands {
     },
     /// Show CAPABILITY.md for registered providers (all, or one with --provider)
     Describe {
-        /// robonix-atlas endpoint
-        #[arg(long, env = "ROBONIX_ATLAS", default_value = DEFAULT_ENDPOINT)]
+        /// robonix-src endpoint
+        #[arg(long, env = "ROBONIX_SRC", default_value = DEFAULT_ENDPOINT)]
         server: String,
         /// Show full CAPABILITY.md content for a specific provider_id
         #[arg(long, alias = "node")]
@@ -308,8 +308,8 @@ pub enum Commands {
     },
     /// Print every MCP-callable tool visible to the agent (executor builtins + provider capabilities)
     Tools {
-        /// robonix-atlas endpoint
-        #[arg(long, env = "ROBONIX_ATLAS", default_value = DEFAULT_ENDPOINT)]
+        /// robonix-src endpoint
+        #[arg(long, env = "ROBONIX_SRC", default_value = DEFAULT_ENDPOINT)]
         server: String,
         /// Output as JSON
         #[arg(long)]
@@ -317,21 +317,21 @@ pub enum Commands {
     },
     /// Show active channels (consumer→provider connections opened via ConnectCapability)
     Channels {
-        /// robonix-atlas endpoint
-        #[arg(long, env = "ROBONIX_ATLAS", default_value = DEFAULT_ENDPOINT)]
+        /// robonix-src endpoint
+        #[arg(long, env = "ROBONIX_SRC", default_value = DEFAULT_ENDPOINT)]
         server: String,
     },
     /// Dump full runtime state as JSON (providers, capabilities, channels)
     Inspect {
-        /// robonix-atlas endpoint
-        #[arg(long, env = "ROBONIX_ATLAS", default_value = DEFAULT_ENDPOINT)]
+        /// robonix-src endpoint
+        #[arg(long, env = "ROBONIX_SRC", default_value = DEFAULT_ENDPOINT)]
         server: String,
     },
 
     /// Chat with the Robonix agent in an interactive TUI
     Chat {
-        /// robonix-atlas endpoint (used to discover agent)
-        #[arg(long, env = "ROBONIX_ATLAS", default_value = DEFAULT_ENDPOINT)]
+        /// robonix-src endpoint (used to discover agent)
+        #[arg(long, env = "ROBONIX_SRC", default_value = DEFAULT_ENDPOINT)]
         server: String,
     },
 
@@ -358,25 +358,25 @@ pub enum Commands {
 
     /// One-shot non-interactive prompt to the agent (stdout, then exit)
     ///
-    /// Same gRPC path as `rbnx chat` (atlas connect → SubmitTask → stream
-    /// PilotEvent) but prints events to stdout and exits when the stream
+    /// Same gRPC path as `rbnx chat` (src connect → SubmitTask → stream
+    /// PlannerEvent) but prints events to stdout and exits when the stream
     /// closes. Useful for scripted tests / CI / agent-driven runs.
     Ask {
-        /// The user message to send to the pilot.
+        /// The user message to send to the planner.
         prompt: String,
-        /// robonix-atlas endpoint
-        #[arg(long, env = "ROBONIX_ATLAS", default_value = DEFAULT_ENDPOINT)]
+        /// robonix-src endpoint
+        #[arg(long, env = "ROBONIX_SRC", default_value = DEFAULT_ENDPOINT)]
         server: String,
-        /// Emit one JSON object per pilot event on stdout (line-delimited).
+        /// Emit one JSON object per planner event on stdout (line-delimited).
         /// Default is human-readable text with tool-call summaries.
         #[arg(long)]
         json: bool,
     },
-    /// Read Scribe JSON-lines log files and render them with optional
+    /// Read Log JSON-lines files and render them with optional
     /// tag / level filtering.  Point at a log directory or read the
     /// default `<manifest-dir>/rbnx-boot/logs`.
     Logs {
-        /// Log directory (default: `./rbnx-boot/logs` or `$SCRIBE_LOG_DIR`).
+        /// Log directory (default: `./rbnx-boot/logs` or `$ROBONIX_LOG_DIR`).
         #[arg(short = 'd', long)]
         log_dir: Option<PathBuf>,
         /// Filter to one or more tags (OR semantics).

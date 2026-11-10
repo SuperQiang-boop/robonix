@@ -1,6 +1,6 @@
 # Scenario Spec
 
-Scenario files under `testing/scenarios/` drive Pilot through the deterministic
+Scenario files under `testing/scenarios/` drive Planner through the deterministic
 fake VLM while every RTDL leaf still executes against the live Robonix
 deployment. The fake VLM only makes planning deterministic; it does not replace
 scene perception, navigation, exploration, audio, mapping, memory, or executor
@@ -17,7 +17,7 @@ returns the step's `rtdl` tree as one assistant RTDL envelope. The harness does
 not invent an implicit shape around the YAML: if the test needs a `sequence`, a
 `parallel`, or a nested tree, write that tree directly.
 
-The live Pilot loop is asynchronous. Pilot executes an RTDL tree, then sends
+The live Planner loop is asynchronous. Planner executes an RTDL tree, then sends
 leaf feedback back to the VLM as structured JSON user content:
 
 ```json
@@ -43,8 +43,8 @@ Top-level fields:
 | --- | --- | --- |
 | `name` | yes | Stable scenario id; also used for log/report file names. |
 | `task` | yes | User task text. The fake VLM selects a scenario by this string. |
-| `steps` | yes | Timeline of RTDL envelopes served to Pilot. |
-| `expect_final_done` | no | Defaults to `true`; fails if Pilot reports a failed final state. |
+| `steps` | yes | Timeline of RTDL envelopes served to Planner. |
+| `expect_final_done` | no | Defaults to `true`; fails if Planner reports a failed final state. |
 | `allow_leaf_failure` | no | Defaults to `false`; only use for debugging, not committed CI scenarios. |
 
 ## Step Fields
@@ -106,10 +106,10 @@ steps:
       children:
         - op: do
           id: list_scene_objects
-          cap: scene.scene_list_objects
+          cap: world.world_list_objects
           args: {}
           expect:
-            contract: robonix/system/scene/list_objects
+            contract: robonix/system/world/list_objects
             success: true
             output:
               checks:
@@ -133,7 +133,7 @@ steps:
 
 ## RTDL Nodes
 
-Supported node ops are the RTDL ops Pilot accepts here:
+Supported node ops are the RTDL ops Planner accepts here:
 
 | Op | Required fields | Meaning |
 | --- | --- | --- |
@@ -142,7 +142,7 @@ Supported node ops are the RTDL ops Pilot accepts here:
 | `do` | `cap`, `args`, `expect` | Execute one planner capability. |
 
 `cap` must be the exact provider-qualified planner capability name advertised in
-Pilot's system prompt, for example `scene.scene_list_objects` or
+Planner's system prompt, for example `world.world_list_objects` or
 `nav2.navigation_navigate`. Short names and substring matching are intentionally
 not supported.
 
@@ -154,10 +154,10 @@ Test-only node fields:
 
 | Field | Applies to | Meaning |
 | --- | --- | --- |
-| `id` | any node | Stable scenario-local RTDL node name for reports and fake-VLM bookkeeping. Not sent to Pilot. This is not a scene object id. |
-| `expect` | `do` | Runtime leaf assertion for this planned call. Not sent to Pilot. |
-| `capture` | inside `expect` | Named values extracted from this leaf for later steps. Not sent to Pilot. |
-| `once` | `do` | Suppress this node if the same node id has already been served in this scenario. Not sent to Pilot. |
+| `id` | any node | Stable scenario-local RTDL node name for reports and fake-VLM bookkeeping. Not sent to Planner. This is not a scene object id. |
+| `expect` | `do` | Runtime leaf assertion for this planned call. Not sent to Planner. |
+| `capture` | inside `expect` | Named values extracted from this leaf for later steps. Not sent to Planner. |
+| `once` | `do` | Suppress this node if the same node id has already been served in this scenario. Not sent to Planner. |
 
 ## Leaf Assertions
 
@@ -291,11 +291,11 @@ inside the same `expect` that proves the leaf was the intended result.
 ```yaml
 - op: do
   id: goal_near_object
-  cap: scene.scene_goal_near
+  cap: world.world_goal_near
   args:
     object_id: {var: object_id}
   expect:
-    contract: robonix/system/scene/goal_near
+    contract: robonix/system/world/goal_near
     success: true
     output:
       json: {reachable: true}
@@ -333,7 +333,7 @@ orientation:
 ```
 
 Variable references are valid only in later steps. This matches the actual
-planning loop: Pilot executes the current RTDL tree, sends leaf results back to
+planning loop: Planner executes the current RTDL tree, sends leaf results back to
 the VLM, and only the next VLM round can plan with those results. A `sequence`
 node orders work in one returned RTDL tree, but this harness does not add a
 test-only dataflow language where one leaf's output is interpolated into a later

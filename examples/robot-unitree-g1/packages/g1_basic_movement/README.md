@@ -1,7 +1,7 @@
 # G1 Basic Movement Skill
 
 Velocity-based locomotion skill for the Unitree G1 humanoid robot.  Provides
-simple MCP tools for LLM/Pilot-driven movement control without Nav2 path
+simple MCP tools for LLM/Planner-driven movement control without Nav2 path
 planning.
 
 ## Quick reference

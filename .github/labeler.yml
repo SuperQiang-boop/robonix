@@ -1,24 +1,24 @@
 # Path -> component label config for actions/labeler@v5.
 # Applied to PRs by .github/workflows/pr-triage.yml.
 
-"comp:atlas":
-  - changed-files: [{ any-glob-to-any-file: "system/atlas/**" }]
+"comp:src":
+  - changed-files: [{ any-glob-to-any-file: "system/src/**" }]
 "comp:executor":
   - changed-files: [{ any-glob-to-any-file: "system/executor/**" }]
-"comp:pilot":
-  - changed-files: [{ any-glob-to-any-file: "system/pilot/**" }]
-"comp:liaison":
-  - changed-files: [{ any-glob-to-any-file: "system/liaison/**" }]
-"comp:scene":
-  - changed-files: [{ any-glob-to-any-file: "system/scene/**" }]
-"comp:soma":
-  - changed-files: [{ any-glob-to-any-file: "system/soma/**" }]
+"comp:planner":
+  - changed-files: [{ any-glob-to-any-file: "system/planner/**" }]
+"comp:gateway":
+  - changed-files: [{ any-glob-to-any-file: "system/gateway/**" }]
+"comp:world":
+  - changed-files: [{ any-glob-to-any-file: "system/world/**" }]
+"comp:robotdesc":
+  - changed-files: [{ any-glob-to-any-file: "system/robotdesc/**" }]
 "comp:sentinel":
   - changed-files: [{ any-glob-to-any-file: "system/sentinel/**" }]
-"comp:scribe":
-  - changed-files: [{ any-glob-to-any-file: "system/scribe/**" }]
-"comp:vitals":
-  - changed-files: [{ any-glob-to-any-file: "system/vitals/**" }]
+"comp:log":
+  - changed-files: [{ any-glob-to-any-file: "system/log/**" }]
+"comp:monitor":
+  - changed-files: [{ any-glob-to-any-file: "system/monitor/**" }]
 "comp:keystone":
   - changed-files: [{ any-glob-to-any-file: "system/keystone/**" }]
 "comp:nexus":

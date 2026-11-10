@@ -37,7 +37,7 @@ def _remove_own_pid_file(path: Path) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Robonix Go2 telemetry and optional Liaison voice dashboard"
+        description="Robonix Go2 telemetry and optional Gateway voice dashboard"
     )
     parser.add_argument(
         "--host",

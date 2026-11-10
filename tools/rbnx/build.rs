@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MulanPSL-2.0
-// rbnx-cli proto codegen — same pattern as robonix-pilot/build.rs.
-// Generates Rust stubs for RobonixSystemPilot (chat command needs SubmitTask) and
-// reads atlas types via robonix_atlas::pb. All artefacts in OUT_DIR.
+// rbnx-cli proto codegen — same pattern as robonix-planner/build.rs.
+// Generates Rust stubs for RobonixSystemPlanner (chat command needs SubmitTask) and
+// reads src types via robonix_src::pb. All artefacts in OUT_DIR.
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;

@@ -22,7 +22,7 @@
 # slam_toolbox + cartographer were dropped after rtabmap consistently
 # beat them in head-to-head testing.
 #
-# Provider bindings drive both Atlas resolution and launch subscriptions.
+# Provider bindings drive both Src resolution and launch subscriptions.
 #
 # Outputs (FIXED capability surface — same set declared regardless
 # of which algo is selected; consumers care about contracts, not algos):
@@ -38,7 +38,7 @@
 #                                        ({map_id, mode, generation},
 #                                         latched; bridge-owned + algo-
 #                                         independent — published by
-#                                         atlas_bridge itself, not the
+#                                         src_bridge itself, not the
 #                                         SLAM engine)
 # Algos that don't natively publish a contract spawn an adapter node
 # in their launch file so the topic still exists at the bound name.
@@ -64,7 +64,7 @@ start: bash scripts/start.sh
 # ── config (deploy `config:` block → Driver(CMD_INIT)) ──────────────────────
 # Required:
 #   sensor_providers: {sensor_role: provider_id} enables each Mapping input
-#                     and pins its Atlas provider
+#                     and pins its Src provider
 # Optional:
 #   algo: rtabmap | dlio | fastlio2[broken] (default: rtabmap)
 #   occupancy_sources: [lidar|depth]  explicit 2D occupancy policy (optional;
@@ -102,12 +102,12 @@ start: bash scripts/start.sh
 # Saved maps live under {MAPPING_MAPS_DIR}/{map_id}/ as rtabmap.db +
 # occupancy.pgm/.yaml/.png + cloud.pcd + meta.yaml (offline-previewable).
 
-# Only list what we actually declare on atlas at runtime. Aspirational
+# Only list what we actually declare on src at runtime. Aspirational
 # entries (status / save_map / load_map / switch_mode / set_initial_pose)
 # were removed — they shipped as "TODO" markers but boot ran fine without
 # them, so manifest claims and runtime behaviour drifted apart. The
 # moment any of those gRPC services is implemented, add it back AND
-# wire the DeclareInterface call in atlas_bridge.
+# wire the DeclareInterface call in src_bridge.
 stop: bash scripts/stop.sh
 
 capabilities:

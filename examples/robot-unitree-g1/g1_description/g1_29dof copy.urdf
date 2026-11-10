@@ -1,5 +1,5 @@
 <robot name="g1_29dof">
-  <!-- Robonix navigation root: zero-offset base_link for chassis adapter and Soma. -->
+  <!-- Robonix navigation root: zero-offset base_link for chassis adapter and Robotdesc. -->
   <link name="base_link" />
   <joint name="base_link_to_pelvis" type="fixed">
     <origin xyz="0 0 0" rpy="0 0 0" />

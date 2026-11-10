@@ -123,7 +123,7 @@ def _full_variant_readings(settings: HealthSettings) -> list["health_pb2.SensorR
 
 
 def build_health_state(settings: HealthSettings) -> "health_pb2.HealthState":
-    """Build one self-contained nominal frame using Soma component paths."""
+    """Build one self-contained nominal frame using Robotdesc component paths."""
     readings = [
         _reading("body", temp_c=36.0),
         _reading("body/base", temp_c=34.0),
@@ -193,7 +193,7 @@ def stream_health_state(_request, context):
 
 @tiago_health.on_init
 def init(cfg):
-    """Load the simulated profile before Soma opens the health stream."""
+    """Load the simulated profile before Robotdesc opens the health stream."""
     global _settings
     try:
         _settings = HealthSettings.from_config(cfg)

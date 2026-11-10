@@ -6,7 +6,7 @@ The full Webots CI suite (scenarios/cap/flow) proves that the stack can be
 booted and exercised. It does NOT prove the lifecycle is clean: that
 `rbnx shutdown` actually tears the stack down, that no zombie / orphaned
 container / stale state survives, and that the stack can be booted AGAIN
-after a clean shutdown (i.e. the bug fixed in #134 — Soma packages failing
+after a clean shutdown (i.e. the bug fixed in #134 — Robotdesc packages failing
 to re-register after a restart, chassis_provider hanging at "Running",
 goal_pose_relay etc. accumulating).
 
@@ -16,10 +16,10 @@ has finished:
   1. `rbnx shutdown` of the first boot, then check:
        * `<manifest-dir>/rbnx-boot/state.json` is gone
        * no `rbnx start -p` wrappers are still alive (the four runtime
-         processes the user cares about: atlas, pilot, soma, liaison;
+         processes the user cares about: src, planner, robotdesc, gateway;
          the rest are sibling `rbnx start -p <pkg>` workers)
        * no provider-owned docker container from this manifest is alive
-       * the atlas / pilot / executor / liaison ports are free
+       * the src / planner / executor / gateway ports are free
   2. Re-`rbnx boot` the same manifest in a clean workdir. Wait for the same
      set of capabilities + providers that scenario waiting already proved
      on the first boot. This is the "issue #128" restart loop.
@@ -59,8 +59,8 @@ REQUIRED_CAPS = [
     "robonix/primitive/audio/select_device",
     "robonix/primitive/audio/mic",
     "robonix/primitive/audio/speaker",
-    "robonix/system/scene/list_objects",
-    "robonix/system/scene/goal_near",
+    "robonix/system/world/list_objects",
+    "robonix/system/world/goal_near",
     "robonix/service/navigation/navigate",
     "robonix/service/navigation/navigate/status",
     "robonix/service/navigation/navigate/cancel",
@@ -81,25 +81,25 @@ REQUIRED_ACTIVE = [
 # Runtime processes that the user has called out by name in the issue.
 # `pgrep -f` matches the wrapper command; the `rbnx start` form is
 # `rbnx start -p <package>`, but during boot the long-lived children
-# of atlas/pilot/soma/liaison ALSO appear under the same rbnx binary.
+# of src/planner/robotdesc/gateway ALSO appear under the same rbnx binary.
 # We check the four user-facing services plus the `rbnx boot` parent
 # itself, so the validator can also catch the original "zombie boot
 # parent" failure mode (process_group_has_members would self-deadlock).
 PROCESS_NAME_PATTERNS = [
     "rbnx boot",
-    "robonix-atlas",
-    "robonix-pilot",
-    "robonix-soma",
-    "robonix-liaison",
+    "robonix-src",
+    "robonix-planner",
+    "robonix-robotdesc",
+    "robonix-gateway",
 ]
 
 # Same per-run port layout the workflow exposes via env. Keep in sync with
 # .github/workflows/testing.yml : "Configure run isolation".
 PER_RUN_PORTS = {
-    "atlas": int(os.environ.get("ATLAS_PORT", "50051")),
+    "src": int(os.environ.get("SRC_PORT", "50051")),
     "executor": int(os.environ.get("EXECUTOR_PORT", "50061")),
-    "pilot": int(os.environ.get("PILOT_PORT", "50071")),
-    "liaison": int(os.environ.get("LIAISON_PORT", "50081")),
+    "planner": int(os.environ.get("PLANNER_PORT", "50071")),
+    "gateway": int(os.environ.get("GATEWAY_PORT", "50081")),
 }
 
 
@@ -160,7 +160,7 @@ def scoped_pgrep(pattern: str, manifest_dir: Path) -> list[tuple[int, str]]:
     """Return matching PIDs that belong to this manifest/run.
 
     CI runners and developer machines may have unrelated Robonix processes alive.
-    The lifecycle check must fail on this run's leftovers, not on a stale Atlas
+    The lifecycle check must fail on this run's leftovers, not on a stale Src
     from another workspace or port. Package processes carry the manifest path in
     argv; system services carry the per-run ports.
     """
@@ -314,7 +314,7 @@ def wait_for_boot(
     log_file: Path,
     timeout_s: int = 600,
 ) -> None:
-    """Spawn `rbnx boot -f <manifest>` detached, then poll atlas for caps."""
+    """Spawn `rbnx boot -f <manifest>` detached, then poll src for caps."""
     log(f"{label}: starting rbnx boot — log -> {log_file}")
     log_file.parent.mkdir(parents=True, exist_ok=True)
     boot_proc = subprocess.Popen(
@@ -371,7 +371,7 @@ def main() -> int:
     )
     ap.add_argument(
         "--server", required=True,
-        help="atlas endpoint, e.g. 127.0.0.1:50051 (per-run ATLAS_PORT)",
+        help="src endpoint, e.g. 127.0.0.1:50051 (per-run SRC_PORT)",
     )
     ap.add_argument(
         "--sim-container", default=os.environ.get("ROBONIX_SIM_CONTAINER", ""),

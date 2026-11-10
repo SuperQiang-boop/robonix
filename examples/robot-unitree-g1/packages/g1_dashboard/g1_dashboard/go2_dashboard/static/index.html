@@ -325,7 +325,7 @@
       </article>
 
       <article class="panel voice">
-        <div class="panel-title"><h2>浏览器语音入口与闭环阶段</h2><div class="meta">仅转交 Robonix Liaison · 默认关闭</div></div>
+        <div class="panel-title"><h2>浏览器语音入口与闭环阶段</h2><div class="meta">仅转交 Robonix Gateway · 默认关闭</div></div>
         <div class="voice-body">
           <div class="voice-control">
             <div class="eyebrow">PUSH TO TALK</div>
@@ -335,8 +335,8 @@
           </div>
           <div class="pipeline" aria-label="语音导航阶段状态">
             <div class="stage" id="stageCapture"><div class="eyebrow">01</div><strong>浏览器采集</strong><span>等待</span></div>
-            <div class="stage" id="stageAsr"><div class="eyebrow">02</div><strong>中文 ASR</strong><span>等待 Liaison</span></div>
-            <div class="stage" id="stagePilot"><div class="eyebrow">03</div><strong>Liaison / Pilot</strong><span>等待</span></div>
+            <div class="stage" id="stageAsr"><div class="eyebrow">02</div><strong>中文 ASR</strong><span>等待 Gateway</span></div>
+            <div class="stage" id="stagePlanner"><div class="eyebrow">03</div><strong>Gateway / Planner</strong><span>等待</span></div>
             <div class="stage" id="stageSemantic"><div class="eyebrow">04</div><strong>语义目标 Pose</strong><span>等待</span></div>
             <div class="stage" id="stageNav"><div class="eyebrow">05</div><strong>Nav2 任务</strong><span>等待</span></div>
           </div>
@@ -348,7 +348,7 @@
         <div class="topic-grid" id="topicGrid"></div>
       </article>
     </section>
-    <footer id="scopeFooter">硬件遥测保持只读；可选语音按钮只把内存音频交给 Robonix Liaison，不直接调用 ROS、Nav2 或 Unitree。</footer>
+    <footer id="scopeFooter">硬件遥测保持只读；可选语音按钮只把内存音频交给 Robonix Gateway，不直接调用 ROS、Nav2 或 Unitree。</footer>
   </main>
 
   <script>
@@ -542,7 +542,7 @@
 
     function renderPipeline(data) {
       if (data.profile?.diagnostic_only) {
-        for (const id of ["stageCapture", "stageAsr", "stagePilot", "stageSemantic", "stageNav"]) {
+        for (const id of ["stageCapture", "stageAsr", "stagePlanner", "stageSemantic", "stageNav"]) {
           setStage(id, "", "诊断 profile 未启动");
         }
         return;
@@ -551,12 +551,12 @@
       const semantic = data.semantic_task || {};
       const navigation = data.navigation || {};
       const failed = voice.status === "failed";
-      const captureDone = ["accepted", "connecting", "liaison", "recording", "asr", "recognized", "authorized", "pilot", "completed"].includes(voice.status);
-      const asrDone = Boolean(voice.transcript) || ["recognized", "authorized", "pilot", "completed"].includes(voice.status);
-      const pilotDone = Boolean(voice.intent_target) || voice.status === "completed";
+      const captureDone = ["accepted", "connecting", "gateway", "recording", "asr", "recognized", "authorized", "planner", "completed"].includes(voice.status);
+      const asrDone = Boolean(voice.transcript) || ["recognized", "authorized", "planner", "completed"].includes(voice.status);
+      const plannerDone = Boolean(voice.intent_target) || voice.status === "completed";
       setStage("stageCapture", failed ? "failed" : voiceCapture ? "active" : captureDone ? "done" : "", voiceCapture ? "正在录音" : voice.enabled ? (captureDone ? "音频已校验" : "等待按键") : "功能关闭");
-      setStage("stageAsr", failed ? "failed" : voice.status === "asr" ? "active" : asrDone ? "done" : "", voice.status === "asr" ? "识别中" : voice.transcript || (asrDone ? "已得到文本" : "等待 Liaison"));
-      setStage("stagePilot", failed ? "failed" : ["liaison", "authorized", "pilot"].includes(voice.status) && !pilotDone ? "active" : pilotDone ? "done" : "", voice.intent_target ? `已解析 ${voice.intent_target}` : voice.status === "pilot" ? "Pilot 处理中" : pilotDone ? "会话完成" : "等待");
+      setStage("stageAsr", failed ? "failed" : voice.status === "asr" ? "active" : asrDone ? "done" : "", voice.status === "asr" ? "识别中" : voice.transcript || (asrDone ? "已得到文本" : "等待 Gateway"));
+      setStage("stagePlanner", failed ? "failed" : ["gateway", "authorized", "planner"].includes(voice.status) && !plannerDone ? "active" : plannerDone ? "done" : "", voice.intent_target ? `已解析 ${voice.intent_target}` : voice.status === "planner" ? "Planner 处理中" : plannerDone ? "会话完成" : "等待");
       const previewTarget = voice.execution_mode === "preview" ? voice.intent_target : "";
       const semanticTarget = semantic.target_name || previewTarget;
       const semanticDone = Boolean(previewTarget) || ["resolved", "navigating", "succeeded"].includes(semantic.status);
@@ -637,7 +637,7 @@
         throw error;
       }
       byId("voiceButton").className = "voice-button recording";
-      byId("voiceButton").textContent = "停止并提交给 Liaison";
+      byId("voiceButton").textContent = "停止并提交给 Gateway";
       byId("voiceDetail").textContent = "正在本机浏览器录音；最长 8 秒，不保存到磁盘。";
       renderPipeline(latest || { voice: contract, semantic_task: {}, navigation: {} });
     }
@@ -661,14 +661,14 @@
       const wav = pcmWav(samples, 16000);
       byId("voiceButton").className = "voice-button";
       byId("voiceButton").disabled = true;
-      byId("voiceButton").textContent = "正在安全转交 Liaison…";
+      byId("voiceButton").textContent = "正在安全转交 Gateway…";
       const controller = new AbortController();
       const timeout = window.setTimeout(() => controller.abort(), 6000);
       try {
         const response = await fetch("/api/voice", { method: "POST", cache: "no-store", credentials: "same-origin", headers: { "Content-Type": "audio/wav", "X-Go2-Voice-Nonce": voiceNonce }, body: wav, signal: controller.signal });
         const result = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(result.detail || `HTTP ${response.status}`);
-        byId("voiceDetail").textContent = result.message || "已提交给 Liaison";
+        byId("voiceDetail").textContent = result.message || "已提交给 Gateway";
       } finally {
         window.clearTimeout(timeout);
       }
@@ -714,7 +714,7 @@
         : "相机 · 雷达 · 地图 · 位姿 · 任务状态";
       byId("scopeFooter").textContent = diagnosticOnly
         ? "只读硬件诊断：未启动地图、TF、语义导航、Nav2、语音或任何运动接口；不得作为导航验收证据。"
-        : "硬件遥测保持只读；可选语音按钮只把内存音频交给 Robonix Liaison，不直接调用 ROS、Nav2 或 Unitree。";
+        : "硬件遥测保持只读；可选语音按钮只把内存音频交给 Robonix Gateway，不直接调用 ROS、Nav2 或 Unitree。";
       const connected = Boolean(data.bridge?.connected);
       byId("rosPill").className = `pill ${connected ? "fresh" : "error"}`;
       byId("rosText").textContent = connected ? "ROS 观察线程在线" : "ROS 未连接";
@@ -808,14 +808,14 @@
       byId("semanticMain").textContent = diagnosticOnly ? "NOT STARTED" : previewTarget ? `${previewTarget} · 已解析（未执行）` : `${semantic.target_name || "未指定目标"} · ${semantic.status || "idle"}`;
       byId("semanticDetail").textContent = diagnosticOnly
         ? "只读诊断 profile 未启动语义目标解析"
-        : previewTarget ? (voice.intent_summary || "Pilot 语义预览已完成；未发出能力调用")
+        : previewTarget ? (voice.intent_summary || "Planner 语义预览已完成；未发出能力调用")
         : semantic.message || (semantic.task_id ? `task ${semantic.task_id}` : "尚无语义任务状态");
       byId("voiceDetail").textContent = voice.message || (voice.enabled ? "等待浏览器录音" : "浏览器语音入口未启用");
       byId("voiceTranscript").textContent = voice.transcript ? `识别文本：${voice.transcript}` : "";
       if (!voiceCapture) {
         byId("voiceButton").className = "voice-button";
         byId("voiceButton").disabled = !voice.enabled || Boolean(voice.active);
-        byId("voiceButton").textContent = !voice.enabled ? "语音入口未启用" : voice.active ? "Liaison 会话处理中…" : "点击开始录音";
+        byId("voiceButton").textContent = !voice.enabled ? "语音入口未启用" : voice.active ? "Gateway 会话处理中…" : "点击开始录音";
       }
       renderPipeline(data);
       renderTopics(data.topics);

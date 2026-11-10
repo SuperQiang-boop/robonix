@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MulanPSL-2.0
 // Tonic-generated wire types for the protos rbnx-cli's runtime commands need:
-//   pb::contracts        — RobonixSystemPilot client (chat command)
-//   pb::pilot            — Task / PilotEvent
-// Atlas types live in `robonix_atlas::pb`, not regenerated here.
+//   pb::contracts        — RobonixSystemPlanner client (chat command)
+//   pb::planner            — Task / PlannerEvent
+// Src types live in `robonix_src::pb`, not regenerated here.
 #![allow(
     dead_code,
     unused_imports,

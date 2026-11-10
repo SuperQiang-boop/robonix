@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MulanPSL-2.0
 // Author: wheatfox <wheatfox17@icloud.com>
 //
-// Executor config — same three-source resolution as pilot:
+// Executor config — same three-source resolution as planner:
 //   compiled defaults < YAML at $ROBONIX_CONFIG_PATH < CLI flags / env.
 
 use anyhow::{Context, Result};
@@ -11,12 +11,12 @@ use std::path::{Path, PathBuf};
 
 pub const DEFAULT_EXECUTOR_PROVIDER_ID: &str = "executor";
 pub const EXECUTOR_NAMESPACE: &str = "robonix/system/executor";
-pub const DEFAULT_ATLAS_ENDPOINT: &str = "127.0.0.1:50051";
+pub const DEFAULT_SRC_ENDPOINT: &str = "127.0.0.1:50051";
 pub const DEFAULT_LISTEN: &str = "127.0.0.1:50061";
 
 #[derive(Debug, Clone)]
 pub struct ExecutorConfig {
-    pub atlas_endpoint: String,
+    pub src_endpoint: String,
     pub listen: String,
     pub id: String,
 }
@@ -27,10 +27,10 @@ pub struct ExecutorConfig {
     about = "Robonix Executor — tool-call dispatch runtime"
 )]
 pub struct Args {
-    /// Atlas control-plane endpoint. Also reads `ROBONIX_ATLAS` (the var rbnx /
-    /// the Python API / liaison use) as an alias; see `env_atlas`.
-    #[arg(long, env = "ROBONIX_ATLAS_ENDPOINT")]
-    pub atlas: Option<String>,
+    /// Src control-plane endpoint. Also reads `ROBONIX_SRC` (the var rbnx /
+    /// the Python API / gateway use) as an alias; see `env_src`.
+    #[arg(long, env = "ROBONIX_SRC_ENDPOINT")]
+    pub src: Option<String>,
 
     /// Address the SystemExecutor gRPC service binds to.
     #[arg(long, env = "ROBONIX_EXECUTOR_LISTEN")]
@@ -45,14 +45,14 @@ pub struct Args {
     pub config: Option<PathBuf>,
 
     /// Log level for this component (`debug`/`info`/`warn`/`error`). Sets the
-    /// scribe log-file floor; falls back to `SCRIBE_FILE_LEVEL` / `info`.
+    /// log-file level floor; falls back to `ROBONIX_LOG_FILE_LEVEL` / `info`.
     /// Normally arrives inside `--config-json`, not as a standalone flag.
     #[arg(long)]
     pub log: Option<String>,
 
     /// The component's `system.executor` manifest block, serialized to JSON by
     /// rbnx and passed as one arg (`--config-json '{…}'`). Parsed by the binary
-    /// itself — see `robonix_scribe::init_from_config`, which reads the `log`
+    /// itself — see `robonix_log::init_from_config`, which reads the `log`
     /// key from it so the manifest's per-component level reaches the log.
     #[arg(long)]
     pub config_json: Option<String>,
@@ -61,7 +61,7 @@ pub struct Args {
 #[derive(Default, Deserialize)]
 struct FileConfig {
     #[serde(default)]
-    atlas_endpoint: Option<String>,
+    src_endpoint: Option<String>,
     #[serde(default)]
     listen: Option<String>,
     #[serde(default)]
@@ -75,11 +75,11 @@ impl ExecutorConfig {
             None => FileConfig::default(),
         };
         Ok(Self {
-            atlas_endpoint: args
-                .atlas
-                .or_else(env_atlas)
-                .or(file_cfg.atlas_endpoint)
-                .unwrap_or_else(|| DEFAULT_ATLAS_ENDPOINT.to_string()),
+            src_endpoint: args
+                .src
+                .or_else(env_src)
+                .or(file_cfg.src_endpoint)
+                .unwrap_or_else(|| DEFAULT_SRC_ENDPOINT.to_string()),
             listen: args
                 .listen
                 .or(file_cfg.listen)
@@ -92,21 +92,19 @@ impl ExecutorConfig {
     }
 }
 
-/// Read the `ROBONIX_ATLAS` env var as an atlas-endpoint alias.
+/// Read the `ROBONIX_SRC` env var as an src-endpoint alias.
 ///
-/// rbnx, the Python API, and liaison all configure the atlas endpoint via
-/// `ROBONIX_ATLAS`, while executor/pilot historically only honored
-/// `ROBONIX_ATLAS_ENDPOINT` (the clap `env`). Accepting `ROBONIX_ATLAS` here as
+/// rbnx, the Python API, and gateway all configure the src endpoint via
+/// `ROBONIX_SRC`, while executor/planner historically only honored
+/// `ROBONIX_SRC_ENDPOINT` (the clap `env`). Accepting `ROBONIX_SRC` here as
 /// well means a single env var configures every component. Without it, setting
-/// only `ROBONIX_ATLAS` left executor silently falling back to
-/// `DEFAULT_ATLAS_ENDPOINT` (127.0.0.1:50051) — it would then dial the wrong
-/// atlas and log 127.0.0.1 even after the operator "changed" the endpoint.
+/// only `ROBONIX_SRC` left executor silently falling back to
+/// `DEFAULT_SRC_ENDPOINT` (127.0.0.1:50051) — it would then dial the wrong
+/// src and log 127.0.0.1 even after the operator "changed" the endpoint.
 /// Empty values are ignored so an exported-but-blank var doesn't shadow later
 /// sources.
-fn env_atlas() -> Option<String> {
-    std::env::var("ROBONIX_ATLAS")
-        .ok()
-        .filter(|v| !v.is_empty())
+fn env_src() -> Option<String> {
+    std::env::var("ROBONIX_SRC").ok().filter(|v| !v.is_empty())
 }
 
 fn load_yaml(path: &Path) -> Result<FileConfig> {
