@@ -6,7 +6,7 @@
 #
 # Layout invariant (populated by scripts/build.sh):
 #   rbnx-build/ws/install/setup.bash   colcon overlay (livox_ros_driver2)
-#   rbnx-build/codegen/proto_gen/      atlas_pb2.py + robonix_contracts_pb2*
+#   rbnx-build/codegen/proto_gen/      src_pb2.py + robonix_contracts_pb2*
 set -euo pipefail
 PKG="${RBNX_PACKAGE_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
 cd "$PKG"

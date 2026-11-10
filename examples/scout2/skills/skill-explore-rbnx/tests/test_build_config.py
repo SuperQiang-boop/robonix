@@ -21,9 +21,9 @@ class BuildConfigTest(unittest.TestCase):
         self.assertIn("grpcio==1.80.0", dockerfile)
         self.assertIn("grpcio-tools==1.76.0", dockerfile)
 
-    def test_codegen_import_smoke_covers_atlas_and_skill_stubs(self) -> None:
+    def test_codegen_import_smoke_covers_src_and_skill_stubs(self) -> None:
         helper = (ROOT / "scripts" / "run_python_codegen.sh").read_text()
-        self.assertIn("import atlas_pb2_grpc", helper)
+        self.assertIn("import src_pb2_grpc", helper)
         self.assertIn("import explore_pb2", helper)
         self.assertIn("import explore_mcp", helper)
         self.assertIn("import robonix_contracts_pb2_grpc", helper)

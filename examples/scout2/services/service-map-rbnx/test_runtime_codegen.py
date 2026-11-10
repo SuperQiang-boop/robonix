@@ -42,7 +42,7 @@ class RuntimeCodegenTests(unittest.TestCase):
         self.assertIn('CODEGEN_PYBIN="${RBNX_CODEGEN_PYTHON:-$PYBIN}"', build)
         self.assertIn('RBNX_CODEGEN_PYTHON="$CODEGEN_PYBIN"', build)
         self.assertIn('"$PYBIN" - <<', build)
-        self.assertIn("import atlas_pb2_grpc", build)
+        self.assertIn("import src_pb2_grpc", build)
         self.assertIn("import map_mcp", build)
         self.assertIn('PYBIN="${MAPPING_NATIVE_PYTHON:-python3}"', native)
 

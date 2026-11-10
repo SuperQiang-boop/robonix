@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MulanPSL-2.0
 # Build phase: colcon-build the vendored livox_ros_driver2, then
-# rbnx codegen so atlas_bridge can import atlas_pb2.
+# rbnx codegen so src_bridge can import src_pb2.
 #
 # Vendored under src/livox_ros_driver2 — includes our local fixes
 # on top of upstream Livox-SDK/livox_ros_driver2 (config IPs +
@@ -45,7 +45,7 @@ cd "$PKG/rbnx-build/ws"
     -DPYTHON_EXECUTABLE=/usr/bin/python3
 cd "$PKG"
 
-# Robonix codegen for atlas_bridge.py imports.
+# Robonix codegen for src_bridge.py imports.
 FLAGS=(--ros2 --out-dir "$PKG/rbnx-build/codegen")
 [[ "$CLEAN" == "1" ]] && FLAGS+=(--clean)
 echo "[mid360_lidar/build] rbnx codegen ${FLAGS[*]}"

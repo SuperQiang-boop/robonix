@@ -8,7 +8,7 @@ spec itself before we spend GPU/Webots time:
 * reject old/ambiguous assertion shapes through testing.run's validator;
 * require every RTDL do node to define a leaf expectation;
 * verify variables are captured before later steps reference them;
-* synthesize PilotEvent plan/result streams and feed them to run.check_scenario.
+* synthesize PlannerEvent plan/result streams and feed them to run.check_scenario.
 """
 
 from __future__ import annotations
