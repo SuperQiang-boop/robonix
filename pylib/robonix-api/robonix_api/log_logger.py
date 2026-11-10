@@ -1,15 +1,15 @@
 # SPDX-License-Identifier: MulanPSL-2.0
-"""scribe_logger — Python-side unified logging facade.
+"""log_logger — Python-side unified logging facade.
 
-Mirrors `system/scribe/src/lib.rs` semantics: single ``log()`` entry
+Mirrors `system/log/src/lib.rs` semantics: single ``log()`` entry
 point, lazy init, dual sink (stderr + per-tag JSON-lines file).
 
 Usage::
 
-    from robonix_api import scribe_logger
+    from robonix_api import log_logger
 
-    scribe_logger.info("atlas", "control plane ready")
-    scribe_logger.log(scribe_logger.Level.WARN, "my_driver", "sensor timeout")
+    log_logger.info("src", "control plane ready")
+    log_logger.log(log_logger.Level.WARN, "my_driver", "sensor timeout")
 """
 
 from __future__ import annotations
@@ -44,10 +44,10 @@ _lock: threading.Lock = threading.Lock()
 _log_dir: Optional[Path] = None
 _writers: Dict[str, TextIO] = {}
 # Whether to also mirror each record to stderr in console format. Suppressed
-# when an orchestrator (rbnx) provisioned $SCRIBE_LOG_DIR: rbnx already pipes
-# the process's stdout/stderr back into Scribe under the same tag, so a stderr
+# when an orchestrator (rbnx) provisioned $ROBONIX_LOG_DIR: rbnx already pipes
+# the process's stdout/stderr back into Log under the same tag, so a stderr
 # echo would be re-ingested and every line would appear twice in the per-tag
-# file. With SCRIBE_LOG_DIR set, the direct file write below is authoritative.
+# file. With ROBONIX_LOG_DIR set, the direct file write below is authoritative.
 # When unset (standalone dev, or a docker container whose in-container log dir
 # isn't collected) the echo stays on — there it is the only way the output
 # reaches a human or rbnx's pipe.
@@ -62,8 +62,8 @@ def _ensure_init() -> None:
     with _lock:
         if _log_dir is not None:
             return
-        _console_echo = "SCRIBE_LOG_DIR" not in os.environ
-        _log_dir = Path(os.environ.get("SCRIBE_LOG_DIR", "./logs"))
+        _console_echo = "ROBONIX_LOG_DIR" not in os.environ
+        _log_dir = Path(os.environ.get("ROBONIX_LOG_DIR", "./logs"))
         _log_dir.mkdir(parents=True, exist_ok=True)
 
 
@@ -137,7 +137,7 @@ def _get_writer(tag: str) -> Optional[TextIO]:
 def log(level: Level, tag: str, msg: str) -> None:
     """Log one record — the **only** entry point.
 
-    The first call transparently creates ``$SCRIBE_LOG_DIR`` (default
+    The first call transparently creates ``$ROBONIX_LOG_DIR`` (default
     ``./logs``).  Errors are best-effort (stderr / disk full are
     silently ignored).
     """
@@ -154,7 +154,7 @@ def log(level: Level, tag: str, msg: str) -> None:
         except Exception:  # noqa: BLE001
             pass
 
-    # file → $SCRIBE_LOG_DIR/{tag}.log
+    # file → $ROBONIX_LOG_DIR/{tag}.log
     try:
         json_line = _format_json(ts_ns, level, tag, msg)
         with _lock:
@@ -186,7 +186,7 @@ def error(tag: str, msg: str) -> None:
     log(Level.ERROR, tag, msg)
 
 
-# ── stdlib `logging` → Scribe bridge ─────────────────────────────────
+# ── stdlib `logging` → Log bridge ─────────────────────────────────
 
 _STDLIB_LEVEL_MAP: Dict[int, Level] = {
     logging.DEBUG: Level.DEBUG,
@@ -198,7 +198,7 @@ _STDLIB_LEVEL_MAP: Dict[int, Level] = {
 
 
 class _StdlibBridgeHandler(logging.Handler):
-    """A stdlib ``logging.Handler`` that re-emits every record into Scribe.
+    """A stdlib ``logging.Handler`` that re-emits every record into Log.
 
     Carries a fixed component *tag* so any library's logging (the package's
     own, plus transitive deps that use stdlib ``logging``) lands in that
@@ -225,7 +225,7 @@ def install_stdlib_bridge(
     logger: Optional[logging.Logger] = None,
     replace_existing_handlers: bool = True,
 ) -> logging.Logger:
-    """Route stdlib ``logging`` through Scribe so packages need no own sink.
+    """Route stdlib ``logging`` through Log so packages need no own sink.
 
     Attaches a :class:`_StdlibBridgeHandler` (tagged *tag*) to *logger* (the
     root logger by default, so transitive-dependency logs are captured too) and
@@ -234,7 +234,7 @@ def install_stdlib_bridge(
     stderr), ``FileHandler`` (a per-package log file), a ``rich`` handler from
     fastmcp/uvicorn, anything — is removed first, so the bridge is the *only*
     sink. This enforces the repo rule "no package owns a log file or duplicate
-    stdout sink; everything goes through Scribe" (Scribe already mirrors to
+    stdout sink; everything goes through Log" (Log already mirrors to
     stderr itself, so console output is not lost).
 
     Idempotent and re-taggable: exactly one bridge handler ever exists on the

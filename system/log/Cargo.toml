@@ -1,12 +1,12 @@
 [package]
-name = "robonix-scribe"
+name = "robonix-log"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Robonix Scribe: unified logging facade — one entry point, per-tag file sinks, console + structured output"
+description = "Robonix Log: unified logging facade — one entry point, per-tag file sinks, console + structured output"
 
 [lib]
-name = "robonix_scribe"
+name = "robonix_log"
 path = "src/lib.rs"
 
 [dependencies]

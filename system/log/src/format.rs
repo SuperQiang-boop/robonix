@@ -115,12 +115,12 @@ mod tests {
         let rec = LogRecord {
             ts: 0,
             level: Level::Warn,
-            tag: "atlas".into(),
+            tag: "src".into(),
             msg: "test message".into(),
         };
         let line = format_console(&rec);
         assert!(line.contains(" W "), "expected W level code, got: {line}");
-        assert!(line.contains("atlas"), "expected tag, got: {line}");
+        assert!(line.contains("src"), "expected tag, got: {line}");
         assert!(line.contains("test message"), "expected msg, got: {line}");
         assert!(line.ends_with('\n'), "should end with newline");
     }

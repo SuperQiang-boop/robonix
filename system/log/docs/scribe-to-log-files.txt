@@ -1,0 +1,90 @@
+# scribe -> log migration file map (2026-11-09)
+# move: original path, new path. update: content edited in place.
+# CHANGELOG, historical migration records, generated metadata and
+# runtime state files are intentionally excluded.
+move	system/scribe/Cargo.toml	system/log/Cargo.toml
+move	system/scribe/README.md	system/log/README.md
+move	system/scribe/src/format.rs	system/log/src/format.rs
+move	system/scribe/src/lib.rs	system/log/src/lib.rs
+move	system/scribe/src/sink.rs	system/log/src/sink.rs
+move	pylib/robonix-api/robonix_api/scribe_logger.py	pylib/robonix-api/robonix_api/log_logger.py
+update	Cargo.toml
+update	README.md
+update	examples/robot-unitree-g1/skills/g1_face_greeting/tests/smoke_task_handoff.py
+update	examples/scout2/services/service-relocalization/tests/e2e_src.py
+update	pylib/robonix-api/robonix_api/__init__.py
+update	pylib/robonix-api/robonix_api/capability.py
+update	scripts/test_executor_cancel_isolation.sh
+update	scripts/test_planner_natural_language_rtdl.sh
+update	services/memory/memory_service/service.py
+update	services/memsearch/memsearch_service/service.py
+update	services/speech/speech_service/service.py
+update	services/voiceprint/voiceprint_service/service.py
+update	system/executor/Cargo.toml
+update	system/executor/src/config.rs
+update	system/executor/src/dispatch/async_poll.rs
+update	system/executor/src/dispatch/builtin.rs
+update	system/executor/src/dispatch/grpc.rs
+update	system/executor/src/dispatch/mod.rs
+update	system/executor/src/main.rs
+update	system/executor/src/plan_runtime.rs
+update	system/executor/src/service.rs
+update	system/gateway/Cargo.toml
+update	system/gateway/examples/mock_audio.rs
+update	system/gateway/examples/mock_planner.rs
+update	system/gateway/src/handsfree.rs
+update	system/gateway/src/main.rs
+update	system/gateway/src/voice.rs
+update	system/planner/Cargo.toml
+update	system/planner/src/config.rs
+update	system/planner/src/discovery.rs
+update	system/planner/src/main.rs
+update	system/planner/src/memory.rs
+update	system/planner/src/planner.rs
+update	system/planner/src/robotdesc_context.rs
+update	system/planner/src/service.rs
+update	system/planner/src/vlm.rs
+update	system/robotdesc/Cargo.toml
+update	system/robotdesc/README.md
+update	system/robotdesc/src/config.rs
+update	system/robotdesc/src/health.rs
+update	system/robotdesc/src/launcher.rs
+update	system/robotdesc/src/main.rs
+update	system/robotdesc/src/runtime_monitor.rs
+update	system/src/Cargo.toml
+update	system/src/src/client.rs
+update	system/src/src/contract_registry.rs
+update	system/src/src/main.rs
+update	system/src/src/service.rs
+update	system/world/scripts/smoke_runtime.py
+update	tools/codegen/Cargo.toml
+update	tools/codegen/src/main.rs
+update	tools/rbnx/Cargo.toml
+update	tools/rbnx/src/cmd/chat.rs
+update	tools/rbnx/src/cmd/codegen.rs
+update	tools/rbnx/src/cmd/deploy.rs
+update	tools/rbnx/src/cmd/logs.rs
+update	tools/rbnx/src/cmd/mod.rs
+update	tools/rbnx/src/cmd/run_package.rs
+update	tools/rbnx/src/database.rs
+update	tools/rbnx/src/launch.rs
+update	tools/rbnx/src/main.rs
+update	tools/rbnx/src/manifest.rs
+update	tools/rbnx/src/process.rs
+update	Cargo.lock
+update	.github/CODEOWNERS
+update	.github/ISSUE_TEMPLATE/bug_report.md
+update	.github/ISSUE_TEMPLATE/feature_request.md
+update	.github/labeler.yml
+update	.github/labels.yml
+update	.github/workflows/issue-triage.yml
+update	.github/workflows/testing.yml
+update	MAINTAINERS.md
+update	examples/robot-agilex-ranger_mini_v3/skills/greet/greet_skill/src_bridge.py
+update	examples/robot-agilex-ranger_mini_v3/skills/greet/scripts/start.sh
+update	examples/robot-unitree-g1/primitives/primitive-intel-realsense_d435i-camera-rbnx/realsense_camera/main.py
+update	examples/robot-unitree-g1/primitives/primitive-livox-mid360-lidar-rbnx/mid360_driver/main.py
+update	examples/robot-unitree-g1/services/service-navigation-rbnx/nav2_wrapper/src_bridge.py
+update	examples/scout2/primitives/primitive-agilex-ranger_mini_v3-chassis-rbnx/ranger_chassis/main.py
+update	examples/scout2/services/service-navigation-rbnx/nav2_wrapper/src_bridge.py
+update	system/src/README.md

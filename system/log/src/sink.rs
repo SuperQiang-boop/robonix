@@ -1,6 +1,6 @@
 //! Per-tag file sink — JSON-lines output, one file per tag.
 //!
-//! A [`FileSink`] owns a directory (`$SCRIBE_LOG_DIR` or `./logs`) and a
+//! A [`FileSink`] owns a directory (`$ROBONIX_LOG_DIR` or `./logs`) and a
 //! `Mutex<HashMap<tag, File>>`.  The first write for a given `tag` opens
 //! (or creates) `{dir}/{tag}.log`; subsequent writes reuse the handle.
 //!
@@ -115,18 +115,18 @@ mod tests {
         let rec = LogRecord {
             ts: 1234567890,
             level: Level::Info,
-            tag: "atlas".into(),
+            tag: "src".into(),
             msg: "hello".into(),
         };
         sink.write(&rec).unwrap();
 
-        let log_path = tmp.path().join("atlas.log");
+        let log_path = tmp.path().join("src.log");
         assert!(log_path.exists(), "expected {log_path:?} to exist");
 
         let lines = read_lines(&log_path);
         assert_eq!(lines.len(), 1);
         let parsed: LogRecord = serde_json::from_str(&lines[0]).unwrap();
-        assert_eq!(parsed.tag, "atlas");
+        assert_eq!(parsed.tag, "src");
         assert_eq!(parsed.msg, "hello");
     }
 

@@ -1,15 +1,15 @@
-//! Scribe — Robonix unified logging facade.
+//! Log — Robonix unified logging facade.
 //!
 //! Single entry point: [`log()`].  Every component calls the same function;
-//! Scribe routes each record to stderr (human-readable) and to a per-tag
-//! JSON-lines file under `$SCRIBE_LOG_DIR` (or `./logs`).
+//! Log routes each record to stderr (human-readable) and to a per-tag
+//! JSON-lines file under `$ROBONIX_LOG_DIR` (or `./logs`).
 //!
 //! # Quick start
 //!
 //! ```rust,ignore
-//! robonix_scribe::init("executor");
-//! robonix_scribe::info!("robonix-executor starting");
-//! robonix_scribe::warn!("retry {}/{}", n, max);
+//! robonix_log::init("executor");
+//! robonix_log::info!("robonix-executor starting");
+//! robonix_log::warn!("retry {}/{}", n, max);
 //! ```
 //!
 //! The `init()` call sets a process-wide default tag used by all subsequent
@@ -36,10 +36,10 @@ static DEFAULT_TAG: OnceLock<String> = OnceLock::new();
 pub fn init(tag: &str) {
     DEFAULT_TAG
         .set(tag.to_string())
-        .expect("robonix_scribe::init() called twice; set the tag once per process");
+        .expect("robonix_log::init() called twice; set the tag once per process");
 }
 
-/// Initialise scribe with the process `tag` and apply the on-disk log level
+/// Initialise the log facade with the process `tag` and apply the on-disk log level
 /// from a launch-config JSON — the system component's manifest config block
 /// that rbnx serialises and passes via `--config-json`. Reads the top-level
 /// `log` key (e.g. `{"log":"debug"}`); a valid level sets the file-sink floor
@@ -48,7 +48,7 @@ pub fn init(tag: &str) {
 /// Use this instead of [`init`] in binaries launched with a config: the
 /// manifest's per-component `log:` had no effect before, because the level
 /// was parsed into a CLI flag the binary discarded. Absent / unparseable
-/// `log` falls back to the `SCRIBE_FILE_LEVEL` env / `Info` default.
+/// `log` falls back to the `ROBONIX_LOG_FILE_LEVEL` env / `Info` default.
 ///
 /// Call once at startup, before the first log, on the main thread.
 pub fn init_from_config(tag: &str, config_json: Option<&str>) {
@@ -278,9 +278,9 @@ use crate::sink::FileSink;
 
 // ── Level filter thresholds / directory / sink ──────────────────────
 
-/// Resolved log directory — `$SCRIBE_LOG_DIR` or `"./logs"`.
+/// Resolved log directory — `$ROBONIX_LOG_DIR` or `"./logs"`.
 static LOG_DIR: LazyLock<std::path::PathBuf> = LazyLock::new(|| {
-    std::env::var("SCRIBE_LOG_DIR")
+    std::env::var("ROBONIX_LOG_DIR")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|_| std::path::PathBuf::from("./logs"))
 });
@@ -305,7 +305,7 @@ fn parse_level(s: &str) -> Option<Level> {
     }
 }
 
-/// Parse `SCRIBE_CONSOLE_LEVEL` / `SCRIBE_FILE_LEVEL` env var to a
+/// Parse `ROBONIX_LOG_CONSOLE_LEVEL` / `ROBONIX_LOG_FILE_LEVEL` env var to a
 /// numeric floor.  Unrecognised values default to the given fallback.
 fn parse_level_env(key: &str, fallback: Level) -> Level {
     std::env::var(key)
@@ -316,7 +316,7 @@ fn parse_level_env(key: &str, fallback: Level) -> Level {
 }
 
 /// Per-process on-disk level override, set once by [`init_from_config`] from
-/// the launch config's `log` key. Takes precedence over `SCRIBE_FILE_LEVEL`
+/// the launch config's `log` key. Takes precedence over `ROBONIX_LOG_FILE_LEVEL`
 /// when present, so a per-component `log:` in the deploy manifest actually
 /// controls that component's log file.
 static FILE_LEVEL_OVERRIDE: OnceLock<Level> = OnceLock::new();
@@ -324,18 +324,18 @@ static FILE_LEVEL_OVERRIDE: OnceLock<Level> = OnceLock::new();
 /// Minimum level for console (stderr) output.
 ///
 /// Default: [`Level::Warn`]  — only Warn + Error reach the terminal.
-/// Set `SCRIBE_CONSOLE_LEVEL=info` to also see Info, or
-/// `SCRIBE_CONSOLE_LEVEL=debug` for everything.
+/// Set `ROBONIX_LOG_CONSOLE_LEVEL=info` to also see Info, or
+/// `ROBONIX_LOG_CONSOLE_LEVEL=debug` for everything.
 static CONSOLE_MIN: LazyLock<Level> =
-    LazyLock::new(|| parse_level_env("SCRIBE_CONSOLE_LEVEL", Level::Warn));
+    LazyLock::new(|| parse_level_env("ROBONIX_LOG_CONSOLE_LEVEL", Level::Warn));
 
 /// Minimum level for per-tag log files.
 ///
 /// Default: [`Level::Info`]  — Debug is suppressed on disk unless
-/// `SCRIBE_FILE_LEVEL=debug` is set.  Set `SCRIBE_FILE_LEVEL=error`
+/// `ROBONIX_LOG_FILE_LEVEL=debug` is set.  Set `ROBONIX_LOG_FILE_LEVEL=error`
 /// to only persist errors.
 static FILE_MIN: LazyLock<Level> =
-    LazyLock::new(|| parse_level_env("SCRIBE_FILE_LEVEL", Level::Info));
+    LazyLock::new(|| parse_level_env("ROBONIX_LOG_FILE_LEVEL", Level::Info));
 
 // ── Public API ─────────────────────────────────────────────────────
 
@@ -353,7 +353,7 @@ static FILE_MIN: LazyLock<Level> =
 /// | Warn   |  ✓    |  ✓   |
 /// | Error  |  ✓    |  ✓   |
 ///
-/// Override with `SCRIBE_CONSOLE_LEVEL` / `SCRIBE_FILE_LEVEL`.
+/// Override with `ROBONIX_LOG_CONSOLE_LEVEL` / `ROBONIX_LOG_FILE_LEVEL`.
 pub fn log(level: Level, tag: &str, msg: &str) {
     // Only construct the timestamped record when at least one sink
     // accepts this level — avoid wasted clock syscalls for Debug.
@@ -394,12 +394,12 @@ pub fn error(tag: &str, msg: &str) {
 
 /// Ingest a captured stdout/stderr line from a child process under `tag`.
 ///
-/// A child that uses Scribe (Python `scribe_logger` in a docker container,
+/// A child that uses Log (Python `log_logger` in a docker container,
 /// or any binary that mirrors records to its console) emits lines already in
 /// console format — `MM-DD HH:MM:SS.mmm  L tag  msg`. Re-logging the whole
 /// line as a fresh record's `msg` double-stamps the timestamp/level/tag (it
 /// appears once in the JSON fields and again embedded in `msg`). When the line
-/// is recognised as Scribe console output, strip the prefix and re-emit just
+/// is recognised as Log console output, strip the prefix and re-emit just
 /// the inner message at its original level under `tag`; otherwise treat the
 /// line as opaque output and log it verbatim at Info.
 pub fn ingest(tag: &str, line: &str) {
@@ -409,12 +409,12 @@ pub fn ingest(tag: &str, line: &str) {
     }
 }
 
-/// Recognise a Scribe console line and return its `(level, inner message)`.
+/// Recognise a Log console line and return its `(level, inner message)`.
 ///
 /// Layout (see `format::format_console`): two-digit `MM-DD`, space, `HH:MM:SS`,
 /// `.mmm`, two spaces, a single level char `D/I/W/E`, space, the tag padded to
 /// 24 columns, space, then the message at byte 47. Validated by fixed ASCII
-/// positions so a non-Scribe line (e.g. raw ROS2 output) falls through to None.
+/// positions so a non-Log line (e.g. raw ROS2 output) falls through to None.
 fn parse_console_line(line: &str) -> Option<(Level, &str)> {
     let b = line.as_bytes();
     // Shortest possible: 47-char prefix + at least one msg byte.
@@ -455,8 +455,8 @@ fn parse_console_line(line: &str) -> Option<(Level, &str)> {
 /// Log at INFO level using the process-wide default tag set by [`init`].
 ///
 /// ```rust,ignore
-/// robonix_scribe::init("executor");
-/// robonix_scribe::info!("connecting to atlas at {}", addr);
+/// robonix_log::init("executor");
+/// robonix_log::info!("connecting to src at {}", addr);
 /// ```
 #[macro_export]
 macro_rules! info {
@@ -654,7 +654,7 @@ mod tests {
 
     #[test]
     fn default_log_dir_is_dot_logs() {
-        let default = std::env::var("SCRIBE_LOG_DIR")
+        let default = std::env::var("ROBONIX_LOG_DIR")
             .map(std::path::PathBuf::from)
             .unwrap_or_else(|_| std::path::PathBuf::from("./logs"));
         assert_eq!(default, std::path::PathBuf::from("./logs"));
