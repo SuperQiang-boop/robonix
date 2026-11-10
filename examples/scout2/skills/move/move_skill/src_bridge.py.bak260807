@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MulanPSL-2.0
-"""move_rbnx — simple movement skill (atlas bridge).
+"""move_rbnx — simple movement skill (src bridge).
 
 A user-invocable skill: accepts direction + distance/angle and executes
 the movement by publishing directly to /cmd_vel.

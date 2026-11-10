@@ -4,7 +4,7 @@
 # package_manifest.yaml (see it for the full algo / sensors / map_id /
 # map_mode docs). The ONLY difference is the build/start target:
 #   build → no docker; verifies host ROS2 Humble + ros-humble-rtabmap-ros.
-#   start → start_native.sh (atlas_bridge + rtabmap as host processes).
+#   start → start_native.sh (src_bridge + rtabmap as host processes).
 #
 # Use this on a Jetson whose host already runs ROS2 (no docker, or no
 # nvidia-container-runtime). Select it from a deploy manifest entry:

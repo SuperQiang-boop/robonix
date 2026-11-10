@@ -6,9 +6,9 @@
 face_provider_id:
   type: string
   default: face_recognition
-scene_provider_id:
+world_provider_id:
   type: string
-  default: scene
+  default: world
 speech_provider_id:
   type: string
   default: speech

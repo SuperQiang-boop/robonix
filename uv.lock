@@ -31,7 +31,7 @@ members = [
     "robonix-camera-rtsp",
     "robonix-memgraph",
     "robonix-system-memory",
-    "robonix-system-scene",
+    "robonix-system-world",
     "robonix-system-speech",
     "robonix-system-voiceprint",
 ]
@@ -4285,9 +4285,9 @@ requires-dist = [
 ]
 
 [[package]]
-name = "robonix-system-scene"
+name = "robonix-system-world"
 version = "0.1.0"
-source = { virtual = "system/scene" }
+source = { virtual = "system/world" }
 dependencies = [
     { name = "fastmcp" },
     { name = "grpcio" },

@@ -2,7 +2,7 @@
 # parent frame (typically `base_link`). Read from the URDF at soma
 # startup; consumers (scene's camera-to-world projection, multi-cam
 # fusion) call `system/soma/sensor_extrinsics` instead of looking up
-# tf2 themselves so the dependency graph is auditable via atlas.
+# tf2 themselves so the dependency graph is auditable via src.
 
 string sensor_name        # e.g. "rgb_camera", "depth_camera", "lidar3d"
 string parent_frame       # e.g. "base_link"

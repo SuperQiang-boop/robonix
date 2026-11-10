@@ -19,4 +19,4 @@ if ROBONIX_API="$(rbnx path robonix-api 2>/dev/null)"; then
     export PYTHONPATH="$ROBONIX_API:$PKG:${PYTHONPATH:-}"
 fi
 
-exec python3 -m realsense_camera.main
+exec /usr/bin/python3 -m realsense_camera.main

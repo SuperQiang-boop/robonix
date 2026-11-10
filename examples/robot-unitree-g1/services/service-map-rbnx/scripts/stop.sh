@@ -31,8 +31,8 @@ if [[ "$MODE" == "docker" ]]; then
     exit 0
 fi
 
-pkill -TERM -f "${PKG}.*mapping_rbnx.atlas_bridge" 2>/dev/null || true
+pkill -TERM -f "${PKG}.*mapping_rbnx.src_bridge" 2>/dev/null || true
 pkill -TERM -f "${PKG}/scripts/start_engine.sh" 2>/dev/null || true
 sleep 1
-pkill -KILL -f "${PKG}.*mapping_rbnx.atlas_bridge" 2>/dev/null || true
+pkill -KILL -f "${PKG}.*mapping_rbnx.src_bridge" 2>/dev/null || true
 pkill -KILL -f "${PKG}/scripts/start_engine.sh" 2>/dev/null || true

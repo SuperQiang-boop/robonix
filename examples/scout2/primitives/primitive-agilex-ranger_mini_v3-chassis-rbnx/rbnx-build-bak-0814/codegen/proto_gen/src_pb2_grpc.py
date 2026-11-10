@@ -3,7 +3,7 @@
 import grpc
 import warnings
 
-import atlas_pb2 as atlas__pb2
+import src_pb2 as src__pb2
 
 GRPC_GENERATED_VERSION = '1.83.0'
 GRPC_VERSION = grpc.__version__
@@ -18,14 +18,14 @@ except ImportError:
 if _version_not_supported:
     raise RuntimeError(
         f'The grpc package installed is at version {GRPC_VERSION},'
-        + ' but the generated code in atlas_pb2_grpc.py depends on'
+        + ' but the generated code in src_pb2_grpc.py depends on'
         + f' grpcio>={GRPC_GENERATED_VERSION}.'
         + f' Please upgrade your grpc module to grpcio>={GRPC_GENERATED_VERSION}'
         + f' or downgrade your generated code using grpcio-tools<={GRPC_VERSION}.'
     )
 
 
-class AtlasStub:
+class SrcStub:
     """Missing associated documentation comment in .proto file."""
 
     def __init__(self, channel):
@@ -35,73 +35,73 @@ class AtlasStub:
             channel: A grpc.Channel.
         """
         self.RegisterPrimitive = channel.unary_unary(
-                '/robonix.atlas.Atlas/RegisterPrimitive',
-                request_serializer=atlas__pb2.RegisterRequest.SerializeToString,
-                response_deserializer=atlas__pb2.RegisterResponse.FromString,
+                '/robonix.src.Src/RegisterPrimitive',
+                request_serializer=src__pb2.RegisterRequest.SerializeToString,
+                response_deserializer=src__pb2.RegisterResponse.FromString,
                 _registered_method=True)
         self.RegisterService = channel.unary_unary(
-                '/robonix.atlas.Atlas/RegisterService',
-                request_serializer=atlas__pb2.RegisterRequest.SerializeToString,
-                response_deserializer=atlas__pb2.RegisterResponse.FromString,
+                '/robonix.src.Src/RegisterService',
+                request_serializer=src__pb2.RegisterRequest.SerializeToString,
+                response_deserializer=src__pb2.RegisterResponse.FromString,
                 _registered_method=True)
         self.RegisterSkill = channel.unary_unary(
-                '/robonix.atlas.Atlas/RegisterSkill',
-                request_serializer=atlas__pb2.RegisterRequest.SerializeToString,
-                response_deserializer=atlas__pb2.RegisterResponse.FromString,
+                '/robonix.src.Src/RegisterSkill',
+                request_serializer=src__pb2.RegisterRequest.SerializeToString,
+                response_deserializer=src__pb2.RegisterResponse.FromString,
                 _registered_method=True)
         self.Unregister = channel.unary_unary(
-                '/robonix.atlas.Atlas/Unregister',
-                request_serializer=atlas__pb2.UnregisterRequest.SerializeToString,
-                response_deserializer=atlas__pb2.UnregisterResponse.FromString,
+                '/robonix.src.Src/Unregister',
+                request_serializer=src__pb2.UnregisterRequest.SerializeToString,
+                response_deserializer=src__pb2.UnregisterResponse.FromString,
                 _registered_method=True)
         self.Heartbeat = channel.unary_unary(
-                '/robonix.atlas.Atlas/Heartbeat',
-                request_serializer=atlas__pb2.HeartbeatRequest.SerializeToString,
-                response_deserializer=atlas__pb2.HeartbeatResponse.FromString,
+                '/robonix.src.Src/Heartbeat',
+                request_serializer=src__pb2.HeartbeatRequest.SerializeToString,
+                response_deserializer=src__pb2.HeartbeatResponse.FromString,
                 _registered_method=True)
         self.SetLifecycleState = channel.unary_unary(
-                '/robonix.atlas.Atlas/SetLifecycleState',
-                request_serializer=atlas__pb2.SetLifecycleStateRequest.SerializeToString,
-                response_deserializer=atlas__pb2.SetLifecycleStateResponse.FromString,
+                '/robonix.src.Src/SetLifecycleState',
+                request_serializer=src__pb2.SetLifecycleStateRequest.SerializeToString,
+                response_deserializer=src__pb2.SetLifecycleStateResponse.FromString,
                 _registered_method=True)
         self.DeclareCapability = channel.unary_unary(
-                '/robonix.atlas.Atlas/DeclareCapability',
-                request_serializer=atlas__pb2.DeclareCapabilityRequest.SerializeToString,
-                response_deserializer=atlas__pb2.DeclareCapabilityResponse.FromString,
+                '/robonix.src.Src/DeclareCapability',
+                request_serializer=src__pb2.DeclareCapabilityRequest.SerializeToString,
+                response_deserializer=src__pb2.DeclareCapabilityResponse.FromString,
                 _registered_method=True)
         self.Query = channel.unary_unary(
-                '/robonix.atlas.Atlas/Query',
-                request_serializer=atlas__pb2.QueryRequest.SerializeToString,
-                response_deserializer=atlas__pb2.QueryResponse.FromString,
+                '/robonix.src.Src/Query',
+                request_serializer=src__pb2.QueryRequest.SerializeToString,
+                response_deserializer=src__pb2.QueryResponse.FromString,
                 _registered_method=True)
         self.ConnectCapability = channel.unary_unary(
-                '/robonix.atlas.Atlas/ConnectCapability',
-                request_serializer=atlas__pb2.ConnectCapabilityRequest.SerializeToString,
-                response_deserializer=atlas__pb2.ConnectCapabilityResponse.FromString,
+                '/robonix.src.Src/ConnectCapability',
+                request_serializer=src__pb2.ConnectCapabilityRequest.SerializeToString,
+                response_deserializer=src__pb2.ConnectCapabilityResponse.FromString,
                 _registered_method=True)
         self.DisconnectCapability = channel.unary_unary(
-                '/robonix.atlas.Atlas/DisconnectCapability',
-                request_serializer=atlas__pb2.DisconnectCapabilityRequest.SerializeToString,
-                response_deserializer=atlas__pb2.DisconnectCapabilityResponse.FromString,
+                '/robonix.src.Src/DisconnectCapability',
+                request_serializer=src__pb2.DisconnectCapabilityRequest.SerializeToString,
+                response_deserializer=src__pb2.DisconnectCapabilityResponse.FromString,
                 _registered_method=True)
         self.QueryContract = channel.unary_unary(
-                '/robonix.atlas.Atlas/QueryContract',
-                request_serializer=atlas__pb2.QueryContractRequest.SerializeToString,
-                response_deserializer=atlas__pb2.QueryContractResponse.FromString,
+                '/robonix.src.Src/QueryContract',
+                request_serializer=src__pb2.QueryContractRequest.SerializeToString,
+                response_deserializer=src__pb2.QueryContractResponse.FromString,
                 _registered_method=True)
         self.ListContracts = channel.unary_unary(
-                '/robonix.atlas.Atlas/ListContracts',
-                request_serializer=atlas__pb2.ListContractsRequest.SerializeToString,
-                response_deserializer=atlas__pb2.ListContractsResponse.FromString,
+                '/robonix.src.Src/ListContracts',
+                request_serializer=src__pb2.ListContractsRequest.SerializeToString,
+                response_deserializer=src__pb2.ListContractsResponse.FromString,
                 _registered_method=True)
-        self.InspectAtlas = channel.unary_unary(
-                '/robonix.atlas.Atlas/InspectAtlas',
-                request_serializer=atlas__pb2.InspectAtlasRequest.SerializeToString,
-                response_deserializer=atlas__pb2.InspectAtlasResponse.FromString,
+        self.InspectSrc = channel.unary_unary(
+                '/robonix.src.Src/InspectSrc',
+                request_serializer=src__pb2.InspectSrcRequest.SerializeToString,
+                response_deserializer=src__pb2.InspectSrcResponse.FromString,
                 _registered_method=True)
 
 
-class AtlasServicer:
+class SrcServicer:
     """Missing associated documentation comment in .proto file."""
 
     def RegisterPrimitive(self, request, context):
@@ -184,7 +184,7 @@ class AtlasServicer:
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
-    def InspectAtlas(self, request, context):
+    def InspectSrc(self, request, context):
         """Debug.
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
@@ -192,82 +192,82 @@ class AtlasServicer:
         raise NotImplementedError('Method not implemented!')
 
 
-def add_AtlasServicer_to_server(servicer, server):
+def add_SrcServicer_to_server(servicer, server):
     rpc_method_handlers = {
             'RegisterPrimitive': grpc.unary_unary_rpc_method_handler(
                     servicer.RegisterPrimitive,
-                    request_deserializer=atlas__pb2.RegisterRequest.FromString,
-                    response_serializer=atlas__pb2.RegisterResponse.SerializeToString,
+                    request_deserializer=src__pb2.RegisterRequest.FromString,
+                    response_serializer=src__pb2.RegisterResponse.SerializeToString,
             ),
             'RegisterService': grpc.unary_unary_rpc_method_handler(
                     servicer.RegisterService,
-                    request_deserializer=atlas__pb2.RegisterRequest.FromString,
-                    response_serializer=atlas__pb2.RegisterResponse.SerializeToString,
+                    request_deserializer=src__pb2.RegisterRequest.FromString,
+                    response_serializer=src__pb2.RegisterResponse.SerializeToString,
             ),
             'RegisterSkill': grpc.unary_unary_rpc_method_handler(
                     servicer.RegisterSkill,
-                    request_deserializer=atlas__pb2.RegisterRequest.FromString,
-                    response_serializer=atlas__pb2.RegisterResponse.SerializeToString,
+                    request_deserializer=src__pb2.RegisterRequest.FromString,
+                    response_serializer=src__pb2.RegisterResponse.SerializeToString,
             ),
             'Unregister': grpc.unary_unary_rpc_method_handler(
                     servicer.Unregister,
-                    request_deserializer=atlas__pb2.UnregisterRequest.FromString,
-                    response_serializer=atlas__pb2.UnregisterResponse.SerializeToString,
+                    request_deserializer=src__pb2.UnregisterRequest.FromString,
+                    response_serializer=src__pb2.UnregisterResponse.SerializeToString,
             ),
             'Heartbeat': grpc.unary_unary_rpc_method_handler(
                     servicer.Heartbeat,
-                    request_deserializer=atlas__pb2.HeartbeatRequest.FromString,
-                    response_serializer=atlas__pb2.HeartbeatResponse.SerializeToString,
+                    request_deserializer=src__pb2.HeartbeatRequest.FromString,
+                    response_serializer=src__pb2.HeartbeatResponse.SerializeToString,
             ),
             'SetLifecycleState': grpc.unary_unary_rpc_method_handler(
                     servicer.SetLifecycleState,
-                    request_deserializer=atlas__pb2.SetLifecycleStateRequest.FromString,
-                    response_serializer=atlas__pb2.SetLifecycleStateResponse.SerializeToString,
+                    request_deserializer=src__pb2.SetLifecycleStateRequest.FromString,
+                    response_serializer=src__pb2.SetLifecycleStateResponse.SerializeToString,
             ),
             'DeclareCapability': grpc.unary_unary_rpc_method_handler(
                     servicer.DeclareCapability,
-                    request_deserializer=atlas__pb2.DeclareCapabilityRequest.FromString,
-                    response_serializer=atlas__pb2.DeclareCapabilityResponse.SerializeToString,
+                    request_deserializer=src__pb2.DeclareCapabilityRequest.FromString,
+                    response_serializer=src__pb2.DeclareCapabilityResponse.SerializeToString,
             ),
             'Query': grpc.unary_unary_rpc_method_handler(
                     servicer.Query,
-                    request_deserializer=atlas__pb2.QueryRequest.FromString,
-                    response_serializer=atlas__pb2.QueryResponse.SerializeToString,
+                    request_deserializer=src__pb2.QueryRequest.FromString,
+                    response_serializer=src__pb2.QueryResponse.SerializeToString,
             ),
             'ConnectCapability': grpc.unary_unary_rpc_method_handler(
                     servicer.ConnectCapability,
-                    request_deserializer=atlas__pb2.ConnectCapabilityRequest.FromString,
-                    response_serializer=atlas__pb2.ConnectCapabilityResponse.SerializeToString,
+                    request_deserializer=src__pb2.ConnectCapabilityRequest.FromString,
+                    response_serializer=src__pb2.ConnectCapabilityResponse.SerializeToString,
             ),
             'DisconnectCapability': grpc.unary_unary_rpc_method_handler(
                     servicer.DisconnectCapability,
-                    request_deserializer=atlas__pb2.DisconnectCapabilityRequest.FromString,
-                    response_serializer=atlas__pb2.DisconnectCapabilityResponse.SerializeToString,
+                    request_deserializer=src__pb2.DisconnectCapabilityRequest.FromString,
+                    response_serializer=src__pb2.DisconnectCapabilityResponse.SerializeToString,
             ),
             'QueryContract': grpc.unary_unary_rpc_method_handler(
                     servicer.QueryContract,
-                    request_deserializer=atlas__pb2.QueryContractRequest.FromString,
-                    response_serializer=atlas__pb2.QueryContractResponse.SerializeToString,
+                    request_deserializer=src__pb2.QueryContractRequest.FromString,
+                    response_serializer=src__pb2.QueryContractResponse.SerializeToString,
             ),
             'ListContracts': grpc.unary_unary_rpc_method_handler(
                     servicer.ListContracts,
-                    request_deserializer=atlas__pb2.ListContractsRequest.FromString,
-                    response_serializer=atlas__pb2.ListContractsResponse.SerializeToString,
+                    request_deserializer=src__pb2.ListContractsRequest.FromString,
+                    response_serializer=src__pb2.ListContractsResponse.SerializeToString,
             ),
-            'InspectAtlas': grpc.unary_unary_rpc_method_handler(
-                    servicer.InspectAtlas,
-                    request_deserializer=atlas__pb2.InspectAtlasRequest.FromString,
-                    response_serializer=atlas__pb2.InspectAtlasResponse.SerializeToString,
+            'InspectSrc': grpc.unary_unary_rpc_method_handler(
+                    servicer.InspectSrc,
+                    request_deserializer=src__pb2.InspectSrcRequest.FromString,
+                    response_serializer=src__pb2.InspectSrcResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
-            'robonix.atlas.Atlas', rpc_method_handlers)
+            'robonix.src.Src', rpc_method_handlers)
     server.add_generic_rpc_handlers((generic_handler,))
-    server.add_registered_method_handlers('robonix.atlas.Atlas', rpc_method_handlers)
+    server.add_registered_method_handlers('robonix.src.Src', rpc_method_handlers)
 
 
  # This class is part of an EXPERIMENTAL API.
-class Atlas:
+class Src:
     """Missing associated documentation comment in .proto file."""
 
     @staticmethod
@@ -284,9 +284,9 @@ class Atlas:
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/robonix.atlas.Atlas/RegisterPrimitive',
-            atlas__pb2.RegisterRequest.SerializeToString,
-            atlas__pb2.RegisterResponse.FromString,
+            '/robonix.src.Src/RegisterPrimitive',
+            src__pb2.RegisterRequest.SerializeToString,
+            src__pb2.RegisterResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -311,9 +311,9 @@ class Atlas:
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/robonix.atlas.Atlas/RegisterService',
-            atlas__pb2.RegisterRequest.SerializeToString,
-            atlas__pb2.RegisterResponse.FromString,
+            '/robonix.src.Src/RegisterService',
+            src__pb2.RegisterRequest.SerializeToString,
+            src__pb2.RegisterResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -338,9 +338,9 @@ class Atlas:
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/robonix.atlas.Atlas/RegisterSkill',
-            atlas__pb2.RegisterRequest.SerializeToString,
-            atlas__pb2.RegisterResponse.FromString,
+            '/robonix.src.Src/RegisterSkill',
+            src__pb2.RegisterRequest.SerializeToString,
+            src__pb2.RegisterResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -365,9 +365,9 @@ class Atlas:
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/robonix.atlas.Atlas/Unregister',
-            atlas__pb2.UnregisterRequest.SerializeToString,
-            atlas__pb2.UnregisterResponse.FromString,
+            '/robonix.src.Src/Unregister',
+            src__pb2.UnregisterRequest.SerializeToString,
+            src__pb2.UnregisterResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -392,9 +392,9 @@ class Atlas:
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/robonix.atlas.Atlas/Heartbeat',
-            atlas__pb2.HeartbeatRequest.SerializeToString,
-            atlas__pb2.HeartbeatResponse.FromString,
+            '/robonix.src.Src/Heartbeat',
+            src__pb2.HeartbeatRequest.SerializeToString,
+            src__pb2.HeartbeatResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -419,9 +419,9 @@ class Atlas:
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/robonix.atlas.Atlas/SetLifecycleState',
-            atlas__pb2.SetLifecycleStateRequest.SerializeToString,
-            atlas__pb2.SetLifecycleStateResponse.FromString,
+            '/robonix.src.Src/SetLifecycleState',
+            src__pb2.SetLifecycleStateRequest.SerializeToString,
+            src__pb2.SetLifecycleStateResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -446,9 +446,9 @@ class Atlas:
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/robonix.atlas.Atlas/DeclareCapability',
-            atlas__pb2.DeclareCapabilityRequest.SerializeToString,
-            atlas__pb2.DeclareCapabilityResponse.FromString,
+            '/robonix.src.Src/DeclareCapability',
+            src__pb2.DeclareCapabilityRequest.SerializeToString,
+            src__pb2.DeclareCapabilityResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -473,9 +473,9 @@ class Atlas:
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/robonix.atlas.Atlas/Query',
-            atlas__pb2.QueryRequest.SerializeToString,
-            atlas__pb2.QueryResponse.FromString,
+            '/robonix.src.Src/Query',
+            src__pb2.QueryRequest.SerializeToString,
+            src__pb2.QueryResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -500,9 +500,9 @@ class Atlas:
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/robonix.atlas.Atlas/ConnectCapability',
-            atlas__pb2.ConnectCapabilityRequest.SerializeToString,
-            atlas__pb2.ConnectCapabilityResponse.FromString,
+            '/robonix.src.Src/ConnectCapability',
+            src__pb2.ConnectCapabilityRequest.SerializeToString,
+            src__pb2.ConnectCapabilityResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -527,9 +527,9 @@ class Atlas:
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/robonix.atlas.Atlas/DisconnectCapability',
-            atlas__pb2.DisconnectCapabilityRequest.SerializeToString,
-            atlas__pb2.DisconnectCapabilityResponse.FromString,
+            '/robonix.src.Src/DisconnectCapability',
+            src__pb2.DisconnectCapabilityRequest.SerializeToString,
+            src__pb2.DisconnectCapabilityResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -554,9 +554,9 @@ class Atlas:
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/robonix.atlas.Atlas/QueryContract',
-            atlas__pb2.QueryContractRequest.SerializeToString,
-            atlas__pb2.QueryContractResponse.FromString,
+            '/robonix.src.Src/QueryContract',
+            src__pb2.QueryContractRequest.SerializeToString,
+            src__pb2.QueryContractResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -581,9 +581,9 @@ class Atlas:
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/robonix.atlas.Atlas/ListContracts',
-            atlas__pb2.ListContractsRequest.SerializeToString,
-            atlas__pb2.ListContractsResponse.FromString,
+            '/robonix.src.Src/ListContracts',
+            src__pb2.ListContractsRequest.SerializeToString,
+            src__pb2.ListContractsResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -595,7 +595,7 @@ class Atlas:
             _registered_method=True)
 
     @staticmethod
-    def InspectAtlas(request,
+    def InspectSrc(request,
             target,
             options=(),
             channel_credentials=None,
@@ -608,9 +608,9 @@ class Atlas:
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/robonix.atlas.Atlas/InspectAtlas',
-            atlas__pb2.InspectAtlasRequest.SerializeToString,
-            atlas__pb2.InspectAtlasResponse.FromString,
+            '/robonix.src.Src/InspectSrc',
+            src__pb2.InspectSrcRequest.SerializeToString,
+            src__pb2.InspectSrcResponse.FromString,
             options,
             channel_credentials,
             insecure,

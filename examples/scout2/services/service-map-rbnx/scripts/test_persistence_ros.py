@@ -74,7 +74,7 @@ def start_checkpoints(root, runtime, session, results):
             results.append(RuntimeError(result['detail']))
         return result
 
-    source = Path('/mapping/src/mapping_rbnx/atlas_bridge.py')
+    source = Path('/mapping/src/mapping_rbnx/src_bridge.py')
     function = next(node for node in ast.parse(source.read_text()).body
                     if isinstance(node, ast.FunctionDef) and node.name == '_start_checkpoint_loop')
     namespace = dict(threading=threading, _CHECKPOINT_STOP=threading.Event(),

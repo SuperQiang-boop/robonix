@@ -31,7 +31,7 @@ class MessageTests(unittest.TestCase):
         main._settings = main.Settings.parse({"message_store_path": str(self.path)})
         main._store = MessageStore(self.path)
         main._face_connection = SimpleNamespace(endpoint="face")
-        main._scene_connection = None
+        main._world_connection = None
         main._speech_connection = SimpleNamespace(endpoint="speech")
         main._arm_connection = SimpleNamespace(endpoint="arm")
         main._last_greet.clear()
@@ -91,7 +91,7 @@ class MessageTests(unittest.TestCase):
             self.assertEqual(tool, "resolve")
             return {"found": True, "person_id": 8, "name": "小红"}
 
-        main._scene_connection = SimpleNamespace(endpoint="scene")
+        main._world_connection = SimpleNamespace(endpoint="world")
         with patch.object(main, "_call_connection", side_effect=resolve) as call:
             result = asyncio.run(main.create_message(CreateFaceMessage_Request(
                 person_name="小红", message="下午开会", sender="王老师",
@@ -104,7 +104,7 @@ class MessageTests(unittest.TestCase):
         self.assertEqual(task["object_status"], "not_tracked")
 
     def test_object_is_bound_at_creation_and_scene_absence_means_removed(self):
-        main._scene_connection = SimpleNamespace(endpoint="scene")
+        main._world_connection = SimpleNamespace(endpoint="world")
 
         async def call_async(connection, tool, payload, timeout):
             if tool == "resolve":
@@ -129,7 +129,7 @@ class MessageTests(unittest.TestCase):
 
     def test_object_scene_query_failure_is_unknown(self):
         task_id, _ = main._store.create_or_get(8, "小红", "", "请拿走杯子", "cup-1", "cup")
-        main._scene_connection = SimpleNamespace(endpoint="scene")
+        main._world_connection = SimpleNamespace(endpoint="world")
         with patch.object(main, "_call_connection", side_effect=RuntimeError("scene offline")):
             status = asyncio.run(main.message_status(FaceMessageStatus_Request(task_id=task_id)))
         self.assertEqual(status.object_status, "unknown")

@@ -5,7 +5,7 @@
 # viewer and consumable by nav2 / scene directly.
 #
 # Two output modes:
-#   --out-dir DIR     (preferred; per-map_id store, used by atlas_bridge)
+#   --out-dir DIR     (preferred; per-map_id store, used by src_bridge)
 #       DIR/occupancy.pgm   nav2 convention (0=occ, 254=free, 205=unknown)
 #       DIR/occupancy.yaml  nav2 map_server yaml
 #       DIR/occupancy.png   same image, png (double-click to preview)

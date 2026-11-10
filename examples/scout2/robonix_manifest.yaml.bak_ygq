@@ -18,7 +18,7 @@ env:
 
 system:
   # basic layer
-  atlas:
+  src:
     listen: 0.0.0.0:50051
     log: info
   # soma+scene layer

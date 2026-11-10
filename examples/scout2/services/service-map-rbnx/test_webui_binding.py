@@ -25,7 +25,7 @@ class WebUiBindingTest(unittest.TestCase):
         )
 
     def test_driver_config_propagates_webui_host(self):
-        source = (ROOT / "src" / "mapping_rbnx" / "atlas_bridge.py").read_text(
+        source = (ROOT / "src" / "mapping_rbnx" / "src_bridge.py").read_text(
             encoding="utf-8"
         )
         self.assertIn('cfg.get(\n        "webui_host"', source)

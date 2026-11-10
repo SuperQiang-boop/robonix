@@ -2,7 +2,6 @@
 #include <cerrno>
 #include <chrono>
 #include <cmath>
-#include <fcntl.h>
 #include <filesystem>
 #include <iostream>
 #include <memory>
@@ -10,7 +9,6 @@
 #include <sys/un.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
-#include <sys/select.h>
 #include <unistd.h>
 
 #include "geometry_msgs/msg/transform_stamped.hpp"
@@ -24,6 +22,7 @@
 
 #include "g1_chassis/protocol.hpp"
 #include "g1_chassis/odometry.hpp"
+#include "g1_chassis/ipc_connection.hpp"
 using g1_chassis::CommandPacket;
 using g1_chassis::PacketType;
 
@@ -42,47 +41,11 @@ class AdapterNode : public rclcpp::Node {
     socket_path_ = std::string(socket_env);
     RCLCPP_INFO(this->get_logger(), "IPC socket: %s", socket_path_.c_str());
 
-    // Open a non-blocking UNIX socket to the daemon.
-    socket_fd_ = ::socket(AF_UNIX, SOCK_SEQPACKET | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
+    socket_fd_ = g1_chassis::ConnectDaemonSocket(
+        socket_path_, std::chrono::milliseconds(3000));
     if (socket_fd_ < 0) {
-      RCLCPP_FATAL(this->get_logger(), "socket() failed: %s", strerror(errno));
-      std::exit(1);
-    }
-
-    sockaddr_un address{};
-    address.sun_family = AF_UNIX;
-    std::strncpy(address.sun_path, socket_path_.c_str(),
-                 sizeof(address.sun_path) - 1U);
-
-    // Connect in non-blocking mode; wait up to 2s for the daemon.
-    int flags = ::fcntl(socket_fd_, F_GETFL, 0);
-    ::fcntl(socket_fd_, F_SETFL, flags | O_NONBLOCK);
-    int ret = ::connect(socket_fd_, reinterpret_cast<const sockaddr *>(&address),
-                        sizeof(address));
-    if (ret < 0 && errno == EINPROGRESS) {
-      // Wait for connection to complete.
-      fd_set writefds;
-      FD_ZERO(&writefds);
-      FD_SET(socket_fd_, &writefds);
-      timeval tv{};
-      tv.tv_sec = 2;
-      tv.tv_usec = 0;
-      if (select(socket_fd_ + 1, nullptr, &writefds, nullptr, &tv) > 0) {
-        int err = 0;
-        socklen_t len = sizeof(err);
-        getsockopt(socket_fd_, SOL_SOCKET, SO_ERROR, &err, &len);
-        if (err == 0) {
-          ret = 0;
-        } else {
-          ret = -1;
-        }
-      } else {
-        ret = -1;
-      }
-    }
-    if (ret < 0) {
       RCLCPP_FATAL(this->get_logger(),
-                   "Failed to connect to daemon at %s: %s",
+                   "Failed to connect to daemon at %s within 3s: %s",
                    socket_path_.c_str(), strerror(errno));
       std::exit(1);
     }

@@ -139,7 +139,7 @@ class DashboardConfig:
     startup_timeout_s: float = 8.0
     stop_timeout_s: float = 5.0
     browser_voice_enabled: bool = False
-    liaison_endpoint: str = "127.0.0.1:50081"
+    gateway_endpoint: str = "127.0.0.1:50081"
     audio_bridge_url: str = "ws://127.0.0.1:60002/client"
     browser_mic_provider: str = "audio_client_bridge"
 
@@ -173,8 +173,8 @@ class DashboardConfig:
                 ),
                 "browser_voice_enabled",
             ),
-            liaison_endpoint=str(
-                values.get("liaison_endpoint", defaults.liaison_endpoint)
+            gateway_endpoint=str(
+                values.get("gateway_endpoint", defaults.gateway_endpoint)
             ).strip(),
             audio_bridge_url=str(
                 values.get("audio_bridge_url", defaults.audio_bridge_url)
@@ -267,7 +267,7 @@ class DashboardConfig:
                 30.0,
             ),
             browser_voice_enabled=voice.enabled,
-            liaison_endpoint=voice.liaison_endpoint,
+            gateway_endpoint=voice.gateway_endpoint,
             audio_bridge_url=voice.audio_bridge_url,
             browser_mic_provider=voice.mic_provider_id,
         )
@@ -327,7 +327,7 @@ class DashboardConfig:
                 "GO2_DASHBOARD_BROWSER_VOICE_ENABLED": (
                     "1" if self.browser_voice_enabled else "0"
                 ),
-                "GO2_DASHBOARD_LIAISON_ENDPOINT": self.liaison_endpoint,
+                "GO2_DASHBOARD_GATEWAY_ENDPOINT": self.gateway_endpoint,
                 "GO2_DASHBOARD_AUDIO_BRIDGE_URL": self.audio_bridge_url,
                 "GO2_DASHBOARD_BROWSER_MIC_PROVIDER": self.browser_mic_provider,
             }

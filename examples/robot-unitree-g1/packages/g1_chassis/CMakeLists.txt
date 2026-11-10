@@ -15,6 +15,7 @@ if(G1_CHASSIS_BUILD_OFFLINE_TESTS)
     tests/odometry_test.cpp
     tests/state_forwarder_test.cpp
     tests/command_stream_test.cpp
+    tests/ipc_connection_test.cpp
     sdk_daemon/src/daemon_core.cpp
     sdk_daemon/src/command_stream.cpp
     sdk_daemon/src/state_forwarder.cpp

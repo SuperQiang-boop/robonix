@@ -44,9 +44,9 @@ def main():
     try:
         with tempfile.TemporaryDirectory(prefix="g1-odom-") as directory:
             socket_path = str(Path(directory) / "fake.sock")
+            with socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET) as stale:
+                stale.bind(socket_path)
             with socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET) as server:
-                server.bind(socket_path)
-                server.listen(1)
                 server.settimeout(10)
                 with open(Path(directory) / "adapter.log", "w+") as log:
                     process = subprocess.Popen(
@@ -55,6 +55,16 @@ def main():
                          "-p", "base_frame:=g1_test_base", "-p", "odom_publish_rate_hz:=50.0"],
                         env={**os.environ, "G1_IPC_SOCKET": socket_path}, stdout=log, stderr=log,
                     )
+                    deadline = time.monotonic() + 5.0
+                    while "IPC socket:" not in (Path(directory) / "adapter.log").read_text():
+                        assert process.poll() is None, "adapter exited before connecting"
+                        assert time.monotonic() < deadline, "adapter never attempted IPC startup"
+                        time.sleep(0.02)
+                    time.sleep(0.2)
+                    assert process.poll() is None, "adapter did not retry a stale socket"
+                    os.unlink(socket_path)
+                    server.bind(socket_path)
+                    server.listen(1)
                     connection, _ = server.accept()
                     connection.setblocking(False)
 

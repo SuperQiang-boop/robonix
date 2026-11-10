@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MulanPSL-2.0
 """Runtime map-management operations for the mapping service.
 
-Backs three RPC+MCP capabilities (declared in atlas_bridge):
+Backs three RPC+MCP capabilities (declared in src_bridge):
   - save_map      snapshot the live SLAM map to disk under a map_id
   - load_map      switch rtabmap onto a saved map (localization / mapping)
   - pose_estimate seed a pose so rtabmap's localization re-converges
@@ -14,7 +14,7 @@ load_map strategy (per design): try rtabmap's runtime services FIRST
 (`/rtabmap/load_database` + `/set_mode_localization|mapping`); only if those
 are unavailable does the caller fall back to a process restart. Each impl
 returns a plain dict whose keys match the contract's response fields, so the
-gRPC servicer and the MCP handler in atlas_bridge can share one code path.
+gRPC servicer and the MCP handler in src_bridge can share one code path.
 """
 from __future__ import annotations
 
@@ -456,7 +456,7 @@ def load_map_impl(map_id: str, mode: str = "localization",
         if not pub_ok:
             # The database swap already happened via _load_database above --
             # rtabmap is genuinely serving runtime_db now even though the
-            # preview publish failed. Surface it so callers (atlas_bridges
+            # preview publish failed. Surface it so callers (src_bridges
             # _record_load_result) can sync active-db bookkeeping instead of
             # leaving save_map pointed at the stale pre-load database.
             return {"ok": False, "runtime_db_path": runtime_db,
@@ -510,7 +510,7 @@ def set_active_db(path: str) -> None:
     """Record the database RTAB-Map now holds open and clear the finalized flag.
 
     A newly opened database has not been published under a map_id yet, so it is
-    a candidate for the shutdown snapshot again. Called by atlas_bridge.init
+    a candidate for the shutdown snapshot again. Called by src_bridge.init
     with the resolved startup database_path, and by load_map_impl once
     RTAB-Map has switched onto a runtime copy.
     """

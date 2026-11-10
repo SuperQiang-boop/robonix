@@ -70,7 +70,7 @@ class ProviderRuntimeTests(unittest.TestCase):
                 "base_frame": "go2_base",
                 "log_level": "warning",
                 "browser_voice_enabled": "1",
-                "liaison_endpoint": "127.0.0.1:50081",
+                "gateway_endpoint": "127.0.0.1:50081",
                 "audio_bridge_url": "ws://127.0.0.1:60002/client",
                 "browser_mic_provider": "audio_client_bridge",
             }
@@ -109,7 +109,7 @@ class ProviderRuntimeTests(unittest.TestCase):
             environment["GO2_DASHBOARD_BROWSER_VOICE_ENABLED"], "1"
         )
         self.assertEqual(
-            environment["GO2_DASHBOARD_LIAISON_ENDPOINT"],
+            environment["GO2_DASHBOARD_GATEWAY_ENDPOINT"],
             "127.0.0.1:50081",
         )
         self.assertEqual(
@@ -154,7 +154,7 @@ class ProviderRuntimeTests(unittest.TestCase):
             DashboardConfig.from_mapping({"browser_voice_enabled": "true"})
         with self.assertRaisesRegex(ValueError, "literal loopback"):
             DashboardConfig.from_mapping(
-                {"liaison_endpoint": "192.168.123.18:50081"}
+                {"gateway_endpoint": "192.168.123.18:50081"}
             )
 
     def test_start_and_stop_signal_only_the_created_child(self) -> None:

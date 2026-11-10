@@ -111,9 +111,9 @@ class ReadOnlySafetyTests(unittest.TestCase):
         self.assertIn("缓存快照 · 地图错误", page)
         self.assertIn("mapdegraded", page)
 
-    def test_browser_voice_gateway_only_delegates_to_liaison(self) -> None:
+    def test_browser_voice_gateway_only_delegates_to_gateway(self) -> None:
         source = (RUNTIME / "voice_gateway.py").read_text(encoding="utf-8")
-        self.assertIn("RobonixSystemLiaisonVoiceStub", source)
+        self.assertIn("RobonixSystemGatewayVoiceStub", source)
         self.assertIn("StartVoiceSession", source)
         self.assertIn("capability_calls_observed", source)
         self.assertIn("预览安全策略违规", source)

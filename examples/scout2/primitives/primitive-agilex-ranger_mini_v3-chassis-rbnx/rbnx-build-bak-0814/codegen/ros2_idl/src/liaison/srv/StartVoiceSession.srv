@@ -5,7 +5,7 @@ string  client_user_id          # hint (e.g. local OS user)
 uint32  record_seconds          # 0 → server default (5s)
 string  language                # BCP-47, "" = auto
 bool    tts_enabled             # play synthesized response
-string  mic_node_id             # "" = auto-discover via Atlas
+string  mic_node_id             # "" = auto-discover via Src
 string  asr_node_id             # ""
 string  voiceprint_node_id      # ""
 string  tts_node_id             # ""

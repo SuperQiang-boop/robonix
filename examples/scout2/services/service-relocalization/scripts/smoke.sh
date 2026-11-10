@@ -9,7 +9,7 @@ set -u
 export PYTHONPATH="$PKG:$PKG/rbnx-build/search:$PKG/rbnx-build/codegen/proto_gen:${PYTHONPATH:-}"
 "$PKG/rbnx-build/venv/bin/python" -m unittest discover -s "$PKG/tests" -v
 if [[ "${1:-}" == "--e2e" ]]; then
-    "$PKG/rbnx-build/venv/bin/python" "$PKG/tests/e2e_atlas.py"
+    "$PKG/rbnx-build/venv/bin/python" "$PKG/tests/e2e_src.py"
     "$PKG/rbnx-build/venv/bin/python" "$PKG/tests/e2e_observations.py"
     "$PKG/rbnx-build/venv/bin/python" "$PKG/tests/e2e_production.py"
 elif [[ "${1:-}" == "--production-e2e" ]]; then

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """g1_chassis — Unitree G1 chassis provider (SDK daemon + ROS2 adapter).
 
-Starts the G1 SDK daemon and ROS2 adapter node, then registers with atlas
+Starts the G1 SDK daemon and ROS2 adapter node, then registers with src
 as a primitive offering chassis/driver, twist_in and odom capabilities.
 """
 from __future__ import annotations
@@ -11,7 +11,6 @@ import math
 import os
 import signal
 import subprocess
-import time
 from pathlib import Path
 
 from robonix_api import Deferred, Err, Ok, Primitive
@@ -208,17 +207,6 @@ def initialize(config):
         _stop_processes()
         return Err(f"failed to start G1 SDK daemon: {error}")
 
-    # Wait for daemon to bind the socket (up to 3s)
-    deadline = time.monotonic() + 3.0
-    while time.monotonic() < deadline:
-        if os.path.exists(socket_path):
-            break
-        time.sleep(0.1)
-
-    if not os.path.exists(socket_path):
-        _stop_processes()
-        return Err("g1_loco_daemon did not create socket within 3s")
-
     if _processes[0].poll() is not None:
         code = _processes[0].returncode
         _stop_processes()
@@ -250,10 +238,13 @@ def initialize(config):
         return Err(f"wait_for_topic failed: {error}")
 
     if not odom_available:
-        code = _processes[-1].poll()
+        daemon_code = _processes[0].poll()
+        adapter_code = _processes[-1].poll()
         _stop_processes()
-        if code is not None:
-            return Err(f"adapter exited during startup with code {code}")
+        if daemon_code is not None:
+            return Err(f"g1_loco_daemon exited during startup with code {daemon_code}; see sdk-daemon.log")
+        if adapter_code is not None:
+            return Err(f"adapter exited during startup with code {adapter_code}; see adapter.log")
         return Deferred("No real G1 odometry received within 10s; check SDK state and adapter diagnostics")
 
     # Check adapter didn't crash
@@ -262,7 +253,7 @@ def initialize(config):
         _stop_processes()
         return Err(f"adapter exited with code {code}")
 
-    # Declare ROS2 topic capabilities with atlas.
+    # Declare ROS2 topic capabilities with src.
     # The *driver capability is auto-declared by _do_bootstrap() with
     # Transport.GRPC — no manual declaration needed here.
     try:

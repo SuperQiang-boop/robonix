@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: Apache-2.0
 # Build phase: colcon-build the vendored realsense2_camera, then
-# rbnx codegen so atlas_bridge can import atlas_pb2 + lifecycle_pb2.
+# rbnx codegen so src_bridge can import src_pb2 + lifecycle_pb2.
 #
 # Vendored under src/realsense-ros — IntelRealSense/realsense-ros at the
 # version that built cleanly on the Jetson (we hit no upstream issues
@@ -9,7 +9,7 @@
 # alongside src/ documenting the diff).
 #
 # Output goes into rbnx-build/{ws/install,codegen}/. start.sh sources
-# rbnx-build/ws/install/setup.bash before launching atlas_bridge.
+# rbnx-build/ws/install/setup.bash before launching src_bridge.
 set -euo pipefail
 PKG="${RBNX_PACKAGE_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
 cd "$PKG"
@@ -30,19 +30,23 @@ set +u; source "/opt/ros/${ROS_DISTRO}/setup.bash"; set -u
 echo "[realsense_camera/build] colcon build (realsense2_camera + msgs)"
 cd "$PKG/rbnx-build/ws"
 # Skip examples; they need rclcpp_components_register_node we don't care about.
-colcon build --symlink-install \
+/usr/bin/python3 -m colcon build \
     --packages-skip realsense2_description \
-    --cmake-args -DBUILD_TESTING=OFF -DCMAKE_BUILD_TYPE=Release
+    --cmake-args -DBUILD_TESTING=OFF -DCMAKE_BUILD_TYPE=Release \
+    -DAMENT_CMAKE_SYMLINK_INSTALL=OFF \
+    -DPython3_EXECUTABLE=/usr/bin/python3 -DPYTHON_EXECUTABLE=/usr/bin/python3
 cd "$PKG"
 
 FLAGS=(--mcp --ros2 --out-dir "$PKG/rbnx-build/codegen")
 [[ "$CLEAN" == "1" ]] && FLAGS+=(--clean)
 echo "[realsense_camera/build] rbnx codegen ${FLAGS[*]}"
-rbnx codegen -p "$PKG" "${FLAGS[@]}"
+rbnx codegen -p "$PKG" "${FLAGS[@]}" --python /usr/bin/python3
 
 ROS2_IDL="$PKG/rbnx-build/codegen/ros2_idl"
 echo "[realsense_camera/build] colcon build (Robonix ROS 2 interfaces)"
-(cd "$ROS2_IDL" && colcon build)
+(cd "$ROS2_IDL" && /usr/bin/python3 -m colcon build \
+    --cmake-args -DPython3_EXECUTABLE=/usr/bin/python3 \
+    -DPYTHON_EXECUTABLE=/usr/bin/python3)
 
 touch "$PKG/rbnx-build/.rbnx-built"
 echo "[realsense_camera/build] done."

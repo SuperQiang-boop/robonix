@@ -12,7 +12,7 @@ coordinates must treat a change in EITHER (map_id, generation) as
 "previously stored coordinates are no longer anchored": reset_map keeps
 map_id but moves the map origin, which only generation makes visible.
 
-Bump rules (who calls what is wired in atlas_bridge.init + map_ops):
+Bump rules (who calls what is wired in src_bridge.init + map_ops):
   - init/load in mapping mode      → bump   (origin re-derived per session)
   - init/load in localization mode → NO bump (stable frame — the whole point)
   - reset_map                      → bump   (origin moves to current pose)

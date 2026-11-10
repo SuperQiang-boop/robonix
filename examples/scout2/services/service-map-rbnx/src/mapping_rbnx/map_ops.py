@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MulanPSL-2.0
 """Runtime map-management operations for the mapping service.
 
-Backs three RPC+MCP capabilities (declared in atlas_bridge):
+Backs three RPC+MCP capabilities (declared in src_bridge):
   - save_map      snapshot the live SLAM map to disk under a map_id
   - load_map      switch rtabmap onto a saved map (localization / mapping)
   - pose_estimate seed a pose so rtabmap's localization re-converges
@@ -14,7 +14,7 @@ load_map strategy (per design): try rtabmap's runtime services FIRST
 (`/rtabmap/load_database` + `/set_mode_localization|mapping`); only if those
 are unavailable does the caller fall back to a process restart. Each impl
 returns a plain dict whose keys match the contract's response fields, so the
-gRPC servicer and the MCP handler in atlas_bridge can share one code path.
+gRPC servicer and the MCP handler in src_bridge can share one code path.
 """
 from __future__ import annotations
 
@@ -639,7 +639,7 @@ _current_mode: str = ""
 
 
 def set_current_mode(mode: str) -> None:
-    """Record the SLAM mode now in effect. Called by atlas_bridge.init with the
+    """Record the SLAM mode now in effect. Called by src_bridge.init with the
     startup map_mode and by switch_mode_impl / load_map_impl on success."""
     global _current_mode
     if mode:

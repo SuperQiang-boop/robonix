@@ -19,11 +19,11 @@ First stable release of Robonix, an operating system for embodied artificial int
 - **Capability Contracts and Code Generation:** Add dexterous-hand primitive contracts. [#119](https://github.com/syswonder/robonix/pull/119)
 - **Capability Contracts and Code Generation:** Add quadruped primitive contracts. [#154](https://github.com/syswonder/robonix/pull/154)
 - **Python API (robonix-api):** Publish the robonix-api Python library for building capability providers on PyPI. [#43](https://github.com/syswonder/robonix/pull/43)
-- **Atlas:** Add capability registration. [#27](https://github.com/syswonder/robonix/pull/27)
-- **Atlas:** Add capability discovery. [#27](https://github.com/syswonder/robonix/pull/27)
-- **Atlas:** Add capability lifecycle management. [#31](https://github.com/syswonder/robonix/pull/31)
-- **Atlas:** Add package deployment integration. [#27](https://github.com/syswonder/robonix/pull/27)
-- **Atlas:** Allow advisory provider namespaces for heterogeneous deployments. [#141](https://github.com/syswonder/robonix/pull/141)
+- **Src:** Add capability registration. [#27](https://github.com/syswonder/robonix/pull/27)
+- **Src:** Add capability discovery. [#27](https://github.com/syswonder/robonix/pull/27)
+- **Src:** Add capability lifecycle management. [#31](https://github.com/syswonder/robonix/pull/31)
+- **Src:** Add package deployment integration. [#27](https://github.com/syswonder/robonix/pull/27)
+- **Src:** Allow advisory provider namespaces for heterogeneous deployments. [#141](https://github.com/syswonder/robonix/pull/141)
 - **Pilot:** Add RTDL planning. [#37](https://github.com/syswonder/robonix/pull/37)
 - **Pilot:** Add RTDL forest execution. [#92](https://github.com/syswonder/robonix/pull/92)
 - **Pilot:** Add live task graphs. [#92](https://github.com/syswonder/robonix/pull/92)
@@ -71,7 +71,7 @@ First stable release of Robonix, an operating system for embodied artificial int
 
 ### Changed
 
-- **Atlas:** Adopt the capability-provider contract model (`provider_id`/`provider_kind`, CapabilityProvider/Capability). [27e83d40](https://github.com/syswonder/robonix/commit/27e83d40ad9e616942ae0e482176a630bdc9a41a), [aa57440e](https://github.com/syswonder/robonix/commit/aa57440ee807297255909c3f88cd787aede05cf9)
+- **Src:** Adopt the capability-provider contract model (`provider_id`/`provider_kind`, CapabilityProvider/Capability). [27e83d40](https://github.com/syswonder/robonix/commit/27e83d40ad9e616942ae0e482176a630bdc9a41a), [aa57440e](https://github.com/syswonder/robonix/commit/aa57440ee807297255909c3f88cd787aede05cf9)
 - **Pilot:** Make planning state-aware. [#174](https://github.com/syswonder/robonix/pull/174)
 - **Pilot:** Reduce repeated static planning context. [#210](https://github.com/syswonder/robonix/pull/210)
 - **Navigation:** Drive simulated navigation with nav2 and expose an rviz goal relay. [2515f259](https://github.com/syswonder/robonix/commit/2515f259b83942853a076e270ed39b419b4bd38e), [6aff678d](https://github.com/syswonder/robonix/commit/6aff678d0068199f12b676864f1e77f4559e0d03)
@@ -80,7 +80,7 @@ First stable release of Robonix, an operating system for embodied artificial int
 
 ### Fixed
 
-- **Atlas:** Mint valid ROS 2 collision endpoints. [5b4ed3d3](https://github.com/syswonder/robonix/commit/5b4ed3d31e128ffc4368d9aa1df351bf1d1218ef)
+- **Src:** Mint valid ROS 2 collision endpoints. [5b4ed3d3](https://github.com/syswonder/robonix/commit/5b4ed3d31e128ffc4368d9aa1df351bf1d1218ef)
 - **Pilot:** Improve RTDL control reliability. [#174](https://github.com/syswonder/robonix/pull/174)
 - **Pilot:** Retain dispatched RTDL plans across replans. [583d1e0b](https://github.com/syswonder/robonix/commit/583d1e0bc37f3bd5d65c892479d8e1f59241f340)
 - **Pilot:** Keep the URDF out of the system prompt. [af7f2281](https://github.com/syswonder/robonix/commit/af7f22812ffab8dd6e621ffc5760389b78242081)

@@ -83,6 +83,7 @@ offline checks that do not create ROS nodes or contact the robot.
 ### IPC Protocol
 
 - **Socket**: Same-user Unix `SOCK_SEQPACKET`, path set by `G1_IPC_SOCKET`.
+- **Startup**: The adapter retries missing, refused, or temporarily busy sockets with fresh descriptors for at most 3 s. A leftover path is not treated as readiness. Only the adapter's actual controller connection is opened; there is no connect/disconnect readiness probe and no automatic reconnect after a successful connection. The provider still requires measured odometry before declaring contracts, and cleans up both processes on startup failure.
 - **Command packet** (24 bytes): type + sequence + vx/vy/omega int32 (fixed-point ×10000) + 10 reserved bytes.
 - **Reply packet** (16 bytes): type + sequence + code + 9 reserved bytes + armed + faulted + 2 reserved bytes.
 - **State packet** (76 bytes, version 1): type/version/reserved, error code, sequence, local wall/monotonic reception times, position, quaternion wxyz, raw velocity and yaw rate. SDK types never cross into the ROS adapter's linkage.
@@ -96,11 +97,14 @@ bash scripts/build.sh
 
 ### Offline and ROS smoke tests
 
-With ROS sourced, run this in an isolated ROS domain. It uses a fake IPC peer and does not start the SDK daemon. It checks all movable joints against the deployment URDF and verifies every link has a transform to `base_link`.
+With ROS sourced, run this in an isolated ROS domain. It uses a fake IPC peer and does not start the SDK daemon. The odometry smoke test replaces a stale socket after a delayed listen, then verifies measured output and safety guards. The TF smoke test checks all movable joints against the deployment URDF and verifies every link has a transform to `base_link`. Offline C++ tests also cover missing and stale socket deadlines, descriptor flags, single-controller connection, and invalid paths or socket types.
 Use `/usr/bin/python3` for the Humble Python ABI. If the shell's configured RMW
 is unavailable, explicitly select an installed one such as `rmw_fastrtps_cpp`.
 
 ```bash
+cmake -S . -B rbnx-build/offline
+cmake --build rbnx-build/offline --parallel
+ctest --test-dir rbnx-build/offline --output-on-failure
 /usr/bin/python3 tests/deployment_test.py
 ROS_DOMAIN_ID=217 ROS_LOCALHOST_ONLY=1 /usr/bin/python3 tests/odometry_smoke.py \
   rbnx-build/ros/install/lib/g1_chassis_adapter/g1_chassis_adapter_node

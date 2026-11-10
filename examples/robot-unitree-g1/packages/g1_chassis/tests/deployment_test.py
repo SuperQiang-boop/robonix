@@ -34,6 +34,12 @@ class DeploymentTest(unittest.TestCase):
         with patch.dict(sys.modules, {"robonix_api": api}):
             self.provider = load_module("g1_test_provider", ROOT / "packages/g1_chassis/g1_chassis/main.py")
 
+    def test_chassis_config_matches_provider(self):
+        """Validate the deployed chassis configuration without starting its Driver."""
+        config = self.configs["g1_chassis"]
+        self.assertEqual(config["odom_source"], "sdk_pose")
+        self.provider._validate_config(config)
+
     def test_external_odometry_is_explicitly_selected(self):
         """Verify mapping cannot accidentally fall back to its internal ICP odometry."""
         mapping = self.configs["mapping"]
@@ -154,7 +160,6 @@ class DeploymentTest(unittest.TestCase):
         with patch.dict("os.environ", {"G1_ALLOW_MOTION": "false", "G1_IPC_SOCKET": "/tmp/g1-test.sock"}), \
                 patch.object(self.provider, "_is_executable", return_value=True), \
                 patch.object(self.provider.os, "makedirs"), \
-                patch.object(self.provider.os.path, "exists", return_value=True), \
                 patch.object(self.provider, "_stop_processes", side_effect=self.provider._processes.clear) as stop, \
                 patch.object(self.provider.g1_chassis, "spawn", side_effect=[daemon, OSError("adapter missing")], create=True):
             result = self.provider.initialize({"network_interface": "lo"})
@@ -168,7 +173,6 @@ class DeploymentTest(unittest.TestCase):
         with patch.dict("os.environ", {"G1_ALLOW_MOTION": "false", "G1_IPC_SOCKET": "/tmp/g1-test.sock"}), \
                 patch.object(self.provider, "_is_executable", return_value=True), \
                 patch.object(self.provider.os, "makedirs"), \
-                patch.object(self.provider.os.path, "exists", return_value=True), \
                 patch.object(self.provider, "_stop_processes", side_effect=self.provider._processes.clear), \
                 patch.object(self.provider.g1_chassis, "spawn", return_value=process, create=True), \
                 patch.object(self.provider.g1_chassis, "wait_for_topic", return_value=False, create=True), \
@@ -176,6 +180,40 @@ class DeploymentTest(unittest.TestCase):
             result = self.provider.initialize({"network_interface": "lo"})
         self.assertIn("No real G1 odometry", result[0])
         declare.assert_not_called()
+        self.assertFalse(self.provider._processes)
+
+    def test_daemon_exit_reports_cause_and_cleans_up_adapter(self):
+        """An SDK startup failure must identify the daemon, not report missing odometry."""
+        daemon = SimpleNamespace(poll=unittest.mock.Mock(side_effect=[None, 2]))
+        adapter = SimpleNamespace(poll=lambda: None)
+        with patch.dict("os.environ", {"G1_ALLOW_MOTION": "false", "G1_IPC_SOCKET": "/tmp/g1-test.sock"}), \
+                patch.object(self.provider, "_is_executable", return_value=True), \
+                patch.object(self.provider.os, "makedirs"), \
+                patch.object(self.provider, "_stop_processes", side_effect=self.provider._processes.clear) as stop, \
+                patch.object(self.provider.g1_chassis, "spawn", side_effect=[daemon, adapter], create=True), \
+                patch.object(self.provider.g1_chassis, "wait_for_topic", return_value=False, create=True), \
+                patch.object(self.provider.g1_chassis, "declare_ros2_topic", create=True) as declare:
+            result = self.provider.initialize({"network_interface": "lo"})
+        self.assertIn("g1_loco_daemon exited during startup with code 2", result[0])
+        declare.assert_not_called()
+        self.assertEqual(stop.call_count, 2)
+        self.assertFalse(self.provider._processes)
+
+    def test_adapter_connection_timeout_cleans_up_daemon(self):
+        """A bounded adapter connection failure must not leave the SDK daemon running."""
+        daemon = SimpleNamespace(poll=lambda: None)
+        adapter = SimpleNamespace(poll=lambda: 1)
+        with patch.dict("os.environ", {"G1_ALLOW_MOTION": "false", "G1_IPC_SOCKET": "/tmp/g1-test.sock"}), \
+                patch.object(self.provider, "_is_executable", return_value=True), \
+                patch.object(self.provider.os, "makedirs"), \
+                patch.object(self.provider, "_stop_processes", side_effect=self.provider._processes.clear) as stop, \
+                patch.object(self.provider.g1_chassis, "spawn", side_effect=[daemon, adapter], create=True), \
+                patch.object(self.provider.g1_chassis, "wait_for_topic", return_value=False, create=True), \
+                patch.object(self.provider.g1_chassis, "declare_ros2_topic", create=True) as declare:
+            result = self.provider.initialize({"network_interface": "lo"})
+        self.assertIn("adapter exited during startup with code 1; see adapter.log", result[0])
+        declare.assert_not_called()
+        self.assertEqual(stop.call_count, 2)
         self.assertFalse(self.provider._processes)
 
 

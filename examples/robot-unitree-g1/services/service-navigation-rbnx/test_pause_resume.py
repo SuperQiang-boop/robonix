@@ -22,7 +22,7 @@ class PauseResumeTest(unittest.TestCase):
                     '_observe_chassis_health', '_chassis_health_error', '_navigate_impl',
                     '_quat_to_yaw', '_dispatch_goal'}
         selected.add('_greeting_motion_error')
-        tree = ast.parse((Path(__file__).parent / 'nav2_wrapper/atlas_bridge.py').read_text())
+        tree = ast.parse((Path(__file__).parent / 'nav2_wrapper/src_bridge.py').read_text())
         module = ast.Module(body=[n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in selected], type_ignores=[])
         environment = patch.dict(os.environ, {'ROBONIX_GREETING_STATE_PATH': ''})
         environment.start()

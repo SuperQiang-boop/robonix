@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MulanPSL-2.0
 # In-container SLAM engine launcher. Picks the algo from MAPPING_ALGO
-# (set by atlas_bridge after parsing config) and execs the
+# (set by src_bridge after parsing config) and execs the
 # corresponding ros2 launch.
 #
 # Supported algos:
@@ -12,7 +12,7 @@
 #   dlio      — Direct LiDAR-Inertial Odometry (3D Livox; real robot)
 #   fastlio2  — [BROKEN: drift] kept for repro/debug only
 #
-# Pre-conditions: atlas_bridge has already written
+# Pre-conditions: src_bridge has already written
 # /tmp/<algo>_resolved.yaml with discovered topic names.
 set -eo pipefail
 
@@ -31,9 +31,9 @@ read_y() {
 case "$ALGO" in
     rtabmap)
         # Sensor inputs are deploy-driven. Every topic comes from
-        # /tmp/<algo>_resolved.yaml, written by atlas_bridge after it
+        # /tmp/<algo>_resolved.yaml, written by src_bridge after it
         # resolved the contracts enabled by `sensors.*` in the deploy
-        # manifest. Keys (see atlas_bridge:_SENSOR_CONTRACTS):
+        # manifest. Keys (see src_bridge:_SENSOR_CONTRACTS):
         #   scan_topic       ← robonix/primitive/lidar/lidar    (lidar2d)
         #   lidar_topic      ← robonix/primitive/lidar/lidar3d  (lidar3d)
         #   odom_topic       ← robonix/primitive/chassis/odom
@@ -57,7 +57,7 @@ case "$ALGO" in
         DEPTH_TOPIC="${DEPTH_TOPIC:-<none>}"
         IMU_TOPIC="${IMU_TOPIC:-<none>}"
         DESKEW_LIDAR="${DESKEW_LIDAR:-false}"
-        # tf + time-source from atlas_bridge's resolved.yaml (cfg-driven
+        # tf + time-source from src_bridge's resolved.yaml (cfg-driven
         # in the deploy manifest); fall back to legacy env / defaults.
         # Real-robot bring-ups without a chassis TF override base_frame
         # to the lidar's own frame so rtabmap doesn't block on base_link.
@@ -81,7 +81,7 @@ case "$ALGO" in
             echo "[mapping] no DISPLAY; starting rtabmap without its UI" >&2
             ENABLE_VIZ=false
         fi
-        # Map persistence (atlas_bridge wrote these from the deploy's
+        # Map persistence (src_bridge wrote these from the deploy's
         # map_id / map_mode config). Empty database_path = ephemeral.
         DATABASE_PATH=$(read_y database_path)
         MAP_MODE=$(read_y map_mode)
