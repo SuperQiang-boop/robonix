@@ -1,0 +1,32 @@
+[package]
+name = "robonix-monitor"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Robonix Monitor: health monitoring — power state, component health, threshold alerts"
+
+[[bin]]
+name = "robonix-monitor"
+path = "src/main.rs"
+
+[dependencies]
+tokio.workspace = true
+tokio-stream = "0.1"
+tonic.workspace = true
+prost.workspace = true
+tonic-prost.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml.workspace = true
+log = "0.4"
+env_logger = "0.11"
+uuid.workspace = true
+robonix-src = { path = "../src" }
+
+[build-dependencies]
+robonix-codegen.workspace = true
+tonic-build.workspace = true
+tonic-prost-build.workspace = true
+protoc-bin-vendored.workspace = true

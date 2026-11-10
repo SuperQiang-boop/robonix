@@ -1,0 +1,16 @@
+# Monitor — health monitoring: power state, component health, threshold alerts.
+manifestVersion: 1
+
+package:
+  name: com.robonix.system.monitor
+  version: 0.1.0
+  vendor: robonix
+  description: Monitor — health monitoring and threshold alerts.
+  license: MulanPSL-2.0
+
+start: robonix-monitor --src ${ROBONIX_SRC_ENDPOINT:-127.0.0.1:50051} --listen ${ROBONIX_MONITOR_LISTEN:-0.0.0.0:50092} --log info
+
+capabilities:
+  - name: robonix/system/monitor/get
+  - name: robonix/system/monitor/stream
+  - name: robonix/system/monitor/modules/get

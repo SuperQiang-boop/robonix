@@ -1,0 +1,9 @@
+[contract]
+id      = "robonix/system/monitor/modules/get"
+version = "1"
+kind    = "service"
+idl     = "module_health/srv/GetModuleHealthSnapshot.srv"
+description = "Return the current aggregated module health snapshot from Monitor."
+
+[mode]
+type = "rpc"

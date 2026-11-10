@@ -1,0 +1,8 @@
+[contract]
+id      = "robonix/system/monitor/stream"
+version = "1"
+kind    = "service"
+idl     = "monitor/srv/StreamMonitor.srv"
+
+[mode]
+type = "rpc_server_stream"

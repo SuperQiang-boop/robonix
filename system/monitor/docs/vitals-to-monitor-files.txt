@@ -1,0 +1,84 @@
+# vitals -> monitor migration file map (2026-11-09)
+# move: original path, new path. update: content edited in place.
+# Backup trees, CHANGELOG, historical migration records and generated
+# build artifacts are intentionally excluded.
+
+move	system/vitals/Cargo.toml	system/monitor/Cargo.toml
+move	system/vitals/MODULE_HEALTH_DEMO.md	system/monitor/MODULE_HEALTH_DEMO.md
+move	system/vitals/VITALS_HEALTH_DEMO.md	system/monitor/MONITOR_HEALTH_DEMO.md
+move	system/vitals/README.md	system/monitor/README.md
+move	system/vitals/ROBOTDESC_MOCK_DEMO.md	system/monitor/ROBOTDESC_MOCK_DEMO.md
+move	system/vitals/build.rs	system/monitor/build.rs
+move	system/vitals/package_manifest.yaml	system/monitor/package_manifest.yaml
+move	system/vitals/scripts/koch_bridge.py	system/monitor/scripts/koch_bridge.py
+move	system/vitals/scripts/piper_bridge.py	system/monitor/scripts/piper_bridge.py
+move	system/vitals/src/config.rs	system/monitor/src/config.rs
+move	system/vitals/src/main.rs	system/monitor/src/main.rs
+move	system/vitals/src/mock_robotdesc.rs	system/monitor/src/mock_robotdesc.rs
+move	system/vitals/src/module_health.rs	system/monitor/src/module_health.rs
+move	system/vitals/src/module_health_poll.rs	system/monitor/src/module_health_poll.rs
+move	system/vitals/src/pb.rs	system/monitor/src/pb.rs
+move	system/vitals/src/robotdesc_ingest.rs	system/monitor/src/robotdesc_ingest.rs
+move	system/vitals/src/service.rs	system/monitor/src/service.rs
+move	system/vitals/src/subprocess.rs	system/monitor/src/subprocess.rs
+move	system/vitals/tests/fixtures/minimal.urdf	system/monitor/tests/fixtures/minimal.urdf
+move	system/vitals/tests/fixtures/robonix_manifest.yaml	system/monitor/tests/fixtures/robonix_manifest.yaml
+move	system/vitals/tests/fixtures/robotdesc.yaml	system/monitor/tests/fixtures/robotdesc.yaml
+move	system/vitals/thresholds/example_thresholds.yaml	system/monitor/thresholds/example_thresholds.yaml
+move	capabilities/lib/vitals/msg/BodyComponent.msg	capabilities/lib/monitor/msg/BodyComponent.msg
+move	capabilities/lib/vitals/msg/BodyHealth.msg	capabilities/lib/monitor/msg/BodyHealth.msg
+move	capabilities/lib/vitals/msg/ComponentHealth.msg	capabilities/lib/monitor/msg/ComponentHealth.msg
+move	capabilities/lib/vitals/msg/VitalsSnapshot.msg	capabilities/lib/monitor/msg/MonitorSnapshot.msg
+move	capabilities/lib/vitals/msg/PowerState.msg	capabilities/lib/monitor/msg/PowerState.msg
+move	capabilities/lib/vitals/srv/GetVitals.srv	capabilities/lib/monitor/srv/GetMonitor.srv
+move	capabilities/lib/vitals/srv/StreamVitals.srv	capabilities/lib/monitor/srv/StreamMonitor.srv
+move	capabilities/system/vitals/get.v1.toml	capabilities/system/monitor/get.v1.toml
+move	capabilities/system/vitals/modules/get.toml	capabilities/system/monitor/modules/get.toml
+move	capabilities/system/vitals/stream.v1.toml	capabilities/system/monitor/stream.v1.toml
+move	examples/piper_vitals/.gitignore	examples/piper_monitor/.gitignore
+move	examples/piper_vitals/MODEL_SOURCE.md	examples/piper_monitor/MODEL_SOURCE.md
+move	examples/piper_vitals/README.md	examples/piper_monitor/README.md
+move	examples/piper_vitals/health_demo.py	examples/piper_monitor/health_demo.py
+move	examples/piper_vitals/primitives/piper_health/.gitignore	examples/piper_monitor/primitives/piper_health/.gitignore
+move	examples/piper_vitals/primitives/piper_health/README.md	examples/piper_monitor/primitives/piper_health/README.md
+move	examples/piper_vitals/primitives/piper_health/package_manifest.yaml	examples/piper_monitor/primitives/piper_health/package_manifest.yaml
+move	examples/piper_vitals/primitives/piper_health/piper_health/__init__.py	examples/piper_monitor/primitives/piper_health/piper_health/__init__.py
+move	examples/piper_vitals/primitives/piper_health/piper_health/driver.py	examples/piper_monitor/primitives/piper_health/piper_health/driver.py
+move	examples/piper_vitals/primitives/piper_health/scripts/build.sh	examples/piper_monitor/primitives/piper_health/scripts/build.sh
+move	examples/piper_vitals/primitives/piper_health/scripts/start.sh	examples/piper_monitor/primitives/piper_health/scripts/start.sh
+move	examples/piper_vitals/primitives/piper_health/tests/test_driver.py	examples/piper_monitor/primitives/piper_health/tests/test_driver.py
+move	examples/piper_vitals/robonix_manifest.yaml	examples/piper_monitor/robonix_manifest.yaml
+move	examples/piper_vitals/robotdesc.yaml	examples/piper_monitor/robotdesc.yaml
+move	examples/piper_vitals/vendor_model.py	examples/piper_monitor/vendor_model.py
+
+update	Cargo.toml
+update	Cargo.lock
+update	Makefile
+update	README.md
+update	MAINTAINERS.md
+update	.github/CODEOWNERS
+update	.github/labeler.yml
+update	.github/labels.yml
+update	.github/workflows/issue-triage.yml
+update	.github/ISSUE_TEMPLATE/bug_report.md
+update	.github/ISSUE_TEMPLATE/feature_request.md
+update	tools/rbnx/README.md
+update	tools/rbnx/src/main.rs
+update	tools/rbnx/src/cmd/deploy.rs
+update	tools/rbnx/src/cmd/mod.rs
+update	tools/rbnx/src/cmd/run_package.rs
+update	system/src/README.md
+update	system/chronos/README.md
+update	system/sentinel/README.md
+update	system/robotdesc/README.md
+update	system/robotdesc/src/health.rs
+update	system/executor/src/main.rs
+update	examples/webots/README.md
+update	examples/webots/sim/README.md
+update	examples/webots/sim/stop.sh
+update	examples/webots/robonix_manifest.yaml
+update	examples/scout2/note.md
+update	examples/scout2/robonix_manifest.yaml
+update	examples/robot-agilex-ranger_mini_v3/README.md
+update	examples/robot-agilex-ranger_mini_v3/robonix_manifest.yaml
+update	examples/robot-agilex-ranger_mini_v3/robonix_manifest.no-arm.yaml
