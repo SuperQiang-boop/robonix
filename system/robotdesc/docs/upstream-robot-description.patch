@@ -1,0 +1,117 @@
+diff --git a/README.md b/README.md
+index 4e0d240..d564206 100644
+--- a/README.md
++++ b/README.md
+@@ -1,7 +1,7 @@
+ # Robot Description primitive
+ 
+-This primitive publishes the robot body model managed by Soma through ROS 2
+-`robot_state_publisher`. Soma's `robonix/system/soma/get_urdf` gRPC API is the
++This primitive publishes the robot body model managed by Robotdesc through ROS 2
++`robot_state_publisher`. Robotdesc's `robonix/system/robotdesc/get_urdf` gRPC API is the
+ only URDF input. The package has no URDF path, model file, or per-deployment
+ body configuration of its own.
+ 
+@@ -16,6 +16,5 @@ ROS 2 consumers use the resulting TF tree directly.
+ 
+ Both modes default to `RMW_IMPLEMENTATION=rmw_zenoh_cpp` and use the deployment's
+ existing `ROBONIX_ZENOH_ROUTER`, `ROBONIX_ZENOH_MODE`, and
+-`ROBONIX_ZENOH_LISTEN` settings. Soma supplies `ROBONIX_SOMA_ENDPOINT` to every
++`ROBONIX_ZENOH_LISTEN` settings. Robotdesc supplies `ROBONIX_ROBOTDESC_ENDPOINT` to every
+ primitive it launches; operators do not configure this package separately.
+-
+diff --git a/package_manifest.native.yaml b/package_manifest.native.yaml
+index 6cac4c8..7926468 100644
+--- a/package_manifest.native.yaml
++++ b/package_manifest.native.yaml
+@@ -3,7 +3,7 @@ manifestVersion: 1
+ package:
+   name: robonix.primitive.robot_description
+   version: 0.1.0
+-  description: Publishes the Soma-owned URDF as the standard ROS 2 robot TF tree.
++  description: Publishes the Robotdesc-owned URDF as the standard ROS 2 robot TF tree.
+   tags: [primitive, robot-description, urdf, tf, ros2, zenoh, native]
+   maintainers: [wheatfox <wheatfox17@icloud.com>]
+   license: MulanPSL-2.0
+@@ -15,4 +15,3 @@ stop: bash scripts/stop.sh
+ capabilities:
+   - name: robonix/primitive/robot_description/driver
+     transport: grpc
+-
+diff --git a/package_manifest.yaml b/package_manifest.yaml
+index e7bd06a..3fdef65 100644
+--- a/package_manifest.yaml
++++ b/package_manifest.yaml
+@@ -3,7 +3,7 @@ manifestVersion: 1
+ package:
+   name: robonix.primitive.robot_description
+   version: 0.1.0
+-  description: Publishes the Soma-owned URDF as the standard ROS 2 robot TF tree.
++  description: Publishes the Robotdesc-owned URDF as the standard ROS 2 robot TF tree.
+   tags: [primitive, robot-description, urdf, tf, ros2, zenoh]
+   maintainers: [wheatfox <wheatfox17@icloud.com>]
+   license: MulanPSL-2.0
+@@ -15,4 +15,3 @@ stop: bash scripts/stop.sh
+ capabilities:
+   - name: robonix/primitive/robot_description/driver
+     transport: grpc
+-
+diff --git a/robot_description/__init__.py b/robot_description/__init__.py
+index 4b674d5..b253913 100644
+--- a/robot_description/__init__.py
++++ b/robot_description/__init__.py
+@@ -1,2 +1 @@
+-"""Soma-backed ROS 2 robot-description primitive."""
+-
++"""Robotdesc-backed ROS 2 robot-description primitive."""
+diff --git a/robot_description/main.py b/robot_description/main.py
+index 21f0452..b9da896 100644
+--- a/robot_description/main.py
++++ b/robot_description/main.py
+@@ -8,7 +8,7 @@ from pathlib import Path
+ 
+ import grpc
+ import robonix_contracts_pb2_grpc as contracts_grpc
+-import soma_pb2
++import robotdesc_pb2
+ from robonix_api import Err, Ok, Primitive
+ 
+ from .runtime import command_for, inspect_urdf, stop_process, write_params
+@@ -24,18 +24,18 @@ _process: subprocess.Popen[bytes] | None = None
+ 
+ 
+ def _fetch_urdf() -> tuple[str, str]:
+-    endpoint = os.environ.get("ROBONIX_SOMA_ENDPOINT", "").strip()
++    endpoint = os.environ.get("ROBONIX_ROBOTDESC_ENDPOINT", "").strip()
+     if not endpoint:
+-        raise RuntimeError("ROBONIX_SOMA_ENDPOINT was not supplied by Soma")
++        raise RuntimeError("ROBONIX_ROBOTDESC_ENDPOINT was not supplied by Robotdesc")
+     channel = grpc.insecure_channel(endpoint)
+     grpc.channel_ready_future(channel).result(timeout=10)
+     try:
+-        stub = contracts_grpc.RobonixSystemSomaGetUrdfStub(channel)
+-        response = stub.GetUrdf(soma_pb2.GetUrdf_Request(robot_id=""), timeout=10)
++        stub = contracts_grpc.RobonixSystemRobotdescGetUrdfStub(channel)
++        response = stub.GetUrdf(robotdesc_pb2.GetUrdf_Request(robot_id=""), timeout=10)
+     finally:
+         channel.close()
+     if not response.urdf_xml.strip():
+-        raise RuntimeError("Soma returned an empty URDF")
++        raise RuntimeError("Robotdesc returned an empty URDF")
+     return response.robot_id, response.urdf_xml
+ 
+ 
+@@ -52,7 +52,7 @@ def init(_cfg: dict):
+         mode = os.environ.get("ROBONIX_ROBOT_DESCRIPTION_MODE", "docker").strip().lower()
+         command = command_for(mode, params_path, CONTAINER_NAME)
+         log.info(
+-            "Soma robot=%s root=%s links=%d joints=%d mode=%s rmw=%s",
++            "Robotdesc robot=%s root=%s links=%d joints=%d mode=%s rmw=%s",
+             robot_id,
+             root_link,
+             links,
+@@ -83,4 +83,3 @@ def shutdown():
+ if __name__ == "__main__":
+     os.environ.setdefault("RMW_IMPLEMENTATION", "rmw_zenoh_cpp")
+     cap.run()
+-

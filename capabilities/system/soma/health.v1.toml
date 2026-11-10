@@ -1,8 +1,0 @@
-[contract]
-id      = "robonix/system/soma/health"
-version = "1"
-kind    = "service"
-idl     = "soma/srv/StreamHealth.srv"
-
-[mode]
-type = "rpc_server_stream"

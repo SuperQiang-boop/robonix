@@ -1,0 +1,9 @@
+# Return raw Robotdesc YAML for Planner prompt construction.
+[contract]
+id      = "robonix/system/robotdesc/get_yaml"
+version = "1"
+kind    = "service"
+idl     = "robotdesc/srv/GetYaml.srv"
+
+[mode]
+type = "rpc"

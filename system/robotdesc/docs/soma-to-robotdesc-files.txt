@@ -1,0 +1,230 @@
+# Soma → Robotdesc 迁移文件清单
+
+本清单记录本轮 `soma` → `robotdesc` 的路径迁移和内容更新。路径均相对
+`/data/robonix`；工作树中 Atlas→Src、Pilot→Planner、Liaison→Gateway、
+Scene→World 等已有修改保持不动，清单不把它们回滚或拆分。
+
+## 路径迁移
+
+- `capabilities/lib/soma/msg/ActuatorState.msg` → `capabilities/lib/robotdesc/msg/ActuatorState.msg`
+- `capabilities/lib/soma/msg/ComponentStatus.msg` → `capabilities/lib/robotdesc/msg/ComponentStatus.msg`
+- `capabilities/lib/soma/msg/FaultState.msg` → `capabilities/lib/robotdesc/msg/FaultState.msg`
+- `capabilities/lib/soma/msg/Metric.msg` → `capabilities/lib/robotdesc/msg/Metric.msg`
+- `capabilities/lib/soma/msg/PowerSourceState.msg` → `capabilities/lib/robotdesc/msg/PowerSourceState.msg`
+- `capabilities/lib/soma/msg/SafetyEndpointState.msg` → `capabilities/lib/robotdesc/msg/SafetyEndpointState.msg`
+- `capabilities/lib/soma/msg/SafetyState.msg` → `capabilities/lib/robotdesc/msg/SafetyState.msg`
+- `capabilities/lib/soma/msg/Scalar.msg` → `capabilities/lib/robotdesc/msg/Scalar.msg`
+- `capabilities/lib/soma/msg/SensorExtrinsic.msg` → `capabilities/lib/robotdesc/msg/SensorExtrinsic.msg`
+- `capabilities/lib/soma/msg/SomaHealthSnapshot.msg` → `capabilities/lib/robotdesc/msg/RobotdescHealthSnapshot.msg`
+- `capabilities/lib/soma/msg/UrdfAsset.msg` → `capabilities/lib/robotdesc/msg/UrdfAsset.msg`
+- `capabilities/lib/soma/srv/GetDescription.srv` → `capabilities/lib/robotdesc/srv/GetDescription.srv`
+- `capabilities/lib/soma/srv/GetFootprint.srv` → `capabilities/lib/robotdesc/srv/GetFootprint.srv`
+- `capabilities/lib/soma/srv/GetHealth.srv` → `capabilities/lib/robotdesc/srv/GetHealth.srv`
+- `capabilities/lib/soma/srv/GetSensorExtrinsics.srv` → `capabilities/lib/robotdesc/srv/GetSensorExtrinsics.srv`
+- `capabilities/lib/soma/srv/GetUrdf.srv` → `capabilities/lib/robotdesc/srv/GetUrdf.srv`
+- `capabilities/lib/soma/srv/GetYaml.srv` → `capabilities/lib/robotdesc/srv/GetYaml.srv`
+- `capabilities/lib/soma/srv/StreamHealth.srv` → `capabilities/lib/robotdesc/srv/StreamHealth.srv`
+- `capabilities/system/soma/description.v1.toml` → `capabilities/system/robotdesc/description.v1.toml`
+- `capabilities/system/soma/footprint.v1.toml` → `capabilities/system/robotdesc/footprint.v1.toml`
+- `capabilities/system/soma/get_health.v1.toml` → `capabilities/system/robotdesc/get_health.v1.toml`
+- `capabilities/system/soma/get_urdf.v1.toml` → `capabilities/system/robotdesc/get_urdf.v1.toml`
+- `capabilities/system/soma/get_yaml.v1.toml` → `capabilities/system/robotdesc/get_yaml.v1.toml`
+- `capabilities/system/soma/health.v1.toml` → `capabilities/system/robotdesc/health.v1.toml`
+- `capabilities/system/soma/sensor_extrinsics.v1.toml` → `capabilities/system/robotdesc/sensor_extrinsics.v1.toml`
+- `system/soma/Cargo.toml` → `system/robotdesc/Cargo.toml`
+- `system/soma/README.md` → `system/robotdesc/README.md`
+- `system/soma/build.rs` → `system/robotdesc/build.rs`
+- `system/soma/src/config.rs` → `system/robotdesc/src/config.rs`
+- `system/soma/src/deployment.rs` → `system/robotdesc/src/deployment.rs`
+- `system/soma/src/health.rs` → `system/robotdesc/src/health.rs`
+- `system/soma/src/launcher.rs` → `system/robotdesc/src/launcher.rs`
+- `system/soma/src/lib.rs` → `system/robotdesc/src/lib.rs`
+- `system/soma/src/main.rs` → `system/robotdesc/src/main.rs`
+- `system/soma/src/pb.rs` → `system/robotdesc/src/pb.rs`
+- `system/soma/src/report.rs` → `system/robotdesc/src/report.rs`
+- `system/soma/src/runtime_monitor.rs` → `system/robotdesc/src/runtime_monitor.rs`
+- `system/soma/src/runtime_ros.py` → `system/robotdesc/src/runtime_ros.py`
+- `system/soma/src/runtime_state.rs` → `system/robotdesc/src/runtime_state.rs`
+- `system/soma/src/service.rs` → `system/robotdesc/src/service.rs`
+- `system/soma/src/store.rs` → `system/robotdesc/src/store.rs`
+- `system/planner/src/soma_context.rs` → `system/planner/src/robotdesc_context.rs`
+- `system/vitals/src/soma_ingest.rs` → `system/vitals/src/robotdesc_ingest.rs`
+- `system/vitals/src/mock_soma.rs` → `system/vitals/src/mock_robotdesc.rs`
+- `system/vitals/SOMA_MOCK_DEMO.md` → `system/vitals/ROBOTDESC_MOCK_DEMO.md`
+- `system/vitals/tests/fixtures/soma.yaml` → `system/vitals/tests/fixtures/robotdesc.yaml`
+- `examples/piper_vitals/soma.yaml` → `examples/piper_vitals/robotdesc.yaml`
+- `examples/robot-agilex-ranger_mini_v3/soma.yaml` → `examples/robot-agilex-ranger_mini_v3/robotdesc.yaml`
+- `examples/robot-unitree-g1/soma.yaml` → `examples/robot-unitree-g1/robotdesc.yaml`
+- `examples/scout2/soma.yaml` → `examples/scout2/robotdesc.yaml`
+- `examples/test_ci/soma.yaml` → `examples/test_ci/robotdesc.yaml`
+- `examples/webots/soma.yaml` → `examples/webots/robotdesc.yaml`
+- `examples/webots/soma.full.yaml` → `examples/webots/robotdesc.full.yaml`
+
+## 内容更新目标
+
+以下文件逐项审计并将活跃组件身份、contract、调用方、配置、CLI、环境变量、
+日志和测试中的 `soma` 更新为 `robotdesc`；语义上属于其它领域的词不因机械替换而新增。
+
+- `.github/CODEOWNERS`
+- `.github/ISSUE_TEMPLATE/bug_report.md`
+- `.github/ISSUE_TEMPLATE/feature_request.md`
+- `.github/labeler.yml`
+- `.github/labels.yml`
+- `.github/workflows/issue-triage.yml`
+- `.github/workflows/testing.yml`
+- `Cargo.lock`
+- `Cargo.toml`
+- `MAINTAINERS.md`
+- `Makefile`
+- `README.md`
+- `capabilities/lib/robotdesc/msg/SensorExtrinsic.msg`
+- `capabilities/lib/robotdesc/msg/RobotdescHealthSnapshot.msg`
+- `capabilities/lib/robotdesc/srv/GetDescription.srv`
+- `capabilities/lib/robotdesc/srv/GetFootprint.srv`
+- `capabilities/lib/robotdesc/srv/GetHealth.srv`
+- `capabilities/lib/robotdesc/srv/GetSensorExtrinsics.srv`
+- `capabilities/lib/robotdesc/srv/GetUrdf.srv`
+- `capabilities/lib/robotdesc/srv/GetYaml.srv`
+- `capabilities/lib/robotdesc/srv/StreamHealth.srv`
+- `capabilities/system/robotdesc/description.v1.toml`
+- `capabilities/system/robotdesc/footprint.v1.toml`
+- `capabilities/system/robotdesc/get_health.v1.toml`
+- `capabilities/system/robotdesc/get_urdf.v1.toml`
+- `capabilities/system/robotdesc/get_yaml.v1.toml`
+- `capabilities/system/robotdesc/health.v1.toml`
+- `capabilities/system/robotdesc/sensor_extrinsics.v1.toml`
+- `examples/piper_vitals/MODEL_SOURCE.md`
+- `examples/piper_vitals/README.md`
+- `examples/piper_vitals/primitives/piper_health/README.md`
+- `examples/piper_vitals/primitives/piper_health/piper_health/driver.py`
+- `examples/piper_vitals/robonix_manifest.yaml`
+- `examples/piper_vitals/robotdesc.yaml`
+- `examples/piper_vitals/vendor_model.py`
+- `examples/robot-agilex-ranger_mini_v3/README.md`
+- `examples/robot-agilex-ranger_mini_v3/robonix_manifest.no-arm.yaml`
+- `examples/robot-agilex-ranger_mini_v3/robonix_manifest.yaml`
+- `examples/robot-agilex-ranger_mini_v3/robotdesc.yaml`
+- `examples/robot-agilex-ranger_mini_v3/skills/greet/CAPABILITY.md`
+- `examples/robot-agilex-ranger_mini_v3/skills/greet/greet_skill/body_state.py`
+- `examples/robot-agilex-ranger_mini_v3/skills/greet/greet_skill/src_bridge.py`
+- `examples/robot-agilex-ranger_mini_v3/skills/greet/test_src_bridge.py`
+- `examples/robot-agilex-ranger_mini_v3/urdf/ranger_mini.urdf`
+- `examples/robot-unitree-g1/README.md`
+- `examples/robot-unitree-g1/config/nav2_params_g1.yaml`
+- `examples/robot-unitree-g1/config/nav2_params_g1_python.yaml`
+- `examples/robot-unitree-g1/g1_description/g1_29dof copy.urdf`
+- `examples/robot-unitree-g1/primitives/primitive-livox-mid360-lidar-rbnx/mid360_driver/main.py`
+- `examples/robot-unitree-g1/robonix_manifest.yaml`
+- `examples/robot-unitree-g1/robotdesc.yaml`
+- `examples/robot-unitree-g1/services/service-map-rbnx/launch/rtabmap_2d.launch.py`
+- `examples/robot-unitree-g1/services/service-navigation-rbnx/config.spec`
+- `examples/robot-unitree-g1/services/service-navigation-rbnx/nav2_wrapper/src_bridge.py`
+- `examples/robot-unitree-g1/缺少组件安装.md`
+- `examples/scout2/note.md`
+- `examples/scout2/primitives/primitive-robot-description-rbnx/README.md`
+- `examples/scout2/primitives/primitive-robot-description-rbnx/package_manifest.native.yaml`
+- `examples/scout2/primitives/primitive-robot-description-rbnx/package_manifest.yaml`
+- `examples/scout2/primitives/primitive-robot-description-rbnx/robot_description/__init__.py`
+- `examples/scout2/primitives/primitive-robot-description-rbnx/robot_description/main.py`
+- `examples/scout2/primitives/scout2_camera/scripts/start.sh`
+- `examples/scout2/primitives/scout2_chassis/scripts/start.sh`
+- `examples/scout2/primitives/scout2_lidar/scripts/start.sh`
+- `examples/scout2/robonix_manifest.yaml`
+- `examples/scout2/robotdesc.yaml`
+- `examples/scout2/services/service-map-rbnx/launch/rtabmap_2d.launch.py`
+- `examples/scout2/services/service-navigation-rbnx/config.spec`
+- `examples/scout2/services/service-navigation-rbnx/nav2_wrapper/src_bridge.py`
+- `examples/test_ci/robotdesc.yaml`
+- `examples/webots/README.md`
+- `examples/webots/boot.sh`
+- `examples/webots/primitives/audio_client_bridge/scripts/build.sh`
+- `examples/webots/primitives/tiago_chassis/scripts/start.sh`
+- `examples/webots/primitives/tiago_health/README.md`
+- `examples/webots/primitives/tiago_health/scripts/start.sh`
+- `examples/webots/primitives/tiago_health/tests/test_driver.py`
+- `examples/webots/primitives/tiago_health/tiago_health/driver.py`
+- `examples/webots/robonix_manifest.yaml`
+- `examples/webots/robotdesc.full.yaml`
+- `examples/webots/robotdesc.yaml`
+- `examples/webots/sim/README.md`
+- `examples/webots/sim/ros_ws/src/eaios_webots/resource/TIAGO_VISUALS_SOURCES.md`
+- `examples/webots/sim/stop.sh`
+- `examples/webots/sim/vendor_tiago_visuals.py`
+- `system/planner/README.md`
+- `system/planner/src/main.rs`
+- `system/planner/src/planner.rs`
+- `system/planner/src/robotdesc_context.rs`
+- `system/planner/src/service.rs`
+- `system/robotdesc/Cargo.toml`
+- `system/robotdesc/README.md`
+- `system/robotdesc/build.rs`
+- `system/robotdesc/src/config.rs`
+- `system/robotdesc/src/deployment.rs`
+- `system/robotdesc/src/health.rs`
+- `system/robotdesc/src/launcher.rs`
+- `system/robotdesc/src/lib.rs`
+- `system/robotdesc/src/main.rs`
+- `system/robotdesc/src/pb.rs`
+- `system/robotdesc/src/report.rs`
+- `system/robotdesc/src/runtime_monitor.rs`
+- `system/robotdesc/src/runtime_ros.py`
+- `system/robotdesc/src/service.rs`
+- `system/robotdesc/src/store.rs`
+- `system/vitals/MODULE_HEALTH_DEMO.md`
+- `system/vitals/README.md`
+- `system/vitals/ROBOTDESC_MOCK_DEMO.md`
+- `system/vitals/VITALS_HEALTH_DEMO.md`
+- `system/vitals/scripts/koch_bridge.py`
+- `system/vitals/scripts/piper_bridge.py`
+- `system/vitals/src/config.rs`
+- `system/vitals/src/main.rs`
+- `system/vitals/src/mock_robotdesc.rs`
+- `system/vitals/src/robotdesc_ingest.rs`
+- `system/vitals/src/service.rs`
+- `system/vitals/src/subprocess.rs`
+- `system/vitals/tests/fixtures/robonix_manifest.yaml`
+- `system/world/README.md`
+- `system/world/docker/Dockerfile`
+- `system/world/package_manifest.yaml`
+- `system/world/tests/test_goal_planner.py`
+- `system/world/tests/test_robot_geometry.py`
+- `system/world/world_service/ingest/perception_concept_graphs.py`
+- `system/world/world_service/mcp_tools.py`
+- `system/world/world_service/robot_geometry.py`
+- `system/world/world_service/scene_graph/geometric_loop.py`
+- `system/world/world_service/service.py`
+- `system/world/world_service/web.py`
+- `testing/collect_diagnostic_context.py`
+- `testing/validate_lifecycle.py`
+- `tools/rbnx/README.md`
+- `tools/rbnx/src/cmd/deploy.rs`
+- `tools/rbnx/src/cmd/mod.rs`
+- `tools/rbnx/src/cmd/run_package.rs`
+- `tools/rbnx/src/launch.rs`
+- `tools/rbnx/src/manifest.rs`
+
+## 新增记录文件
+
+- `system/robotdesc/docs/soma-to-robotdesc-migration.md`
+- `system/robotdesc/docs/soma-to-robotdesc-files.txt`
+- `system/robotdesc/scripts/smoke_runtime.py`
+- `system/robotdesc/docs/upstream-robot-description.patch`
+- 根 `docs/soma-to-robotdesc-migration.md`（根 `docs/` 为子模块，是否被主仓库跟踪取决于子模块状态）
+
+## 上游缓存临时同步（不属于主仓库跟踪文件）
+
+以下源码属于独立 checkout，仍需单独提交/发布；缓存重建不会自动保留改动：
+
+- `examples/robot-unitree-g1/rbnx-boot/cache/primitive-robot-description-rbnx/package_manifest.yaml`
+- `examples/robot-unitree-g1/rbnx-boot/cache/primitive-robot-description-rbnx/package_manifest.native.yaml`
+- `examples/robot-unitree-g1/rbnx-boot/cache/primitive-robot-description-rbnx/README.md`
+- `examples/robot-unitree-g1/rbnx-boot/cache/primitive-robot-description-rbnx/robot_description/__init__.py`
+- `examples/robot-unitree-g1/rbnx-boot/cache/primitive-robot-description-rbnx/robot_description/main.py`
+
+该 checkout 的 `rbnx-build/` 通过 codegen 重生成，不手工维护。源码补丁在本组件 `docs/upstream-robot-description.patch` 中另存，不依赖缓存存活。
+
+## 排除项
+
+- `CHANGELOG.md` 中的历史发布记录不改。
+- `target/`、`rbnx-build/`、`rbnx-boot/`、缓存、备份文件和历史生成物不作为源码迁移输入。
+- 本轮不手工编辑 codegen 生成的 protobuf/gRPC 文件；通过源 IDL、contract 和 `cargo build`/`rbnx codegen` 重生成。

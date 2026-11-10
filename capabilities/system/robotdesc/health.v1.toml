@@ -1,0 +1,8 @@
+[contract]
+id      = "robonix/system/robotdesc/health"
+version = "1"
+kind    = "service"
+idl     = "robotdesc/srv/StreamHealth.srv"
+
+[mode]
+type = "rpc_server_stream"
