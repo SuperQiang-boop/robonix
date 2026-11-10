@@ -1,0 +1,10 @@
+# Gateway's text/API entry — submit a Task, stream PlannerEvent back.
+[contract]
+id      = "robonix/system/gateway/submit"
+version = "1"
+kind    = "service"
+idl     = "gateway/srv/SubmitTask.srv"
+description = "Submit a user task through Gateway and stream Planner events back."
+
+[mode]
+type = "rpc_server_stream"

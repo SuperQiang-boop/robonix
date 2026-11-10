@@ -1,0 +1,9 @@
+[contract]
+id = "robonix/system/gateway/handsfree/status"
+version = "1"
+kind = "service"
+idl = "gateway/srv/GetHandsfreeStatus.srv"
+description = "Read Gateway's robot-local wake-word interaction state."
+
+[mode]
+type = "rpc"

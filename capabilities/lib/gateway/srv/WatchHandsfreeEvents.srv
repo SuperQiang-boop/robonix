@@ -1,0 +1,4 @@
+# Subscribe to voice events emitted by Gateway's current robot-local
+# hands-free loop. This is observational; it does not own microphone input.
+---
+gateway/VoiceEvent event

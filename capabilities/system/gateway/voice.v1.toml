@@ -1,0 +1,11 @@
+# Gateway's voice push-to-talk entry — orchestrates mic → ASR → voiceprint
+# → Planner → optional TTS → speaker; client streams VoiceEvent back.
+[contract]
+id      = "robonix/system/gateway/voice"
+version = "1"
+kind    = "service"
+idl     = "gateway/srv/StartVoiceSession.srv"
+description = "Run a voice interaction session through Gateway."
+
+[mode]
+type = "rpc_server_stream"

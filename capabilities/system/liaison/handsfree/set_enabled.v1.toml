@@ -1,9 +1,0 @@
-[contract]
-id = "robonix/system/liaison/handsfree/set_enabled"
-version = "1"
-kind = "service"
-idl = "liaison/srv/SetHandsfree.srv"
-description = "Enable or disable Liaison's robot-local wake-word interaction mode."
-
-[mode]
-type = "rpc"

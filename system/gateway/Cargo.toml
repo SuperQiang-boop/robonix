@@ -1,0 +1,45 @@
+[package]
+name = "robonix-gateway"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Robonix Gateway: unified user-facing entry — text + voice → SystemPlanner stream"
+
+[lib]
+name = "robonix_gateway"
+path = "src/lib.rs"
+
+[[bin]]
+name = "robonix-gateway"
+path = "src/main.rs"
+
+[[example]]
+name = "mock_planner"
+path = "examples/mock_planner.rs"
+
+[[example]]
+name = "mock_audio"
+path = "examples/mock_audio.rs"
+
+[dependencies]
+tokio.workspace = true
+tokio-stream = "0.1"
+tonic.workspace = true
+tonic-prost.workspace = true
+prost.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+robonix-log.workspace = true
+uuid.workspace = true
+futures = "0.3"
+rmcp = { workspace = true, features = ["client", "transport-streamable-http-client-reqwest"] }
+whoami = "1.5"
+robonix-src = { path = "../src" }
+
+[build-dependencies]
+robonix-codegen.workspace = true
+tonic-build.workspace = true
+tonic-prost-build.workspace = true
+protoc-bin-vendored.workspace = true
