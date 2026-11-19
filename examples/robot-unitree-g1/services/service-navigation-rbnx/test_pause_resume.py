@@ -15,7 +15,7 @@ from unittest.mock import Mock, patch
 
 class PauseResumeTest(unittest.TestCase):
     def setUp(self):
-        """Load actual bridge functions with fake action transport and measured odometry."""
+        """Use production standard-library imports with fake action transport and odometry."""
         selected = {'_pause_impl', '_resume_impl', '_cancel_impl', '_resolve_run_id',
                     '_status_impl', '_stationary', '_observe_odom', '_result_cb',
                     '_canonical_state', '_goal_status_name', '_cancel_response_cb', '_observe_nav_status',
@@ -23,11 +23,16 @@ class PauseResumeTest(unittest.TestCase):
                     '_quat_to_yaw', '_dispatch_goal'}
         selected.add('_greeting_motion_error')
         tree = ast.parse((Path(__file__).parent / 'nav2_wrapper/atlas_bridge.py').read_text())
-        module = ast.Module(body=[n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in selected], type_ignores=[])
+        standard_modules = {'json', 'math', 'os', 'queue', 'threading', 'time', 'uuid', 'pathlib'}
+        dependencies = [n for n in tree.body if (
+            isinstance(n, ast.Import) and all(alias.name in standard_modules for alias in n.names)
+        ) or (isinstance(n, ast.ImportFrom) and n.module in standard_modules)]
+        functions = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in selected]
+        module = ast.Module(body=dependencies + functions, type_ignores=[])
         environment = patch.dict(os.environ, {'ROBONIX_GREETING_STATE_PATH': ''})
         environment.start()
         self.addCleanup(environment.stop)
-        self.n = dict(time=time, math=math, uuid=uuid, os=os, json=json, Path=Path, _state_lock=threading.Lock(),
+        self.n = dict(_state_lock=threading.Lock(),
             _chassis_health_required=False, _chassis_health_sample=None,
             _chassis_health_level=3, _chassis_faulted=False,
             _chassis_health_message='waiting', _ros_node=object(),

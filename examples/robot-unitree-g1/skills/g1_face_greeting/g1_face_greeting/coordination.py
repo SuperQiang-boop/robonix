@@ -20,6 +20,27 @@ EXECUTOR = "robonix/system/executor/list_active_plans"
 VOICE = "robonix/system/liaison/voice"
 
 
+def microphone_provider(runtime) -> str:
+    """Read the saved Audio input for each turn when client settings are shared.
+
+    Device selection belongs to the selected audio provider and is applied by
+    the client's Audio menu. A missing or invalid shared file must stop capture
+    rather than silently use a different microphone.
+    """
+    settings_path = os.environ.get("ROBONIX_CLIENT_SETTINGS", "").strip()
+    if not settings_path:
+        return runtime._settings.mic_provider_id
+    import yaml
+
+    path = Path(settings_path).expanduser()
+    settings = yaml.safe_load(path.read_text(encoding="utf-8"))
+    if not isinstance(settings, dict) or not isinstance(settings.get("micNodeId"), str):
+        raise ValueError(f"Audio settings must contain a string micNodeId: {path}")
+    provider_id = settings["micNodeId"].strip()
+    runtime.log.info("greeting microphone from Audio settings: provider=%r", provider_id)
+    return provider_id
+
+
 def enabled() -> bool:
     return bool(os.environ.get(STATE_ENV, "").strip())
 
@@ -107,7 +128,8 @@ def listen(runtime, facts: dict) -> bool:
     """Use Liaison's complete authenticated voice pipeline exactly once.
 
     Keep draining after admission: its stream includes the entire task, not just
-    ASR. A missing admission/empty-transcript result leaves movement inhibited.
+    ASR. Transport failures leave movement inhibited; empty transcripts return
+    False without submitting a task. Resolve the saved Audio input once per turn.
     """
     from liaison_pb2 import StartVoiceSession_Request
     from robonix_contracts_pb2_grpc import RobonixSystemLiaisonVoiceStub
@@ -120,10 +142,12 @@ def listen(runtime, facts: dict) -> bool:
         """Own the voice transport until its task stream finishes or fails."""
         connection = channel = None
         try:
+            mic_provider_id = microphone_provider(runtime)
             connection, channel = connect(runtime, VOICE)
             request = StartVoiceSession_Request(
                 session_id=facts["session_id"], record_seconds=15, language="zh-CN",
-                tts_enabled=True, mic_node_id="g1_audio", speaker_node_id="g1_audio",
+                tts_enabled=True, mic_node_id=mic_provider_id,
+                speaker_node_id=runtime._settings.speaker_provider_id,
                 context_json=json.dumps({"greeting_event_id": facts["event_id"]}))
             stream = RobonixSystemLiaisonVoiceStub(channel).StartVoiceSession(request)
             streams.append(stream)
@@ -166,7 +190,7 @@ def listen(runtime, facts: dict) -> bool:
 
 
 def greet(runtime, event: dict) -> dict:
-    """Stop, greet, listen, and hand completion to Pilot without resuming a goal."""
+    """Stop, greet, optionally listen, and hand completion back to Pilot."""
     if runtime._valid_level(event.get("intimacy_level", 1)) is None:
         return {"accepted": False, "detail": "invalid intimacy level"}
     person_id = int(event.get("person_id", -1))
@@ -212,7 +236,8 @@ def greet(runtime, event: dict) -> dict:
         try:
             release_confirmed = not runtime.ARM_GREETING_ENABLED
             started = time.monotonic()
-            result = runtime._greet_stationary({**event, "ask_for_task": True})
+            result = runtime._greet_stationary({
+                **event, "ask_for_task": runtime._settings.voice_enabled})
             runtime._wait_for_greeting(result, started)
         finally:
             if runtime.ARM_GREETING_ENABLED:
@@ -222,15 +247,20 @@ def greet(runtime, event: dict) -> dict:
         release_confirmed = True
         if runtime._stop.is_set() or not result.get("speech_ok"):
             raise RuntimeError("greeting speech or completion unconfirmed")
-        facts.update(listening=True, detail="greeting wait and arm release complete; listening for a request")
-        publish(facts)
         if stop_requested(facts):
             raise InterruptedError("greeting conversation canceled by Stop")
-        submitted = listen(runtime, facts)
+        if runtime._settings.voice_enabled:
+            facts.update(listening=True, detail="greeting wait and arm release complete; listening for a request")
+            publish(facts)
+            submitted = listen(runtime, facts)
+            detail = ("voice task submitted to the original session" if submitted
+                      else "no voice request; Pilot may continue the original task")
+        else:
+            detail = "voice capture disabled; greeting complete; frontend may submit a task in the original session"
         if runtime._stop.is_set():
             raise RuntimeError("skill stopped during conversation")
         facts.update(state="SUCCEEDED", active=False, movement_allowed=True, listening=False,
-                     detail="voice task submitted to the original session" if submitted else "no voice request; Pilot may continue the original task")
+                     detail=detail)
         publish(facts)
         result["detail"] += "; " + facts["detail"]
         return result

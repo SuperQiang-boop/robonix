@@ -75,9 +75,11 @@ robot:
     - provider_id: speech
       capabilities:
         - { path: robonix/service/speech/asr,
-            description: "Recognize Chinese speech from the selected client microphone." }
+            description: "Recognize supplied Chinese speech audio." }
+        - { path: robonix/service/speech/asr_stream,
+            description: "Recognize streaming Chinese speech from the selected microphone." }
         - { path: robonix/service/speech/speak,
-            description: "Synthesize Chinese speech to the selected client speaker." }
+            description: "Speak Chinese text through the G1 built-in speaker by default." }
     - provider_id: scene
       capabilities:
         - { path: robonix/system/scene/list_objects,
@@ -181,7 +183,20 @@ robot:
                 - { path: robonix/primitive/arm/pos_cmd,
                     description: "Command right arm joints via SDK2 high-level API." }
 
-        # ----- Audio I/O (client-side mic/speaker bridge) -----
+        # ----- G1 USB input and built-in speaker -----
+        - id: g1_audio
+          type: audio_io
+          exports:
+            - provider_id: g1_usb_audio
+              capabilities:
+                - { path: robonix/primitive/audio/mic,
+                    description: "Receive 16 kHz mono s16le PCM from the G1 USB microphone over Ethernet." }
+            - provider_id: g1_audio
+              capabilities:
+                - { path: robonix/primitive/audio/speaker,
+                    description: "Play 16 kHz mono s16le PCM on the G1 built-in speaker." }
+
+        # ----- Optional client-side mic/speaker bridge -----
         - id: client_audio
           type: audio_io
           exports:

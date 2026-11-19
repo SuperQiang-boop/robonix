@@ -124,7 +124,8 @@ The 0.70 m outer XY limit, 60 s deadline and rotation footprint checks remain
 active. The goal checker latches outer/deadline failures until a new goal.
 Replans preserve entry and budgets. These tolerances also apply to RViz goals.
 Legacy correction helpers/parameters remain in source but are not invoked by
-this terminal control path. Inflation radius remains 0.25 m. The velocity guard
+this terminal control path. Both G1 profiles use 0.10 m footprint padding and a
+0.40 m inflation radius in global and local costmaps. The velocity guard
 enters its terminal window at 0.60 m; the controller enforces the stricter
 0.70 m outer limit. Success details explain that feedback distance need not be
 zero and last_pose is the endpoint, not the starting pose.

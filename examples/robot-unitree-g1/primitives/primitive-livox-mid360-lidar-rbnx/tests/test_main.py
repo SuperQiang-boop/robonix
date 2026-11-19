@@ -48,6 +48,46 @@ def _load_driver():
 
 
 class InitLifecycleTests(unittest.TestCase):
+    def test_alignment_endpoint_is_advertised_only_after_readiness(self):
+        """Both consumers discover aligned output through the existing contract."""
+        driver = _load_driver()
+        config = {"gravity_alignment": {"enabled": True}}
+        with (
+            mock.patch.object(driver, "_spawn_livox"),
+            mock.patch.object(driver, "_spawn_stp"),
+            mock.patch.object(driver, "_spawn_alignment", return_value="/scanner/cloud_aligned"),
+            mock.patch.object(driver, "_wait_for_pointcloud", return_value=True) as wait,
+        ):
+            result = driver.init(config)
+        self.assertEqual(result[0], "ok")
+        self.assertEqual(wait.call_args_list, [mock.call("/scanner/cloud", 30.0),
+                                              mock.call("/scanner/cloud_aligned", 10.0)])
+        self.assertEqual(driver.cap.declared_topics[0][1]["topic"], "/scanner/cloud_aligned")
+
+    def test_failed_alignment_cleans_up_without_advertising_raw_fallback(self):
+        """Failure must be visible and leave no child driver or misleading endpoint."""
+        driver = _load_driver()
+        with (
+            mock.patch.object(driver, "_spawn_livox"),
+            mock.patch.object(driver, "_spawn_stp"),
+            mock.patch.object(driver, "_spawn_alignment", return_value="/scanner/cloud_aligned"),
+            mock.patch.object(driver, "_wait_for_pointcloud", side_effect=[True, False]),
+            mock.patch.object(driver, "_kill_alignment") as kill_alignment,
+            mock.patch.object(driver, "_kill_stp") as kill_stp,
+            mock.patch.object(driver, "_kill_livox") as kill_livox,
+        ):
+            result = driver.init({"gravity_alignment": {"enabled": True}})
+        self.assertEqual(result[0], "err")
+        self.assertEqual(driver.cap.declared_topics, [])
+        for kill in (kill_alignment, kill_stp, kill_livox):
+            kill.assert_called_once()
+
+    def test_alignment_is_disabled_by_default(self):
+        driver = _load_driver()
+        with mock.patch.object(driver.subprocess, "Popen") as popen:
+            self.assertEqual(driver._spawn_alignment({}, "/scanner/cloud"), "/scanner/cloud")
+        popen.assert_not_called()
+
     def test_default_transfer_format_is_ros2_pointcloud2(self):
         driver = _load_driver()
         proc = mock.Mock(pid=1234, stdout=io.BytesIO(b""))

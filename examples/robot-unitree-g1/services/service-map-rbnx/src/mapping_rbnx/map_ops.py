@@ -310,6 +310,44 @@ def _load_database(node, runtime_db: str, timeout_s: float) -> tuple[bool, str]:
     return (ok, "load_database completed" if ok else str(res))
 
 
+def _prepare_localization_load(node) -> tuple[bool, str]:
+    """Synchronize RTAB-Map's cached parameters before reopening a saved DB.
+
+    In RTAB-Map 0.23.x the mode service updates the engine and ROS parameter,
+    but LoadDatabase initializes from a separate parameter cache. Explicitly
+    refresh that cache rather than depending on asynchronous parameter events.
+    Load all saved nodes so the optimized graph and occupancy can be restored.
+    """
+    from rcl_interfaces.msg import Parameter, ParameterType, ParameterValue
+    from rcl_interfaces.srv import SetParameters
+    from std_srvs.srv import Empty
+
+    request = SetParameters.Request()
+    request.parameters = [
+        Parameter(name=name, value=ParameterValue(
+            type=ParameterType.PARAMETER_STRING, string_value=value))
+        for name, value in (
+            ("Mem/IncrementalMemory", "false"),
+            ("Mem/InitWMWithAllNodes", "true"),
+        )
+    ]
+    timeout_s = float(os.environ.get("MAPPING_SET_MODE_TIMEOUT_S", "60"))
+    ok, response = _call_service(
+        node, SetParameters, f"{RTABMAP_NS}/set_parameters", request, timeout_s=timeout_s
+    )
+    if not ok:
+        return False, f"setting localization parameters failed: {response}"
+    if len(response.results) != len(request.parameters):
+        return False, "incomplete localization parameter response"
+    for parameter, result in zip(request.parameters, response.results):
+        if not result.successful:
+            return False, f"localization parameter {parameter.name} rejected: {result.reason}"
+    ok, response = _call_service(
+        node, Empty, f"{RTABMAP_NS}/update_parameters", Empty.Request(), timeout_s=timeout_s
+    )
+    return ok, "localization parameters synchronized" if ok else str(response)
+
+
 def _occupancy_sample_ready(msg) -> tuple[bool, str]:
     """Return whether an occupancy sample is non-empty and structurally valid.
 
@@ -432,6 +470,10 @@ def load_map_impl(map_id: str, mode: str = "localization",
         # the load succeeds. Publish that before the database swap so a load
         # that fails half way cannot leave consumers reading the old mode.
         lifecycle.set_mode(mode)
+
+        prepared, prepare_detail = _prepare_localization_load(node)
+        if not prepared:
+            return {"ok": False, "detail": f"failed to prepare localization before load: {prepare_detail}"}
 
         load_timeout_s = float(os.environ.get("MAPPING_LOAD_DATABASE_TIMEOUT_S", "180"))
         log.info("load_map[%s] stage=load_database runtime_db=%s timeout=%.1fs",

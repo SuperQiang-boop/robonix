@@ -15,9 +15,9 @@ and lidar IP settings at initialization while preserving these extrinsics.
 
 The deployment publishes corrected points in `mid360_upright`, and corrected IMU
 in `livox_frame`. URDF retains the physical inverted `mid360_link`/`mid360_imu`
-frames and adds a 180-degree rotation to each corrected output frame. The physical mount additionally includes the 2026-09-14 stationary calibration
-(residual roll=-0.00248080, pitch=0.66736485 radians after driver rotation).
-Both outputs inherit this mount correction when transformed to the robot frame;
+frames and adds a 180-degree rotation to each corrected output frame. The current
+URDF leaves residual roll=-0.00248080 and pitch=0 radians after driver rotation.
+Both outputs inherit this nominal mount when transformed to the robot frame;
 the raw corrected sensor messages still express their own tilted axes.
 Changing the driver rotation requires updating these output-frame transforms too.
 The separate IMU primitive only registers `/livox/imu`; it needs no driver changes.
@@ -39,6 +39,49 @@ Validation: `/usr/bin/python3 -m unittest discover -s tests -v` and
 `bash tests/extrinsics_smoke.sh`. The latter feeds synthetic IMU and point packets
 to the actual driver code, checking rotation before the first point packet and
 independent rotations for two sensor handles.
+
+## Optional gravity alignment (G1)
+
+The G1 deployment enables `gravity_alignment` in this lidar primitive. Raw
+`/scanner/cloud` and `/livox/imu`, the URDF and existing TF edges stay available.
+Atlas advertises `/scanner/cloud_aligned` through the existing lidar3d capability,
+so RTAB-Map and Nav2 receive the same correction without consumer changes.
+The aligned cloud retains every original point byte, field and timestamp but uses
+`mid360_gravity_aligned`. Its new dynamic TF from `base_footprint` rotates about
+the nominal sensor origin using timestamp-matched IMU gravity. Use this TF with
+the cloud; inspecting XYZ bytes alone does not show the compensation.
+
+Requires system Python `numpy`, `scipy`, `rclpy`, `sensor_msgs`, `geometry_msgs`
+and `tf2_ros` (available in this G1 ROS environment). Start robot_description
+before the lidar primitive so the mount TF exists, and keep the robot still for
+at least one second at initialization. The IMU primitive can start later because
+the Livox driver itself already publishes its IMU. Gyro propagation follows fast
+tilt; a two-second accelerometer correction rejects magnitude errors over 8% and
+direction jumps over 5 degrees. Initial gyro bias is measured while stationary.
+This does not perform per-point deskew, estimate height, or identify arbitrary
+sustained linear acceleration; walking still requires hardware validation.
+
+IMU gaps over 0.1 s force stationary reinitialization. Clouds wait at most 0.25 s
+for bracketing IMU and TF; missing data is logged and dropped, with no raw fallback.
+Atlas is registered only after the first aligned cloud. The alignment startup
+wait is bounded to ten seconds (or a shorter raw sentinel timeout). Roll/pitch
+offsets in the G1 manifest are the empirical four-heading calibration from
+2026-11-09, applied
+to IMU vectors in nominal base axes (extrinsic X then Y), not physical mount angles.
+Set `gravity_alignment.enabled: false` and restart the deployment to restore raw
+cloud discovery. No C++ rebuild is required. Existing maps are not rewritten.
+
+Run `/usr/bin/python3 -m unittest discover -s tests -v`. For an isolated ROS
+process test, source `/opt/ros/humble/setup.bash`, unset
+`FASTRTPS_DEFAULT_PROFILES_FILE`, and run:
+
+```bash
+ROS_DOMAIN_ID=217 ROS_LOCALHOST_ONLY=1 RMW_IMPLEMENTATION=rmw_fastrtps_cpp \
+  /usr/bin/python3 tests/gravity_alignment_smoke.py
+```
+
+The smoke test publishes synthetic data only in that separate domain; it checks
+TF compensation, metadata preservation, real low obstacles, IMU loss and recovery.
 
 ---
 

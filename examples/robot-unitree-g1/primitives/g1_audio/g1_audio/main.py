@@ -435,9 +435,11 @@ def mic(request, context):
             "G1 microphone is already in use by another stream",
         )
     mic_socket = None
+    mic_enabled = False
     controller = _MIC_CONTROLLER or _VoiceController(_NETWORK_INTERFACE, _STARTUP_TIMEOUT_S)
     try:
         controller.set_mode(1)
+        mic_enabled = True
         mic_socket = _open_mic_socket()
         _MIC_SOCKETS.add(mic_socket)
         log.info(
@@ -484,6 +486,14 @@ def mic(request, context):
     finally:
         if mic_socket is not None:
             _close_mic_socket(mic_socket)
+        if mic_enabled:
+            # The robot keeps voice mode 1 (continuous streaming) until told
+            # otherwise; leaving it on wastes bandwidth and can block the
+            # robot's own voice assistant.
+            try:
+                controller.set_mode(2)
+            except Exception:  # noqa: BLE001
+                log.warning("failed to disable G1 voice mode", exc_info=True)
         _MIC_LOCK.release()
         log.info("G1 microphone stream stopped")
 

@@ -788,6 +788,37 @@ fn append_steer(
     true
 }
 
+/// Preserve consecutive steering context without carrying large tool results or
+/// images into the urgent control decision. Full history remains for planning.
+fn control_history(history: &[Message]) -> Vec<Message> {
+    let mut recent: Vec<_> = history
+        .iter()
+        .rev()
+        .filter(|message| {
+            matches!(message.role.as_str(), "user" | "assistant")
+                && message.image_base64.is_none()
+                && message.tool_calls.is_none()
+        })
+        .take(6)
+        .map(|message| {
+            let text: String = message
+                .content
+                .as_deref()
+                .unwrap_or_default()
+                .chars()
+                .take(1024)
+                .collect();
+            if message.role == "user" {
+                Message::user(&text)
+            } else {
+                Message::assistant(&text)
+            }
+        })
+        .collect();
+    recent.reverse();
+    recent
+}
+
 fn drain_steers(
     steer_rx: &mut mpsc::Receiver<Task>,
     history: &mut Vec<Message>,
@@ -1194,6 +1225,7 @@ pub async fn run_turn(
     let mut cancel_requested: HashSet<String> = HashSet::new();
     let forest_revision = Arc::new(AtomicU64::new(0));
     let mut should_plan = true;
+    let mut control_due = false;
     let mut greeting_seen = greeting_state();
     let mut greeting_tick = tokio::time::interval(Duration::from_millis(500));
     let mut capability_prompt_cache = CapabilityPromptCache::default();
@@ -1205,6 +1237,12 @@ pub async fn run_turn(
         // Check for hard interrupt at the top of every iteration.
         if *cancel_rx.borrow() {
             return_interrupted!(&forest);
+        }
+
+        // Consume queued execution changes before asking about control targets;
+        // otherwise a finished plan can look active throughout a short response.
+        if control_due {
+            should_plan = forest_rx.is_empty();
         }
 
         if !should_plan {
@@ -1245,6 +1283,7 @@ pub async fn run_turn(
                                 if append_steer(task, history, standing_task) {
                                     scene_navigation_goals.clear();
                                     history::trim(history, MAX_HISTORY);
+                                    control_due = true;
                                     should_plan = true;
                                 }
                             }
@@ -1274,6 +1313,7 @@ pub async fn run_turn(
                     {
                         scene_navigation_goals.clear();
                         history::trim(history, MAX_HISTORY);
+                        control_due = true;
                         // Re-plan now so the model can react (and decide
                         // whether to cancel any in-flight tree).
                         should_plan = true;
@@ -1290,7 +1330,7 @@ pub async fn run_turn(
                             if let Some(state) = standing_task.as_mut() {
                                 state.control.observe(&plan_id, &ns);
                             }
-                            if ns.state == RtdlNodeStateEnum::Paused as u32 {
+                            if control_due || ns.state == RtdlNodeStateEnum::Paused as u32 {
                                 should_plan = true;
                             }
                             // Feed every node's result into context the moment it
@@ -1432,25 +1472,39 @@ pub async fn run_turn(
         // previous VLM stream) so this round plans with the latest user input.
         if drain_steers(&mut steer_rx, history, standing_task) {
             scene_navigation_goals.clear();
+            control_due = true;
         }
+        let control_only = std::mem::take(&mut control_due)
+            && !build_forest_block(&forest, &cancel_requested).is_empty();
 
         // Roll up old history into a summary once it gets large, so the rest of
         // the turn plans against a compact window instead of the full transcript.
-        compact_history(history, vlm).await;
+        if !control_only {
+            compact_history(history, vlm).await;
+        }
 
         // Re-discover capabilities from atlas every round so providers that
         // registered mid-turn are visible in the next call.
-        let cap_list = discovery::discover(atlas)
-            .await
-            .map_err(|e| anyhow::anyhow!("atlas capability discovery failed: {e}"))?;
-
-        let embodiment_block =
-            crate::soma_context::fetch_runtime_prompt_block(atlas, consumer_id).await;
-        let environment_block = state_context::collect(executor, atlas, &cap_list).await;
+        // React to steering before capability discovery, live-state prefetch or
+        // history compaction. No successor work can be dispatched in this round.
+        let (cap_list, embodiment_block, environment_block) = if control_only {
+            (Vec::new(), String::new(), String::new())
+        } else {
+            let caps = discovery::discover(atlas)
+                .await
+                .map_err(|e| anyhow::anyhow!("atlas capability discovery failed: {e}"))?;
+            let body = crate::soma_context::fetch_runtime_prompt_block(atlas, consumer_id).await;
+            let environment = state_context::collect(executor, atlas, &caps).await;
+            (caps, body, environment)
+        };
 
         let display_caps = build_display_capabilities(&cap_list);
         let target_map = build_capability_target_map(&display_caps);
-        let protocol_prompt = rtdl_protocol(round == 0);
+        let protocol_prompt = if control_only {
+            STEER_CONTROL_PROMPT
+        } else {
+            rtdl_protocol(round == 0)
+        };
         let (capability_prompt, capability_cache_hit) =
             capability_prompt_cache.render(&display_caps);
 
@@ -1474,7 +1528,11 @@ pub async fn run_turn(
             .map(TaskState::prompt_block)
             .unwrap_or_default();
         let forest_block = build_forest_block(&forest, &cancel_requested);
-        let executor_active_block = fetch_executor_active_block(executor).await;
+        let executor_active_block = if control_only {
+            String::new()
+        } else {
+            fetch_executor_active_block(executor).await
+        };
         let _ = tx
             .send(Ok(service::pack(
                 &session_id,
@@ -1490,6 +1548,7 @@ pub async fn run_turn(
         // fix the reply once; a second failure ends the turn gracefully (empty
         // recovery plan) instead of crashing the whole turn. The loop yields a
         // valid (narration, tree label, plan, id) tuple for the forest dispatch.
+        let recent_control_history = control_history(history);
         let mut correction: Option<String> = None;
         let (assistant_content, rtdl_description, graph, meta_op, plan_id, task_update, recovered) = loop {
             let sections = [
@@ -1499,19 +1558,23 @@ pub async fn run_turn(
                 },
                 PromptSection {
                     name: "embodiment_static",
-                    content: soma_prompt_block,
+                    content: if control_only { "" } else { soma_prompt_block },
                 },
                 PromptSection {
                     name: "memory",
-                    content: &memory_prompt,
+                    content: if control_only { "" } else { &memory_prompt },
                 },
                 PromptSection {
                     name: "capability_docs",
-                    content: &capability_docs_prompt,
+                    content: if control_only {
+                        ""
+                    } else {
+                        &capability_docs_prompt
+                    },
                 },
                 PromptSection {
                     name: "voice",
-                    content: voice_prompt,
+                    content: if control_only { "" } else { voice_prompt },
                 },
                 PromptSection {
                     name: "rtdl_protocol",
@@ -1519,7 +1582,7 @@ pub async fn run_turn(
                 },
                 PromptSection {
                     name: "capability_catalog",
-                    content: capability_prompt,
+                    content: if control_only { "" } else { capability_prompt },
                 },
                 PromptSection {
                     name: "task",
@@ -1550,7 +1613,11 @@ pub async fn run_turn(
                 round,
                 capability_cache_hit,
                 &sections,
-                history,
+                if control_only {
+                    &recent_control_history
+                } else {
+                    history
+                },
                 correction.as_deref(),
             );
 
@@ -1594,6 +1661,7 @@ pub async fn run_turn(
                             if let Some(task) = steer {
                                 scene_navigation_goals.clear();
                                 append_steer(task, history, standing_task);
+                                control_due = true;
                                 drain_steers(&mut steer_rx, history, standing_task);
                                 history::trim(history, MAX_HISTORY);
                             }
@@ -1663,6 +1731,7 @@ pub async fn run_turn(
                 // Executor state changed while the model was thinking. Never
                 // dispatch a plan based on the stale in-flight snapshot. Return
                 // to the event arm, consume the queued state, then re-plan.
+                control_due |= control_only;
                 should_plan = greeting_changed;
                 continue 'supervisor;
             }
@@ -1722,7 +1791,7 @@ pub async fn run_turn(
                         None,
                         Some(meta_op),
                         String::new(),
-                        task_update,
+                        if control_only { None } else { task_update },
                         false,
                     );
                 }
@@ -1748,6 +1817,14 @@ pub async fn run_turn(
                         true,
                     );
                 }
+            }
+
+            if control_only {
+                // A control-only round cannot declare completion or dispatch a
+                // capability, even if the model ignores the restricted prompt.
+                // Additive requests proceed through ordinary planning next.
+                should_plan = true;
+                continue 'supervisor;
             }
 
             // Reserve an id atomically only for normal RTDL. Concurrent sessions
@@ -1813,6 +1890,13 @@ pub async fn run_turn(
         // RTDL recovery gave up after a retry: surface the user-facing message
         // once and END the turn. Without this the empty recovery plan would fall
         // through to "no new tree this round" and re-plan forever.
+        if recovered && control_only {
+            // A short control response failure must not abandon supervision of
+            // physical work. Retry the user's instruction through full planning.
+            warn!("[pilot/control] invalid control response; falling back to full planning");
+            should_plan = true;
+            continue 'supervisor;
+        }
         if recovered {
             if !assistant_content.is_empty() {
                 history.push(Message::assistant(&assistant_content));
@@ -2267,6 +2351,26 @@ Root-only plan control: cancel_plan, cancel_all, stop_plan_at with exact listed 
 Resolve a named room through current Scene regions before navigation; never use a remembered grasp or observation pose as a room goal. A navigation SUCCEEDED result proves only the resolved requested destination; a zero-distance result does not prove that the robot moved. Never call a skill's cancel capability; Executor propagates RTDL cancellation.
 
 Copy each cap exactly from the current catalog. Executor feedback and dispatch records are scoped by plan_id/call_id and prove what was already sent; do not repeat a successful call. task_update.goal must exactly copy Current user interaction. Use status=done only when its success criterion is verified and its relevant tree is no longer running.
+"#;
+
+// The model still interprets intent; steering never cancels work by keyword.
+// Keep this round bounded to existing plan control, with no capability catalog.
+const STEER_CONTROL_PROMPT: &str = r#"
+## Mid-task plan control
+Decide ONLY whether the latest Current user interaction requires controlling a
+listed In-flight tree. Return a JSON object with content="", rtdl_description="",
+task_update=null, and rtdl as one root meta operation or {"op":"sequence","children":[]}.
+For an immediate temporary interruption (e.g. "暂停当前任务，先去B再继续原任务"),
+return {"op":"cancel_plan","plan_id":"<exact listed id>","wait_ms":5000,"resume_after":true}
+for the affected original plan FIRST. Do not resolve the new destination or wait
+for original arrival. Explicit replacement uses resume_after=false. Stop all uses
+{"op":"cancel_all","wait_ms":5000}. A boundary stop uses stop_plan_at with exact
+listed plan_id/target_op_id and when=on_enter|on_complete; do not cancel immediately.
+Leave unrelated work running. Additive requests, questions, ambiguous instructions,
+and requests to continue unchanged work return the empty sequence for full planning.
+Never emit capability calls or task completion. Never cancel a plan already stopping.
+Current greeting movement_allowed=false still allows cancellation; it never allows
+successor motion. Wait for confirmed cancellation before planning temporary work.
 "#;
 
 fn rtdl_protocol(full: bool) -> &'static str {
@@ -3305,13 +3409,13 @@ mod tests {
         RTDL_PARALLEL, RTDL_PROTOCOL_REMINDER, RTDL_SEQUENCE, TaskState, TreeMeta, TreeStep,
         append_steer, apply_task_update, build_capability_target_map, build_display_capabilities,
         build_executor_active_block, build_forest_block, compact_tool_result,
-        configured_vlm_idle_timeout, duplicate_in_flight_signature, expand_rtdl_to_plan,
-        extract_json_object, feed_results_into_history, format_plan_summary, invalid_cancel_target,
-        is_control_only, is_legacy_plan_control_contract, mixes_control_inspection_with_action,
-        parse_meta_plan_op, parse_rtdl_assistant_response, parse_task_update, plan_call_signatures,
-        record_dispatched_plan, rtdl_node_kind_name, rtdl_recovery_final_text, rtdl_state_name,
-        should_replan_after_plan_done, skip_memory_prefetch, start_or_resume_task,
-        task_is_session_end,
+        configured_vlm_idle_timeout, control_history, duplicate_in_flight_signature,
+        expand_rtdl_to_plan, extract_json_object, feed_results_into_history, format_plan_summary,
+        invalid_cancel_target, is_control_only, is_legacy_plan_control_contract,
+        mixes_control_inspection_with_action, parse_meta_plan_op, parse_rtdl_assistant_response,
+        parse_task_update, plan_call_signatures, record_dispatched_plan, rtdl_node_kind_name,
+        rtdl_recovery_final_text, rtdl_state_name, should_replan_after_plan_done,
+        skip_memory_prefetch, start_or_resume_task, task_is_session_end,
     };
     use crate::pb::pilot::{CapabilityCall, CapabilityCallResult, Plan, RtdlNode, Task};
     use crate::task_control::TaskControl;
@@ -3319,6 +3423,28 @@ mod tests {
     use serde_json::json;
     use std::collections::{HashMap, HashSet};
     use std::time::Duration;
+
+    #[test]
+    /// Consecutive instructions survive while large payloads stay bounded.
+    fn control_context_keeps_recent_text_and_omits_images() {
+        use crate::vlm::Message;
+        let mut history = vec![Message::user(&"old".repeat(400)); 8];
+        history.push(Message::user("pause the original task"));
+        history.push(Message::user_with_image("camera", "large image".into()));
+        history.push(Message::user("first go to B, then return"));
+        let recent = control_history(&history);
+        assert_eq!(recent.len(), 6);
+        assert_eq!(
+            recent[4].content.as_deref(),
+            Some("pause the original task")
+        );
+        assert_eq!(
+            recent[5].content.as_deref(),
+            Some("first go to B, then return")
+        );
+        assert!(recent.iter().all(|message| message.image_base64.is_none()
+            && message.content.as_ref().unwrap().chars().count() <= 1024));
+    }
 
     #[test]
     fn vlm_idle_timeout_is_bounded_and_has_a_responsive_default() {

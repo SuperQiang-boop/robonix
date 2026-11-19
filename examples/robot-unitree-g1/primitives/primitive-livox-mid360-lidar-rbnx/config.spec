@@ -64,3 +64,18 @@ config:
   # integer, default: 3.
   # Number of Livox driver startup attempts before the provider reports ERROR.
   livox_retries: 3
+
+  # Optional; disabled unless explicitly enabled. Robot mount TF must already
+  # be available. Both mapping and navigation discover this output via Atlas.
+  gravity_alignment:
+    enabled: false
+    imu_topic: /livox/imu
+    target_frame: base_footprint
+    output_topic: /scanner/cloud_aligned
+    output_frame: mid360_gravity_aligned
+    # Livox acceleration is in g; use 1.0 for an SI m/s^2 source. Gyro is rad/s.
+    acceleration_scale: 9.80665
+    # Empirical IMU-to-cloud gravity correction in target_frame, degrees.
+    # Extrinsic X then Y; zero unless calibrated. These are NOT URDF mount angles.
+    imu_roll_offset_deg: 0.0
+    imu_pitch_offset_deg: 0.0

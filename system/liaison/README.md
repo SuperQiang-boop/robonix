@@ -57,6 +57,9 @@ text playback without exporting PCM. When that capability is absent, Liaison
 uses `speech/tts` followed by the speaker stream. Playback failures are reported
 without retrying another path; native success confirms acceptance, not audible
 completion. ASR and microphone selection are independent of reply playback.
+Speech results accept both direct `ok`/`detail` fields and FastMCP's
+`result` wrapper. An explicit top-level rejection takes precedence; missing or
+false `ok` values remain playback errors.
 
 ## Identity and access
 

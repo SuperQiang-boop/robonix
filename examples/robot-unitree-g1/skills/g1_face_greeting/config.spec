@@ -12,12 +12,24 @@ scene_provider_id:
 speech_provider_id:
   type: string
   default: speech
+mic_provider_id:
+  type: string
+  default: g1_audio
+  description: Exact microphone provider when ROBONIX_CLIENT_SETTINGS is unset; otherwise each turn uses the saved Audio menu input.
+speaker_provider_id:
+  type: string
+  default: g1_audio
+  description: Exact speaker provider for Liaison replies; keep g1_audio with UnitreeTTSBackend.
 arm_provider_id:
   type: string
   default: g1_arm_actions
 navigation_enabled:
   type: boolean
   default: false
+voice_enabled:
+  type: boolean
+  default: true
+  description: Ask for a task and capture one Liaison voice request after a coordinated greeting; false keeps speech and arm actions only.
 navigation_provider_id:
   type: string
   default: nav2

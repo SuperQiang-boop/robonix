@@ -12,7 +12,7 @@ if [[ ! -x "$BUILD_ROOT/venv/bin/python" ]]; then
   uv venv --python "$PYTHON" --system-site-packages "$BUILD_ROOT/venv"
 fi
 uv pip install --python "$BUILD_ROOT/venv/bin/python" \
-  "$SOURCE/pylib/robonix-api" 'mcp>=1,<2' 'fastmcp[client]>=3,<4'
+  "$SOURCE/pylib/robonix-api" -r "$PKG/requirements.txt"
 RBNX_CODEGEN_PYTHON="$BUILD_ROOT/venv/bin/python" rbnx codegen -p "$PKG" --mcp
 ROBONIX_API_ROOT="$(rbnx path robonix-api)"
 PYTHONPATH="$PKG:$ROBONIX_API_ROOT:$PKG/rbnx-build/codegen/proto_gen:$PKG/rbnx-build/codegen/robonix_mcp_types:${PYTHONPATH:-}" \

@@ -43,6 +43,7 @@ class ActiveDatabaseRecordTest(unittest.TestCase):
             patch.object(map_ops, "_get_node", return_value=object()),
             patch.object(map_ops, "_runtime_db_copy", return_value=self.runtime_db),
             patch.object(map_ops, "_set_mode", return_value=(True, "ok")),
+            patch.object(map_ops, "_prepare_localization_load", return_value=(True, "ok")),
             patch.object(map_ops, "_load_database", return_value=(True, "ok")),
             patch.object(map_ops.lifecycle, "set_mode"),
             patch.object(map_ops.lifecycle, "set_state"),

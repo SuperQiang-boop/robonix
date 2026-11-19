@@ -201,7 +201,11 @@ Notes that matter in the field:
   a corrected map goes under a new id.
 - **`load_map` always localizes.** A `mapping` mode argument is accepted and
   coerced, because RTAB-Map only restores the saved occupancy grid when the
-  database is opened for localization.
+  database is opened for localization. Before opening it, loading sets
+  `Mem/IncrementalMemory=false` and `Mem/InitWMWithAllNodes=true`, then calls
+  RTAB-Map's `update_parameters` service to synchronize its parameter cache.
+  This prevents a service started in mapping mode from reopening the saved
+  database in mapping mode or omitting its saved nodes.
 - **`reset_map` invalidates coordinates.** The rebuilt map does not share the
   old frame, so positions recorded against the previous map are stale. The
   lifecycle broadcast bumps its generation to say so.

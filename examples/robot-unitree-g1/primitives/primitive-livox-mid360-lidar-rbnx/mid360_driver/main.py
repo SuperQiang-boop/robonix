@@ -9,8 +9,9 @@ surface lives in a SEPARATE package (`mid360_imu_rbnx`) per the
 
 Lifecycle:
     on_init  — parse cfg → spawn livox launch → wait for first PointCloud2
+               → optionally align gravity and wait for corrected PointCloud2
                → declare ros2 topic_out for primitive/lidar/lidar3d.
-    on_shutdown — kill livox subprocess.
+    on_shutdown — kill alignment, static TF and livox subprocesses.
 
 Config (from manifest's `config:` block, delivered via Driver(CMD_INIT)):
     lidar_topic        default "/scanner/cloud"  (matches our lddc.cpp patch)
@@ -30,6 +31,7 @@ Config (from manifest's `config:` block, delivered via Driver(CMD_INIT)):
                        the same edge — double-publishing TFs causes
                        'TF_REPEATED_DATA ignoring data' warnings.
     sentinel_timeout_s default 30.0
+    gravity_alignment  optional mapping; disabled by default (see config.spec)
 """
 from __future__ import annotations
 
@@ -38,6 +40,7 @@ import logging
 import os
 import signal
 import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
@@ -64,6 +67,47 @@ def _pump_output(stream, tag: str) -> None:
 _pkg_root: Path = Path(__file__).resolve().parent.parent
 _livox_proc: subprocess.Popen | None = None
 _stp_proc: subprocess.Popen | None = None
+_alignment_proc: subprocess.Popen | None = None
+
+
+def _spawn_alignment(cfg: dict, lidar_topic: str) -> str:
+    """Optionally start gravity alignment and return its advertised cloud topic."""
+    global _alignment_proc
+    alignment = cfg.get("gravity_alignment", {})
+    if not alignment.get("enabled", False):
+        return lidar_topic
+    if int(cfg.get("xfer_format", 0)) != 0:
+        raise ValueError("gravity alignment requires PointCloud2 (xfer_format=0)")
+    settings = dict(alignment, input_topic=lidar_topic)
+    output = str(settings.get("output_topic", "/scanner/cloud_aligned"))
+    if output == lidar_topic:
+        raise ValueError("gravity alignment output_topic must differ from lidar_topic")
+    _alignment_proc = subprocess.Popen(
+        [sys.executable, "-m", "mid360_driver.gravity_alignment",
+         "--config-json", json.dumps(settings)],
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True,
+    )
+    threading.Thread(target=_pump_output, args=(_alignment_proc.stdout, "alignment"),
+                     daemon=True).start()
+    return output
+
+
+def _kill_alignment() -> None:
+    """Stop the alignment child on shutdown or failed startup, including descendants."""
+    p = _alignment_proc
+    if p is None or p.poll() is not None:
+        return
+    try:
+        os.killpg(os.getpgid(p.pid), signal.SIGTERM)
+        p.wait(timeout=2.0)
+    except ProcessLookupError:
+        return
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(os.getpgid(p.pid), signal.SIGKILL)
+            p.wait(timeout=2.0)
+        except ProcessLookupError:
+            pass
 
 
 # ── livox subprocess management ──────────────────────────────────────────
@@ -288,17 +332,31 @@ def init(cfg: dict):
         _kill_livox()
         return Err(f"spawn static_transform_publisher failed: {e}")
 
+    try:
+        output_topic = _spawn_alignment(cfg, lidar_topic)
+        # Bound this extra wait so G1's raw retries plus alignment fit INIT's deadline.
+        alignment_timeout = min(sentinel_timeout, 10.0)
+        if output_topic != lidar_topic and not _wait_for_pointcloud(output_topic, alignment_timeout):
+            raise RuntimeError(f"no aligned PointCloud2 on {output_topic} within "
+                               f"{alignment_timeout:.1f}s; check IMU/TF and hold still")
+    except Exception as e:  # noqa: BLE001
+        _kill_alignment()
+        _kill_stp()
+        _kill_livox()
+        return Err(f"gravity alignment failed: {e}")
+
     cap.declare_ros2_topic(
         "robonix/primitive/lidar/lidar3d",
-        topic=lidar_topic,
+        topic=output_topic,
         qos="best_effort",
     )
-    log.info("init complete: lidar3d=%s", lidar_topic)
+    log.info("init complete: lidar3d=%s (raw=%s)", output_topic, lidar_topic)
     return Ok()
 
 
 @cap.on_shutdown
 def shutdown():
+    _kill_alignment()
     _kill_stp()
     _kill_livox()
     return Ok()

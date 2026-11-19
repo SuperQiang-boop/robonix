@@ -1058,6 +1058,13 @@ async fn speak_text(
             Some(value) => value,
             None => serde_json::from_str(&content)?,
         };
+        // FastMCP may wrap the contract response in `result`. Prefer an
+        // explicit top-level result so a rejection cannot be overridden.
+        let payload = if payload.get("ok").is_some() {
+            &payload
+        } else {
+            payload.get("result").unwrap_or(&payload)
+        };
         if payload.get("ok").and_then(serde_json::Value::as_bool) != Some(true) {
             anyhow::bail!("speech/speak rejected playback: {payload}");
         }
@@ -1511,6 +1518,26 @@ mod tests {
                 true,
             ),
             (
+                serde_json::json!({"content": [], "structuredContent": {"result": {"ok": true, "detail": "accepted"}}}),
+                true,
+            ),
+            (
+                serde_json::json!({"content": [{"type": "text", "text": "{\"result\":{\"ok\":true,\"detail\":\"accepted\"}}"}]}),
+                true,
+            ),
+            (
+                serde_json::json!({"content": [], "structuredContent": {"result": {"ok": false, "detail": "SDK rejected"}}}),
+                false,
+            ),
+            (
+                serde_json::json!({"content": [], "structuredContent": {"ok": false, "result": {"ok": true}}}),
+                false,
+            ),
+            (
+                serde_json::json!({"content": [], "structuredContent": {"result": {"detail": "missing status"}}}),
+                false,
+            ),
+            (
                 serde_json::json!({"content": [], "structuredContent": {"ok": false, "detail": "SDK rejected"}}),
                 false,
             ),
@@ -1583,10 +1610,9 @@ mod tests {
                 KIND_TTS_STARTED
             );
             if succeeds {
-                assert_eq!(
-                    events.recv().await.unwrap().unwrap().event_kind,
-                    KIND_TTS_DONE
-                );
+                let done = events.recv().await.unwrap().unwrap();
+                assert_eq!(done.event_kind, KIND_TTS_DONE);
+                assert_eq!(done.status_message, "accepted");
             }
             assert!(events.try_recv().is_err());
         }

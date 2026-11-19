@@ -60,9 +60,13 @@ class Settings:
     message_store_path: Path
     navigation_provider_id: str
     greeting_wait_sec: float
+    voice_enabled: bool = True
+    mic_provider_id: str = "g1_audio"
+    speaker_provider_id: str = "g1_audio"
 
     @classmethod
     def parse(cls, raw: dict[str, Any]) -> "Settings":
+        """Validate greeting configuration, retaining voice capture unless disabled."""
         if not isinstance(raw, dict):
             raise ValueError("g1_face_greeting config must be an object")
 
@@ -78,6 +82,9 @@ class Settings:
             "message_store_path",
             "navigation_provider_id",
             "greeting_wait_sec",
+            "voice_enabled",
+            "mic_provider_id",
+            "speaker_provider_id",
             *(f"action_level_{level}" for level in range(1, 6)),
         }
         unknown = sorted(set(raw) - allowed)
@@ -90,8 +97,8 @@ class Settings:
                 raise ValueError(f"{name} must not be empty")
             return value
 
-        def flag(name: str) -> bool:
-            value = raw.get(name, False)
+        def flag(name: str, default: bool = False) -> bool:
+            value = raw.get(name, default)
             if not isinstance(value, bool):
                 raise ValueError(f"{name} must be a boolean")
             return value
@@ -149,6 +156,9 @@ class Settings:
             store_path,
             text("navigation_provider_id", "nav2"),
             float(wait),
+            flag("voice_enabled", True),
+            text("mic_provider_id", "g1_audio"),
+            text("speaker_provider_id", "g1_audio"),
         )
 
 
@@ -646,7 +656,8 @@ def activate():
             _stop.clear()
             _worker = threading.Thread(target=_worker_loop, name="g1-face-greeting", daemon=True)
             _worker.start()
-            log.info("face greeting active; navigation_enabled=%s", _settings.navigation_enabled)
+            log.info("face greeting active; navigation_enabled=%s voice_enabled=%s",
+                     _settings.navigation_enabled, _settings.voice_enabled)
             return Ok()
         except Exception as exc:  # noqa: BLE001
             deactivate()
