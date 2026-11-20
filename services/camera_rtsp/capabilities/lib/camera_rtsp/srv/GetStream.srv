@@ -1,5 +1,18 @@
+# robonix/service/camera_rtsp/get_stream — report where the configured camera
+# is published, and why it is not, without the caller having to guess from a URL.
+
 ---
+# The publication is up and a consumer can connect to `url` now. False while the
+# pipeline is still warming up, or after it stopped.
 bool available
+# RTSP URL a consumer can open. Empty while `available` is false, so a caller
+# cannot hold on to an address from an earlier activation.
 string url
+# Provider id of the camera being republished, echoed back so a caller that
+# subscribed to several cameras can tell which one answered.
 string camera_provider_id
+# Short human-readable cause, empty on success. It carries the encoder or input
+# failure when one was recorded, and a generic message when the pipeline has not
+# reached readiness yet. An inactive service aborts the call with
+# FAILED_PRECONDITION rather than answering.
 string error
