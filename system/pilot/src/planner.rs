@@ -2,6 +2,7 @@
 // Author: wheatfox <wheatfox17@icloud.com>
 //
 use crate::discovery::{self, llm_name};
+use crate::greeting;
 use crate::history;
 use crate::memory;
 use crate::pb::contracts::robonix_system_executor_control_plan_client::RobonixSystemExecutorControlPlanClient;
@@ -157,6 +158,16 @@ impl HistoryBudget {
 /// Take in a user message (a request or a steer): file it with the session's
 /// tasks and put it in history once, labelled with its id and task.
 fn receive_user_message(task: &Task, history: &mut Vec<Message>, tasks: &mut TaskTable) -> bool {
+    // A greeting task carries the encounter its voice authorization was issued
+    // for. Once that encounter is over, filing the task would answer a face
+    // match with motion, so the message is dropped and the drop is logged.
+    if !greeting::greeting_task_allowed(task) {
+        warn!(
+            "[pilot/greeting] dropped a task for an encounter that already ended: {}",
+            task.text.trim()
+        );
+        return false;
+    }
     let Some(message) = tasks.receive(&task.text) else {
         return false;
     };
@@ -1526,6 +1537,16 @@ pub async fn run_turn(
         let protocol_prompt = RTDL_PROTOCOL_REMINDER;
         let forest_block = build_forest_block(&forest.trees, &forest.kill_pending, tasks);
         let (executor_active_block, _) = fetch_executor_active_snapshot(executor).await;
+        // The greeting skill can hold movement from outside Pilot. Say so, so the
+        // planner does not promise motion the rest of the stack will refuse.
+        let greeting_hold = if greeting::greeting_blocks(&greeting::greeting_state()) {
+            "A greeting holds movement, or its completion is unconfirmed. Do not \
+             dispatch motion; keep the request pending and wait for the greeting \
+             state to change."
+                .to_string()
+        } else {
+            String::new()
+        };
         // Only instructions that never change sit before history.
         let sections = [
             ("standing_system", standing_prompt.as_str()),
@@ -1545,6 +1566,7 @@ pub async fn run_turn(
             embodiment_block.as_str(),
             environment_block.as_str(),
             tasks.board().as_str(),
+            greeting_hold.as_str(),
         ]
         .iter()
         .map(|content| content.len().div_ceil(4))
@@ -1587,6 +1609,7 @@ pub async fn run_turn(
             ("executor_state", executor_active_block.as_str()),
             ("embodiment_live", embodiment_block.as_str()),
             ("environment_live", environment_block.as_str()),
+            ("greeting_hold", greeting_hold.as_str()),
         ];
         let runtime_context = render_context_sections(&live_sections);
         if requests >= max_rounds {

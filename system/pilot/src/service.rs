@@ -22,7 +22,7 @@ use crate::transcript::Transcript;
 use crate::vlm::{Message, VlmClient};
 use anyhow::Context;
 use robonix_atlas::client::{self as atlas_client, AtlasClient};
-use robonix_scribe::{debug, error, info};
+use robonix_scribe::{debug, error, info, warn};
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -387,6 +387,11 @@ impl RobonixSystemPilot for PilotServiceImpl {
 
         if task_is_abort_turn(&task) {
             let id = task.session_id.clone();
+            // A Stop has to outlive this request: voice input already in flight
+            // for the same greeting encounter must not be admitted afterwards.
+            if let Err(error) = crate::greeting::stop_greeting(&id) {
+                warn!("[pilot/greeting] could not record the stop for {id}: {error}");
+            }
             let turn_signaled = if let Some(tx) = self.term_signals.lock().await.get(&id) {
                 tx.send_if_modified(|interrupted| {
                     if *interrupted {

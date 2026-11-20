@@ -24,6 +24,7 @@ mod discovery;
 #[allow(dead_code)]
 #[path = "../../executor/src/expression.rs"]
 mod expression;
+mod greeting;
 mod history;
 mod memory;
 mod pb;
