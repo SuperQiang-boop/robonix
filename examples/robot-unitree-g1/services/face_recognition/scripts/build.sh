@@ -28,8 +28,12 @@ fi
 if [[ ! -x "$BUILD_ROOT/venv/bin/python" ]]; then
     uv venv --python "$PYTHON" --system-site-packages "$BUILD_ROOT/venv"
 fi
-uv pip install --python "$BUILD_ROOT/venv/bin/python" "$SOURCE/pylib/robonix-api" "$PKG" \
-    'mcp>=1,<2'
+# `[codegen]` keeps grpcio-tools inside this venv: codegen runs under the venv
+# Python, so its protoc must pair with the venv's protobuf runtime. Falling back
+# to a system grpcio-tools can emit gencode newer than the pinned protobuf and
+# make import validation fail.
+uv pip install --python "$BUILD_ROOT/venv/bin/python" \
+    "robonix-api[codegen] @ file://$SOURCE/pylib/robonix-api" "$PKG" 'mcp>=1,<2'
 RBNX_CODEGEN_PYTHON="$BUILD_ROOT/venv/bin/python" rbnx codegen -p "$PKG" --mcp
 
 # Rebuild the bundled executable so source fixes do not leave a stale binary.
