@@ -7,8 +7,16 @@
 # the (service-side-default) search radius of the object — caller
 # should pick a different target. `reason` is a short human-readable
 # string for both branches.
+#
+# `approach_yaw` is the heading, in radians in the map frame, that the
+# returned pose faces. It applies only when `has_approach_yaw` is set: a
+# float64 cannot carry "unset", and 0.0 is a real heading along +x, so the
+# flag is what separates a requested heading from an absent one. Without it
+# the service turns the robot towards the object.
 
 string object_id
+bool has_approach_yaw
+float64 approach_yaw
 ---
 bool reachable
 float64 x
