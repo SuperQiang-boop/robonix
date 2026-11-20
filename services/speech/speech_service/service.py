@@ -1424,6 +1424,15 @@ def init(cfg):
         except Exception as exc:
             return Err(f"configured TTS backend {override_name} failed: {exc}")
         tts_label = override_name
+    elif override_name:
+        # Say so once: the key is accepted by config.spec, and a deployment that
+        # sees no effect needs to know which mode takes precedence over it.
+        log.warning(
+            "SPEECH_TTS_BACKEND_CLASS=%s is ignored: speech_backend is %r%s",
+            override_name,
+            backend_name,
+            " and the service runs in mock mode" if MOCK_MODE else "",
+        )
 
     _asr_servicer.asr_backend = asr
     _asr_stream_servicer.stream_asr_backend = asr_stream

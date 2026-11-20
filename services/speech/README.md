@@ -220,7 +220,7 @@ finished; destroying the client immediately afterward can interrupt speech.
 Backend replacement and service shutdown close and reap the helper. IPC errors
 and timeouts are reported without replaying possibly accepted text; the next
 independent request can reconnect. Rebuild `g1_audio` and restart Speech after
-updating this helper protocol. No new Liaison build is needed for this fix.
+updating this helper protocol.
 
 A successful response confirms SDK acceptance, not audible completion.
 The backend cannot export PCM through `tts` / `tts_stream`; those requests
