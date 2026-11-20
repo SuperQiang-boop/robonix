@@ -1087,6 +1087,9 @@ async fn speak_text(
         .connect_capability("liaison", &provider.id, CONTRACT, atlas_pb::Transport::Mcp)
         .await?;
     drop(directory);
+    // Generous: the speech service answers once the robot's own synthesis has
+    // accepted the text, and a G1 can take seconds to start its audio helper.
+    // A timeout here means acceptance is unknown, not that playback failed.
     let result = tokio::time::timeout(Duration::from_secs(120), async {
         let transport =
             rmcp::transport::streamable_http_client::StreamableHttpClientTransport::from_uri(
