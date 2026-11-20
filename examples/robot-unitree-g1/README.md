@@ -27,6 +27,108 @@ bash start.sh --no-motion
 bash start.sh
 ```
 
+## RViz lidar display range
+
+To show only points within 6 m of the lidar, run in the same ROS environment
+as the deployment (ROS Humble, `numpy`, `rclpy`, and `sensor_msgs` required):
+
+```bash
+source /opt/ros/humble/setup.bash
+python3 scripts/g1_rviz_cloud.py --max-range-m 6
+```
+
+In RViz, set the PointCloud2 display topic to `/scanner/cloud_rviz`. The filter
+uses 3D distance from the lidar and preserves point fields, frame and timestamp.
+Keep the script running while viewing; stop it with Ctrl-C. Raw `/scanner/cloud`,
+mapping and navigation ranges remain unchanged. Offline check:
+`python3 -B -m unittest discover -s tests -p test_g1_rviz_cloud.py`.
+
+## USB microphone on G1, Robonix on the laptop
+
+G1 needs only `alsa-utils`, Python 3.8+ and `websockets>=12`; it does not need
+Robonix. Copy `scripts/g1_usb_audio_server.py` to G1. On G1, verify card 2's
+capture device with `arecord -l`, install the dependencies if missing, then run:
+
+```bash
+# On G1; device 0 is assumed. Use an existing Python environment if preferred.
+python3 -m venv /tmp/g1-audio-venv
+/tmp/g1-audio-venv/bin/python -m pip install 'websockets>=12,<14'
+/tmp/g1-audio-venv/bin/python /tmp/g1_usb_audio_server.py \
+  --device plughw:2,0 --host 192.168.123.164 --port 60000
+```
+
+Keep this process running before starting Robonix on the laptop. It verifies
+one second of ALSA capture at startup and records on demand thereafter. Each
+WebSocket frame is 100 ms of raw 16 kHz mono s16le PCM. Disconnecting stops and
+reaps `arecord`. A new capture waits up to three seconds for the previous
+capture to release the microphone; if it remains busy, the new connection
+is rejected without interrupting the existing recording. Errors remain in the G1
+terminal. Use the wired G1 address in both this command and the manifest's
+`g1_usb_audio.config.host`; the current address follows the camera deployment.
+The endpoint has no authentication; bind it to the trusted wired interface.
+The temporary venv and script must be recreated after G1 reboots.
+
+The laptop runs two instances of the official audio client bridge:
+`g1_usb_audio` connects to G1's capture server, while `audio_client_bridge`
+retains browser/client audio on port 60002. Both use the existing audio
+contracts; the official ALSA primitive alone cannot read another host's USB.
+No cached upstream source is modified. Build and boot from the laptop as above.
+
+The manifest sets `ROBONIX_CLIENT_SETTINGS` to the local frontend's
+`/home/ygq/.config/robonix-client/settings.yaml`. `g1_face_greeting` reads the
+saved Audio input from this file before every capture, with
+`speaker_provider_id: g1_audio` and `voice_enabled: true`. Select the microphone
+provider and input device in Audio, then choose Apply Route. The next greeting
+uses that input without a skill restart. Keep the client's audio device server
+running for laptop input. To capture from G1 again, first verify its recording,
+then select `g1_usb_audio` in Audio. Missing or invalid shared settings prevent
+capture instead of selecting a different microphone. This file sharing assumes
+the frontend and skill run on the same host; if the frontend uses a custom
+`ROBONIX_CLIENT_SETTINGS` path, set the deployment to that same absolute path.
+Without this environment variable, the skill uses `mic_provider_id`.
+Liaison records after playback waiting and confirmed arm release, uses
+`speech/asr_stream` (FunASR in local mode), then submits the request to Pilot.
+The G1 USB server offers input only. Do not select it as a speaker.
+Apply Route can confirm the current input or its default without restarting
+capture. To use a different ALSA device, restart the G1 script with `--device`.
+
+The official bridge's legacy mode logs WebSocket failures but ends the gRPC
+mic stream normally. Liaison may interpret a failed capture as silence or use
+partial audio. The G1 capture server allows a bounded wait while the bridge
+releases its previous capture, including wake-word to command transitions.
+The tests below verify repeated gRPC capture handoffs, PCM transport and
+G1-side cleanup, not
+failure propagation into voice task admission. Keep automatic greeting input
+from G1 disabled pending hardware validation and upstream error handling improvements.
+
+Laptop transport checks (synthetic PCM, no robot motion or physical microphone):
+
+```bash
+rbnx-boot/cache/primitive-audio-client-bridge-rbnx/rbnx-build/venv/bin/python \
+  -B -m unittest discover -s tests -p test_g1_usb_audio.py
+```
+
+`speech/speak` keeps `default_speaker_provider_id: g1_audio` and
+`UnitreeTTSBackend`: SDK2 `TtsMaker` performs synthesis and playback on G1.
+This route sends text, rather than USB audio or PCM, to the built-in speaker.
+Keep `g1_audio` registered because Speech validates its target in Atlas.
+
+For frontend-only trials without USB input, set the greeting's
+`voice_enabled: false` and restart it. In the same frontend session, send
+“先去B，完成后继续去A” to test temporary work. `config/pilot_soul.md` keeps
+ASR readiness from becoming a prerequisite for text navigation. Navigation
+stopping, playback waiting, confirmed arm release and Stop remain required.
+
+The top-level `env:` paths are explicit absolute paths: rbnx expands all env
+values before setting sibling entries, so referencing `ROBONIX_DEPLOY_DIR`
+there can give Pilot/nav2 different paths from the greeting skill. If moving
+this deployment, update those paths together. After changing them, restart the
+backend deployment so Pilot reloads its prompt and nav2's container is recreated
+with the correct state-file mount; rebuilding is not required. Do not create
+`/data/greeting_state.json` or clear greeting state to bypass this check.
+Offline path checks (Python with PyYAML):
+`python3 -B -m unittest discover -s tests -p test_deployment_config.py`.
+
 ## RViz local costmap
 
 Use a Map display on `/local_costmap/costmap` with Reliable / Transient Local
@@ -39,9 +141,59 @@ transform when diagnosing this case. Parameter-file changes require restarting
 Nav2 (or Robonix), without rebuilding the image.
 
 The scan obstacle layers accept points at height zero: `/scanner/scan` is a
-planar projection in `base_footprint`. Physical obstacle heights (0.25–1.50 m)
+planar projection in `base_footprint`. Physical obstacle heights (0.20–1.50 m)
 are filtered in `scan_projection` before projection; applying a positive
 minimum height again to LaserScan discards those obstacle returns.
+
+For obstacles that appear behind the G1 during rotation, collect floor tilt
+and IMU measurements on a flat floor with the receive-only diagnostic script:
+
+```bash
+source /opt/ros/humble/setup.bash
+export ROS_DOMAIN_ID=0 ROS_LOCALHOST_ONLY=0 RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+export FASTRTPS_DEFAULT_PROFILES_FILE=/data/fastdds_whitelist.xml
+/usr/bin/python3 scripts/g1_floor_diagnostics.py --interactive
+```
+
+The terminal prompts for four headings. Release the remote-control stick and
+settle for three seconds before each Enter; rotate about 90 degrees in the
+same direction between samples. The script subscribes to `/scanner/cloud`,
+`/livox/imu`, `/odom` and TF without sending commands. It saves transformed
+clouds, floor heights, IMU gravity direction and odometry changes under a new
+`data/nav-diagnostics/floor-TIMESTAMP/` directory. Use `--seconds 8 --label NAME`
+for one heading or `--cloud-file PATH` to refit a saved cloud offline. Sampling
+while moving invalidates comparison of floor and IMU gravity; check the saved
+yaw span and angular velocity before using the result for calibration. Add
+`--cloud-topic /scanner/cloud_aligned` to measure the cloud consumed by mapping
+and navigation after gravity correction.
+
+Both G1 profiles use Nav2's `obstacle_max_range` / `raytrace_max_range` keys:
+5/8 m locally (clipped to the rolling grid) and 8/12 m globally. The old
+`obstacle_range` / `raytrace_range` names left Nav2 at its 2.5/3 m defaults.
+`observation_persistence: 0.0` keeps only the latest observation; it does not
+expire obstacle cells. A later clearing ray must traverse a cell to clear it.
+
+Clearing costmaps does not repair occupied cells in the RTAB-Map source map.
+Range parameter corrections take effect after restarting navigation.
+
+Before reproducing false obstacles, run the following with the same ROS
+environment as the floor diagnostic above:
+
+```bash
+/usr/bin/python3 scripts/g1_record_navigation.py --seconds 120 --max-mib 2048
+```
+
+The receive-only recorder saves raw/aligned clouds, raw/filtered scans, IMU,
+odometry, TF, `/map`, both costmaps, and available ground/obstacle clouds and
+navigation status. It stops on duration, total size threshold, low disk space,
+or Ctrl-C; final buffer flushing can slightly exceed the size threshold.
+Results are in `data/nav-diagnostics/obstacles-TIMESTAMP/`. `status.json` lists
+actual message counts and missing required topics; missing data causes a
+nonzero exit. The copied config files are disk inputs, not proof of live
+parameter values. Record before navigating and keep recording through the
+false obstacle and manual turn so their timestamps can be compared.
+
+Offline config checks: `python3 -B -m unittest discover -s tests -p test_deployment_config.py`.
 
 ## Environment Variables
 
@@ -53,6 +205,12 @@ minimum height again to LaserScan discards those obstacle returns.
 | `G1_MAP_MODE` | `localization` | `mapping` or `localization` |
 | `SPEECH_BACKEND` | `local` | `local` (FunASR) or `tencent` (cloud ASR) |
 | `G1_DASHBOARD_PORT` | `8092` | Dashboard web UI port |
+
+The Speech config loads streaming FunASR weights directly from
+`.cache/modelscope/models/iic/speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-online`
+inside this deployment. Keep the complete model directory there before booting;
+the client's Voice button uses this backend. Restarting `/data/robonix-client/bash.sh`
+does not reload Speech; apply model configuration through its Driver or reboot Robonix.
 
 ## Camera over the wired G1 link
 
