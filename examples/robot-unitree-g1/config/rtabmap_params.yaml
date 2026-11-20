@@ -20,7 +20,7 @@ Grid/MapFrameProjection: true
 # Mapping uses base_footprint, a planar frame at the nominal sole level.
 # Reject points below the floor as ground and keep points above as obstacles.
 Grid/MaxObstacleHeight: 1.50
-Grid/MaxGroundHeight: 0.10
+Grid/MaxGroundHeight: 0.20
 # Sparse packet → isolated speckle in local grid. Three-neighbour radius
 # filtering cleans noise while preserving thin wall continuity.
 Grid/NoiseFilteringRadius: 0.20
@@ -30,11 +30,12 @@ Grid/NoiseFilteringMinNeighbors: 3
 Grid/FootprintLength: 0.40
 Grid/FootprintWidth: 0.15
 Reg/Strategy: 1
-Reg/Force3DoF: false
+Reg/Force3DoF: true
 Optimizer/Strategy: 1
 Optimizer/GravitySigma: 0.1
-# Keep neighbour-link refining off until a deskewed cloud source is available.
-RGBD/NeighborLinkRefining: false
+# Refine each odometry link with lidar ICP so map->odom corrects leg-odometry
+# drift (2026-11-20; sweep-midpoint gravity alignment now levels walking clouds).
+RGBD/NeighborLinkRefining: true
 RGBD/ProximityBySpace: false
 RGBD/ProximityPathMaxNeighbors: 1
 RGBD/AngularUpdate: 0.06

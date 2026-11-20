@@ -28,6 +28,35 @@ def rotation(transform):
     return Rotation.from_quat([q.x, q.y, q.z, q.w]).as_matrix()
 
 
+# sensor_msgs/PointField datatype -> numpy scalar type.
+POINT_DTYPES = {1: "i1", 2: "u1", 3: "i2", 4: "u2", 5: "i4", 6: "u4", 7: "f4", 8: "f8"}
+
+
+def attitude_stamp(message):
+    """Return the midpoint of the per-point acquisition span in seconds, or None.
+
+    Livox clouds carry an absolute per-point ``timestamp`` in nanoseconds; the
+    header stamp is the first point of a ~0.1 s sweep. On a swaying humanoid the
+    attitude at the sweep midpoint matches the cloud far better than the header.
+    Returns None when the field is absent, the layout is not one packed row, or
+    the span is not plausible around the header (e.g. relative/other units), so
+    the caller can keep using the header stamp.
+    """
+    field = next((f for f in message.fields if f.name == "timestamp"), None)
+    count = message.width * message.height
+    if (field is None or field.datatype not in POINT_DTYPES or count == 0
+            or message.row_step * message.height != count * message.point_step):
+        return None
+    dtype = np.dtype(POINT_DTYPES[field.datatype]).newbyteorder(">" if message.is_bigendian else "<")
+    times = np.ndarray((count,), dtype, buffer=memoryview(message.data),
+                       offset=field.offset, strides=(message.point_step,)).astype(float) * 1e-9
+    start, end = float(np.min(times)), float(np.max(times))
+    header = seconds(message.header.stamp)
+    if not (math.isfinite(start) and math.isfinite(end)) or start < header - 0.01 or end > header + 0.5:
+        return None
+    return 0.5 * (start + end)
+
+
 class GravityAlignment(Node):
     """Publish original point bytes under a distinct, timestamped aligned frame.
 
@@ -81,23 +110,33 @@ class GravityAlignment(Node):
                            matrix @ [w.x, w.y, w.z])
 
     def on_cloud(self, message):
-        """Queue clouds briefly to wait for IMU bracketing their exact timestamp."""
+        """Queue clouds briefly to wait for IMU bracketing their sweep midpoint.
+
+        The attitude time is the per-point sweep midpoint when available; the
+        header stamp is used otherwise, with a throttled warning.
+        """
         if message.header.frame_id in (self.output_frame, self.target):
             raise ValueError("aligned frame must be distinct; input needs the sensor viewpoint")
         if len(self.pending) >= 5:
             self.pending.popleft()
             self.get_logger().warning("dropping cloud: alignment queue full", throttle_duration_sec=5.0)
-        self.pending.append((time.monotonic(), message))
+        stamp = attitude_stamp(message)
+        if stamp is None:
+            stamp = seconds(message.header.stamp)
+            self.get_logger().warning("cloud has no usable per-point timestamp; "
+                                      "using header stamp for attitude", throttle_duration_sec=30.0)
+        self.pending.append((time.monotonic(), message, stamp))
 
     def flush(self):
         """Publish matching TF/cloud pairs, or visibly drop data after 0.25 s.
 
         No uncorrected fallback is published when IMU, initialization or TF is
-        unavailable. The cloud layout, every field and acquisition stamp survive.
+        unavailable. The cloud layout, every field and acquisition stamp survive;
+        only the attitude is sampled at the queued sweep-midpoint time.
         """
         while self.pending:
-            arrived, message = self.pending[0]
-            up = self.filter.at(seconds(message.header.stamp))
+            arrived, message, stamp = self.pending[0]
+            up = self.filter.at(stamp)
             try:
                 if up is None:
                     raise ValueError("no initialized, timestamp-matched IMU")

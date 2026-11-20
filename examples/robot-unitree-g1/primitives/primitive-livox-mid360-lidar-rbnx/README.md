@@ -58,6 +58,12 @@ at least one second at initialization. The IMU primitive can start later because
 the Livox driver itself already publishes its IMU. Gyro propagation follows fast
 tilt; a two-second accelerometer correction rejects magnitude errors over 8% and
 direction jumps over 5 degrees. Initial gyro bias is measured while stationary.
+Each cloud is rotated by the attitude at the midpoint of its per-point
+`timestamp` span (Livox absolute nanoseconds; ~0.1 s sweep), not at the header
+stamp, which is the first point; on the walking G1 this cut the median floor
+tilt error from about 1.0 to 0.35 degrees. Clouds without a usable per-point
+timestamp fall back to the header stamp with a throttled warning. Header and TF
+stamps are unchanged.
 This does not perform per-point deskew, estimate height, or identify arbitrary
 sustained linear acceleration; walking still requires hardware validation.
 
