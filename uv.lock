@@ -28,6 +28,7 @@ resolution-markers = [
 members = [
     "robonix",
     "robonix-api",
+    "robonix-camera-rtsp",
     "robonix-chronos-clock",
     "robonix-memgraph",
     "robonix-scene-verifier",
@@ -3671,6 +3672,25 @@ requires-dist = [
     { name = "pyyaml", specifier = ">=6" },
 ]
 provides-extras = ["codegen"]
+
+[[package]]
+name = "robonix-camera-rtsp"
+version = "1.1.0"
+source = { editable = "services/camera_rtsp" }
+dependencies = [
+    { name = "grpcio" },
+    { name = "grpcio-tools" },
+    { name = "protobuf" },
+    { name = "robonix-api" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "grpcio", specifier = "==1.80.0" },
+    { name = "grpcio-tools", specifier = "==1.76.0" },
+    { name = "protobuf", specifier = "==6.33.6" },
+    { name = "robonix-api", editable = "pylib/robonix-api" },
+]
 
 [[package]]
 name = "robonix-chronos-clock"

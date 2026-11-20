@@ -1,0 +1,25 @@
+# SPDX-License-Identifier: MulanPSL-2.0
+# Robonix reference service: republish a ROS 2 RGB stream as RTSP.
+
+[project]
+name = "robonix-camera-rtsp"
+version = "1.1.0"
+description = "Camera RGB to RTSP service for Robonix"
+requires-python = ">=3.10"
+dependencies = [
+    # The service imports grpc and the generated stubs import protobuf. Pinned
+    # to the versions rbnx codegen produces, so a stub and its runtime cannot
+    # drift apart across a rebuild.
+    "grpcio==1.80.0",
+    "grpcio-tools==1.76.0",
+    "protobuf==6.33.6",
+    "robonix-api",
+]
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+[tool.setuptools.packages.find]
+include = ["camera_rtsp*"]
+
+[tool.uv.sources]
+robonix-api = { workspace = true }

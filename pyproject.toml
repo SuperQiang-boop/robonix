@@ -40,6 +40,7 @@ members = [
     "pylib/*",        # shared Python libs (robonix-api, …)
     "system/scene",   # only Python-implemented system component today
     "system/chronos/clock", # optional Python bindings for the Rust clock library
+    "services/camera_rtsp",
     "services/memory",
     "services/memsearch",
     "services/speech",
