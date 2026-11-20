@@ -713,10 +713,10 @@ async def goal_near(req: GoalNear_Request) -> GoalNear_Response:
         # approach side.
         approach_ang = None
 
-    # A caller that names a heading gets that side of the object instead of the
-    # one facing the robot. The flag is what says a heading was named: 0.0 is a
-    # real heading along +x, so the value alone cannot.
-    if getattr(req, "has_approach_yaw", False):
+    # A caller that names a side of the object gets it preferred over the side
+    # facing the robot. The flag is what says a side was named: 0.0 is a real
+    # direction, so the value alone cannot.
+    if req.has_approach_yaw:
         approach_ang = float(req.approach_yaw)
 
     if _HUB is None or not _HUB.has("occupancy_grid"):

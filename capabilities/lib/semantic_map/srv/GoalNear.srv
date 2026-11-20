@@ -8,11 +8,13 @@
 # should pick a different target. `reason` is a short human-readable
 # string for both branches.
 #
-# `approach_yaw` is the heading, in radians in the map frame, that the
-# returned pose faces. It applies only when `has_approach_yaw` is set: a
-# float64 cannot carry "unset", and 0.0 is a real heading along +x, so the
-# flag is what separates a requested heading from an absent one. Without it
-# the service turns the robot towards the object.
+# `approach_yaw` names the side of the object the pose should be taken from,
+# in radians in the map frame. It only orders the candidates: the returned yaw
+# always turns towards the object, and the opposite side is still returned when
+# the preferred one has no footprint-safe cell, so `reachable=true` does not
+# promise the requested side. `has_approach_yaw` is what says a side was named,
+# because 0.0 is a real direction and a float64 cannot carry "unset". Without
+# it the pose faces the robot's own approach.
 
 string object_id
 bool has_approach_yaw
