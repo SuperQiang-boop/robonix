@@ -1,0 +1,13 @@
+manifestVersion: 1
+package:
+  name: com.robonix.service.camera_rtsp
+  version: 0.1.0
+  vendor: robonix
+  description: Publish a camera RGB ROS 2 stream to a configured RTSP endpoint.
+  license: MulanPSL-2.0
+build: bash scripts/build.sh
+start: bash scripts/start.sh
+stop: bash scripts/stop.sh
+capabilities:
+  - name: robonix/service/camera_rtsp/driver
+  - name: robonix/service/camera_rtsp/get_stream

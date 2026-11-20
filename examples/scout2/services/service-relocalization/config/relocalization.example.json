@@ -1,0 +1,12 @@
+{
+  "capture": {
+    "scan_duration_ns": null,
+    "header_is_end": null
+  },
+  "base_from_sensor": null,
+  "registration": {
+    "base_z": null,
+    "roll": null,
+    "pitch": null
+  }
+}

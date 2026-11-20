@@ -1,0 +1,21 @@
+# colcon + rbnx build artefacts
+rbnx-build/
+build/
+install/
+log/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.venv/
+
+# Editor
+.vscode/
+.idea/
+*.swp
+
+# Runtime logs and editor backup files
+logs/
+*.bak

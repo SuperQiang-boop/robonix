@@ -1,0 +1,12 @@
+[contract]
+id      = "robonix/skill/g1_basic_movement/move"
+version = "1"
+kind    = "skill"
+idl     = "g1_basic_movement/srv/Move.srv"
+description = "Move the G1 robot with specified linear/angular velocity for a given duration."
+
+[mode]
+type = "rpc"
+
+[semantics]
+user_invocable = true

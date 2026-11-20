@@ -1,0 +1,42 @@
+# Scout2 RTAB-Map configuration
+# Copy of service-map-rbnx/config/rtabmap_params.template.yaml
+# tuned for Scout2 (0.925 × 0.38 m mobile base, RealSense + 2D/3D LiDAR).
+
+RGBD/CreateOccupancyGrid: true
+Grid/RangeMax: 6.0
+Grid/CellSize: 0.05
+Grid/RayTracing: true
+Grid/3D: false
+Grid/NormalsSegmentation: false
+Grid/MaxObstacleHeight: 1.0
+Grid/MaxGroundHeight: 0.1
+Grid/FootprintLength: 0.96
+Grid/FootprintWidth: 0.64
+Grid/RangeMin: 0.10
+Reg/Strategy: 1
+Reg/Force3DoF: true
+Optimizer/Strategy: 1
+RGBD/NeighborLinkRefining: true
+RGBD/ProximityBySpace: true
+RGBD/AngularUpdate: 0.1
+RGBD/LinearUpdate: 0.1
+Vis/MinInliers: 12
+Rtabmap/DetectionRate: 1.0
+# The chassis publishes an identity odometry sample while its driver is
+# reconnecting after boot. Do not split the restored graph into a new map on
+# that transient reset; wait for a sustained reset before accepting it.
+# Keep the database on disk with a recoverable SQLite journal. Working-memory
+# nodes are included by periodic optimized-map export or graceful shutdown.
+DbSqlite3/InMemory: false
+DbSqlite3/JournalMode: 0
+DbSqlite3/Synchronous: 2
+# Make earlier sessions available for matching when extending the saved map.
+# This trades startup time and RAM for historical coverage.
+Mem/InitWMWithAllNodes: true
+# Keep the restored database in its existing internal map. The chassis emits
+# identity odometry while reconnecting; RTAB-Map counts every such message,
+# so zero or a small value would quickly hide historical nodes in a new map.
+Odom/ResetCountdown: 1000000
+Icp/MaxCorrespondenceDistance: 0.2
+Icp/MaxTranslation: 0.5
+Icp/MaxRotation: 0.78

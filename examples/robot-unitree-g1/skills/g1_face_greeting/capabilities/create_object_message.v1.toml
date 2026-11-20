@@ -1,0 +1,8 @@
+[contract]
+id = "robonix/skill/g1_face_greeting/create_object_message"
+version = "1"
+kind = "skill"
+idl = "g1_face_greeting/srv/CreateObjectFaceMessage.srv"
+description = "Save a one-time message for an exactly registered person and bind it to one unique current Scene object by object_label. The object is checked later by stable object ID. Do not claim delivery."
+[mode]
+type = "rpc"

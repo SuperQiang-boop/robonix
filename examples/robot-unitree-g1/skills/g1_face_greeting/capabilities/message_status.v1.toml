@@ -1,0 +1,8 @@
+[contract]
+id = "robonix/skill/g1_face_greeting/message_status"
+version = "1"
+kind = "skill"
+idl = "g1_face_greeting/srv/FaceMessageStatus.srv"
+description = "Look up a face-message task by task_id and refresh tracked object existence through Scene. object_status present means Scene still lists it, removed means Scene no longer lists it, unknown means Scene could not be queried."
+[mode]
+type = "rpc"

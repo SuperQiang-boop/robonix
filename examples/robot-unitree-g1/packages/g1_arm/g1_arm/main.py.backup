@@ -1,0 +1,156 @@
+#!/usr/bin/env python3
+"""Robonix primitive for allowlisted Unitree G1 upper-arm preset actions."""
+
+from __future__ import annotations
+
+import logging
+import os
+import subprocess
+from pathlib import Path
+
+from robonix_api import Err, Ok, Primitive
+
+import g1_arm_pb2
+
+
+ACK = "G1_ARM_ACTIONS_APPROVED"
+ALLOWED_ACTIONS = {
+    "wave_hand",
+    "wave_hand_turn",
+    "shake_hand_stage_0",
+    "shake_hand_stage_1",
+    "shake_hand_toggle",
+}
+
+logging.basicConfig(
+    level=os.environ.get("G1_ARM_LOG_LEVEL", "INFO").upper(),
+    format="[g1_arm] %(levelname)s %(message)s",
+)
+log = logging.getLogger("g1_arm")
+
+arm = Primitive(id="g1_arm", namespace="robonix/primitive/arm")
+
+_package_root = Path(
+    os.environ.get("RBNX_PACKAGE_ROOT", str(Path(__file__).resolve().parents[1]))
+).resolve()
+_helper = _package_root / "rbnx-build" / "sdk" / "install" / "bin" / "g1_arm_action_cli"
+_network_interface = ""
+_allow_actions = False
+_acknowledgement = ""
+_timeout_s = 15.0
+
+
+def _as_bool(value: object, default: bool = False) -> bool:
+    """Parse Robonix manifest/env booleans and reject ambiguous text."""
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    text = str(value).strip().casefold()
+    if text in {"1", "true", "yes", "on"}:
+        return True
+    if text in {"0", "false", "no", "off", ""}:
+        return False
+    raise ValueError(f"invalid boolean value {value!r}")
+
+
+def _response(action: str, accepted: bool, detail: str):
+    """Build the generated action response with a normalized action echo."""
+    return g1_arm_pb2.RunArmAction_Response(
+        accepted=accepted,
+        detail=detail,
+        action=action,
+    )
+
+
+@arm.on_init
+def init(config: dict):
+    """Validate static config and keep SDK2 unopened until an action call."""
+    global _network_interface, _allow_actions, _acknowledgement, _timeout_s
+    try:
+        _network_interface = str(
+            config.get(
+                "network_interface",
+                os.environ.get("G1_NETWORK_INTERFACE", ""),
+            )
+        ).strip()
+        _allow_actions = _as_bool(
+            config.get("allow_actions", os.environ.get("G1_ARM_ACTIONS_ENABLED")),
+            False,
+        )
+        _acknowledgement = str(
+            config.get(
+                "action_ack",
+                os.environ.get("G1_ARM_ACTION_ACK", ""),
+            )
+        ).strip()
+        _timeout_s = float(config.get("action_timeout_s", 15.0))
+    except (TypeError, ValueError) as exc:
+        return Err(f"invalid g1 arm config: {exc}")
+
+    if not _helper.is_file() or not os.access(_helper, os.X_OK):
+        return Err(f"g1 arm action helper not built: {_helper}")
+    if _allow_actions and not _network_interface:
+        return Err("network_interface is required when allow_actions=true")
+    log.info(
+        "initialized with actions=%s interface=%s",
+        "enabled" if _allow_actions else "disabled",
+        _network_interface or "<unset>",
+    )
+    return Ok()
+
+
+@arm.grpc("robonix/primitive/arm/action")
+def run_arm_action(req: "g1_arm_pb2.RunArmAction_Request"):
+    """Execute one allowlisted SDK2 preset action through the helper."""
+    action = str(req.action or "").strip()
+    if action not in ALLOWED_ACTIONS:
+        allowed = ", ".join(sorted(ALLOWED_ACTIONS))
+        return _response(action, False, f"unsupported action; allowed: {allowed}")
+    if not _allow_actions:
+        return _response(action, False, "G1 arm actions are disabled")
+    if _acknowledgement != ACK:
+        return _response(action, False, f"exact acknowledgement required: {ACK}")
+
+    env = os.environ.copy()
+    lib_dir = _package_root / "rbnx-build" / "sdk" / "install" / "lib"
+    env["LD_LIBRARY_PATH"] = f"{lib_dir}:{env.get('LD_LIBRARY_PATH', '')}"
+    argv = [
+        str(_helper),
+        "--interface",
+        _network_interface,
+        "--action",
+        action,
+        "--motion-ack",
+        _acknowledgement,
+    ]
+    try:
+        result = subprocess.run(
+            argv,
+            env=env,
+            cwd=str(_package_root),
+            text=True,
+            capture_output=True,
+            timeout=_timeout_s,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return _response(action, False, f"action timed out after {_timeout_s:.1f}s")
+    except OSError as exc:
+        return _response(action, False, f"failed to start helper: {exc}")
+
+    output = (result.stdout + result.stderr).strip()
+    if result.returncode != 0:
+        detail = output or f"helper exited with code {result.returncode}"
+        return _response(action, False, detail)
+    return _response(action, True, output or "accepted")
+
+
+@arm.on_shutdown
+def shutdown():
+    """No persistent SDK2 resources are held by the Python provider."""
+    return Ok()
+
+
+if __name__ == "__main__":
+    arm.run()

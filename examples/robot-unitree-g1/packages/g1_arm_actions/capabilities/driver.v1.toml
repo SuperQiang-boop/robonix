@@ -1,0 +1,9 @@
+[contract]
+id      = "robonix/skill/g1_arm_actions/driver"
+version = "1"
+kind    = "skill"
+idl     = "lifecycle/srv/Driver.srv"
+
+[mode]
+type = "rpc"
+

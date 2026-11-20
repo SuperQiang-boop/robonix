@@ -1,0 +1,9 @@
+[contract]
+id          = "robonix/primitive/audio/speaker"
+version     = "1"
+kind        = "primitive"
+idl         = "audio/msg/AudioChunk.msg"
+description = "16 kHz mono s16le PCM playback on the Unitree G1 speaker."
+
+[mode]
+type = "topic_in"

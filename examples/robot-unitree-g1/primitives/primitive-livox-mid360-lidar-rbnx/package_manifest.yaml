@@ -1,0 +1,54 @@
+# Livox MID-360 lidar primitive for Ranger Mini.
+#
+# Wraps the upstream `livox_ros_driver2` (vendored under
+# src/livox_ros_driver2 — colcon-built into rbnx-build/ws/install during
+# `rbnx build`). Atlas-registers the PointCloud2 topic under the
+# `primitive/lidar/*` namespace so consumers (mapping_rbnx, scene)
+# discover the topic name via atlas — no hardcoded `/scanner/cloud`
+# paths on the consumer side.
+#
+# Scope: this package owns the `primitive/lidar/*` namespace and ONLY
+# that namespace. The MID-360 device also produces an IMU stream
+# (`/livox/imu` published as a side-effect of the same upstream
+# launch), but the IMU contract surface lives in a SEPARATE package
+# (`mid360_imu_rbnx`) which subscribes to that topic and atlas-registers
+# it under `primitive/imu/*`. Robonix's invariant is "one primitive
+# namespace = one package"; mixing lidar + imu in one package would
+# violate it.
+#
+# Lifecycle: start.sh launches the atlas bridge ONLY (no ROS spawn).
+# `rbnx boot` then calls `Driver(CMD_INIT, config_json)` on the
+# primitive/lidar/driver gRPC interface — that handler parses config,
+# starts the upstream livox launch (which publishes both lidar AND
+# imu topics on the host bus, even though we only atlas-route the
+# lidar one), waits for the first PointCloud2, and only THEN declares
+# the lidar3d data interface on atlas.
+#
+# Capability surface (mode = abstract pattern, transport = wire):
+#   lifecycle/driver               mode=rpc        transport=gRPC (shared)
+#   primitive/lidar/lidar3d        mode=topic_out  transport=ROS2  PointCloud2 PointXYZRTLT
+#   primitive/lidar/lidar_snapshot mode=rpc        transport=MCP   (TODO)
+#
+# Config (passed via `Driver(CMD_INIT, config_json)`):
+#   lidar_topic        default "/scanner/cloud"      (matches our lddc.cpp patch)
+#   imu_topic          default "/livox/imu"
+#   lidar_ip           default 192.168.1.161         (override per robot)
+#   host_ip            default auto from `ip route get <lidar_ip>`
+#   xfer_format        default 0                     (ROS2 PointCloud2)
+#   sentinel_timeout_s default 30.0
+manifestVersion: 1
+
+package:
+  name: robonix.primitive.livox.mid360.lidar
+  version: 0.1.0
+  description: Livox MID-360 lidar driver wrapper.
+  tags: [primitive, lidar, livox, mid360, pointcloud]
+  maintainers: [wheatfox <wheatfox17@icloud.com>]
+  license: MulanPSL-2.0
+
+build: bash scripts/build.sh
+start: bash scripts/start.sh
+
+capabilities:
+  - name: robonix/primitive/lidar/lidar3d
+  - name: robonix/primitive/lidar/lidar_snapshot

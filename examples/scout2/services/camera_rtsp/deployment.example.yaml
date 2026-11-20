@@ -1,0 +1,11 @@
+# Merge after the camera primitive in your deployment; this is not a full robot deployment.
+service:
+  - name: camera_rtsp
+    path: ${ROBONIX_SOURCE_PATH}/services/camera_rtsp
+    config:
+      camera_provider_id: your_camera_provider
+      rtsp_url: rtsp://127.0.0.1:8554/camera
+      manage_server: true
+      fps: 15
+      startup_timeout: 25
+      frame_timeout: 5

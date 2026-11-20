@@ -60,6 +60,10 @@ target
 
 rbnx-boot
 
+# Upstream packages a local deployment stages itself before boot; large and
+# reproducible from its manifest, so it stays out of the tree.
+examples/robot-unitree-g1/third_party/
+
 # generated PDFs (developer guide etc.) — keep .md only
 *.pdf
 

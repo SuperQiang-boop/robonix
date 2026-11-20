@@ -1,0 +1,10 @@
+[contract]
+id      = "robonix/primitive/arm/action"
+version = "1"
+kind    = "primitive"
+idl     = "g1_arm/srv/RunArmAction.srv"
+description = "Execute an allowlisted Unitree G1 preset upper-arm action."
+
+[mode]
+type = "rpc"
+

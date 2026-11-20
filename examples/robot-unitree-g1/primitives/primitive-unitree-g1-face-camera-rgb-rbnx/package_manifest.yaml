@@ -1,0 +1,18 @@
+# G1 face camera RGB bridge. The camera driver is owned by the robot stack;
+# this package only exposes its existing ROS 2 image topic through Atlas.
+manifestVersion: 1
+
+package:
+  name: robonix.primitive.unitree-g1.face-camera-rgb
+  version: 0.1.0
+  description: Unitree G1 face camera RGB topic bridge.
+  tags: [primitive, camera, rgb, unitree, g1]
+  maintainers: [robonix]
+  license: Apache-2.0
+
+build: bash scripts/build.sh
+start: bash scripts/start.sh
+
+capabilities:
+  - name: robonix/primitive/camera/driver
+  - name: robonix/primitive/camera/rgb

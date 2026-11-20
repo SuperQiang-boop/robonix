@@ -1,0 +1,5 @@
+rbnx-build/
+data/
+__pycache__/
+*.egg-info/
+build/

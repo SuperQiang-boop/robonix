@@ -1,0 +1,20 @@
+manifestVersion: 1
+
+package:
+  name: robonix.skill.unitree.g1.arm_actions
+  version: 0.1.0
+  description: User-invocable skill for allowlisted Unitree G1 upper-arm preset actions.
+  license: Apache-2.0
+  tags: [skill, arm, unitree, g1, humanoid]
+  maintainers:
+    - Origamii520 <zxq13204030517@163.com>
+
+build: bash scripts/build.sh
+start: bash scripts/start.sh
+
+capabilities:
+  - name: robonix/skill/g1_arm_actions/driver
+    path: capabilities/driver.v1.toml
+  - name: robonix/skill/g1_arm_actions/run
+    path: capabilities/run.v1.toml
+

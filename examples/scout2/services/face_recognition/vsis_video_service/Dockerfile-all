@@ -1,0 +1,30 @@
+FROM ubuntu:22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV TZ=Asia/Shanghai
+ENV LD_LIBRARY_PATH=/vsis_video_service/bin:/vsis_video_service/third_party/inspireface_sdk/lib
+
+RUN apt-get update && apt-get install -y \
+    ca-certificates \
+    build-essential \
+    cmake \
+    libsqlite3-dev \
+    libopencv-dev \
+    ffmpeg \
+    libssl-dev \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /vsis_video_service
+COPY . .
+
+RUN cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && \
+    cmake --build build -j$(nproc)
+
+RUN rm -rf face_enroll/build && \
+    cmake -S face_enroll -B face_enroll/build && \
+    cmake --build face_enroll/build -j$(nproc)
+
+RUN chmod +x start.sh
+
+CMD ["/vsis_video_service/start.sh"]

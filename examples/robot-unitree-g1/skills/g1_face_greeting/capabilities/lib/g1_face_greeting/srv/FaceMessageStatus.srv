@@ -1,0 +1,6 @@
+string task_id
+---
+bool found
+string task_json
+string object_status
+string detail

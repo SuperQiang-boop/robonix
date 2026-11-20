@@ -1,0 +1,11 @@
+[project]
+name = "robonix-face-recognition-bridge"
+version = "0.1.0"
+description = "Robonix bridge for the VSIS face recognition service"
+requires-python = ">=3.10"
+dependencies = ["robonix-api>=0.1.0rc1"]
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+[tool.setuptools.packages.find]
+include = ["face_recognition*"]

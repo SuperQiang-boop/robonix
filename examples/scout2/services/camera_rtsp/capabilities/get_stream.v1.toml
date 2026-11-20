@@ -1,0 +1,8 @@
+[contract]
+id = "robonix/service/camera_rtsp/get_stream"
+version = "1"
+kind = "service"
+idl = "camera_rtsp/srv/GetStream.srv"
+description = "Return the configured camera RTSP publication state and URL."
+[mode]
+type = "rpc"

@@ -1,0 +1,6 @@
+# The service resolves generation and database digest from the currently loaded map snapshot.
+string map_id
+---
+bool accepted
+string request_id
+string detail

@@ -1,0 +1,25 @@
+# 日志
+log:
+  mode: 2     # 0=仅控制台 1=仅文件 2=控制台+文件
+  level: 1    # 0=trace 1=debug 2=info 3=warn 4=err 5=critical
+
+# 视频采集 (M2)
+video:
+  # rtsp:// 开头 → FFmpeg/TCP 拉流 (狗上); 其余按 V4L2 设备 (x86 上填 "0" 用 Logi)
+  source: "rtsp://192.168.101.150:8554/camera"
+  # source: "/dev/video0"
+  reconnect_interval_ms: 3000   # 断流后重连间隔
+  width: 1280                   # V4L2 请求分辨率 (RTSP 忽略; 0=相机默认)
+  height: 720
+
+face:
+  search_threshold: 0.45     # 识别判定线，只许 0.45~0.5
+  greet_cooldown_sec: 30
+  max_faces: 5
+  confirm_hits: 1
+  absent_sec: 3             # 离场判定秒数：超过该时长未见同一 id 则视为重新入场
+
+audio:
+  host: "127.0.0.1"
+  port: 10086
+  

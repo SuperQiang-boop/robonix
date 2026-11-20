@@ -1,0 +1,12 @@
+[contract]
+id      = "robonix/skill/g1_basic_movement/stop"
+version = "1"
+kind    = "skill"
+idl     = "g1_basic_movement/srv/Stop.srv"
+description = "Emergency stop — immediately zero all velocities on the G1 robot."
+
+[mode]
+type = "rpc"
+
+[semantics]
+user_invocable = true

@@ -1,0 +1,200 @@
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Robonix · mapping</title>
+
+<!-- Bootstrap 5.3 (MIT), vendored under vendor/ rather than pulled from a CDN:
+     this page is opened on a robot with no internet. Spacing, buttons, cards
+     and the dark theme come from it; style.css holds only what is specific to
+     a live map view. -->
+<link rel="stylesheet" href="/static/vendor/bootstrap.min.css" />
+<link rel="stylesheet" href="/static/style.css" />
+
+<svg class="d-none" aria-hidden="true">
+  <symbol id="i-save" viewBox="0 0 24 24">
+    <path d="M5 3h11l3 3v15H5z" />
+    <path d="M8 3v6h8V3M8 21v-7h8v7" />
+  </symbol>
+  <!-- Stacked layers: saved maps. Two bars read as a pause button. -->
+  <symbol id="i-library" viewBox="0 0 24 24">
+    <path d="M12 3l9 5-9 5-9-5 9-5z" />
+    <path d="M3 12.5l9 5 9-5" />
+    <path d="M3 17l9 5 9-5" />
+  </symbol>
+  <symbol id="i-pose" viewBox="0 0 24 24">
+    <circle cx="6" cy="18" r="2.2" />
+    <path d="M7.6 16.4L18 6" />
+    <path d="M13 6h5v5" />
+  </symbol>
+  <symbol id="i-reset" viewBox="0 0 24 24">
+    <path d="M20 12a8 8 0 1 1-2.3-5.6" />
+    <path d="M20 4v5h-5" />
+  </symbol>
+  <symbol id="i-fit" viewBox="0 0 24 24">
+    <path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" />
+  </symbol>
+  <symbol id="i-log" viewBox="0 0 24 24">
+    <path d="M5 5h14M5 10h14M5 15h9M5 20h9" />
+  </symbol>
+  <symbol id="i-close" viewBox="0 0 24 24">
+    <path d="M6 6l12 12M18 6L6 18" />
+  </symbol>
+</svg>
+
+<canvas id="mapcv"></canvas>
+
+<div class="overlay-tl d-flex flex-column gap-2">
+  <div class="card shadow border-secondary-subtle">
+    <div class="card-body d-flex align-items-center gap-2 py-2 px-3">
+      <span class="fw-semibold me-2"
+        >Robonix <span class="text-secondary fw-normal">mapping</span></span
+      >
+      <button
+        class="btn btn-sm btn-secondary tool"
+        id="tool-save"
+        onclick="togglePanel('savepanel')"
+      >
+        <svg><use href="#i-save" /></svg>Save
+      </button>
+      <button
+        class="btn btn-sm btn-secondary tool"
+        id="tool-library"
+        onclick="togglePanel('libpanel')"
+      >
+        <svg><use href="#i-library" /></svg>Library
+      </button>
+      <button class="btn btn-sm btn-secondary tool" id="btn-pose" onclick="togglePose()">
+        <svg><use href="#i-pose" /></svg>Pose estimate
+      </button>
+      <button class="btn btn-sm btn-danger tool" onclick="doReset()">
+        <svg><use href="#i-reset" /></svg>Reset map
+      </button>
+      <span class="vr mx-1"></span>
+      <button class="btn btn-sm btn-secondary tool" onclick="fitView()">
+        <svg><use href="#i-fit" /></svg>Fit
+      </button>
+      <button class="btn btn-sm btn-secondary tool" id="tool-log" onclick="togglePanel('logpanel')">
+        <svg><use href="#i-log" /></svg>Log
+      </button>
+    </div>
+  </div>
+
+  <div class="d-flex align-items-center gap-2 flex-wrap">
+    <div class="switch shadow" id="modeswitch">
+      <span class="knob" id="modeknob"></span>
+      <button class="swopt" id="btn-mapping" onclick="doSwitch('mapping')">Mapping</button>
+      <button class="swopt" id="btn-localization" onclick="doSwitch('localization')">
+        Localization
+      </button>
+    </div>
+    <span class="badge rounded-pill text-bg-dark border border-secondary-subtle" id="modebadge"
+      >mode: —</span
+    >
+    <span class="badge rounded-pill text-bg-dark border border-secondary-subtle" id="rangebadge"
+      >lidar: —</span
+    >
+    <span
+      class="badge rounded-pill text-bg-dark border border-secondary-subtle text-truncate mw-status"
+      id="status"
+      >connecting…</span
+    >
+  </div>
+
+  <div class="alert alert-warning align-items-center gap-2 py-2 px-3 mb-0 shadow" id="modewarn">
+    <strong class="flex-shrink-0">!</strong>
+    <span id="modewarntext" class="text-truncate small flex-grow-1 min-w-0"></span>
+    <button
+      class="btn btn-sm btn-outline-warning py-0 px-2 flex-shrink-0"
+      onclick="explainModeRisk()"
+    >
+      Why?
+    </button>
+  </div>
+</div>
+
+<div id="posehint" class="card shadow border-warning-subtle">
+  <div class="card-body py-2 px-3">
+    <div class="d-flex align-items-center gap-2">
+      <span class="phdemo" aria-hidden="true"
+        ><svg viewBox="0 0 66 16" width="66" height="16">
+          <circle class="phdot" cx="7" cy="8" r="2.5" />
+          <g class="phreveal">
+            <line class="phline" x1="7" y1="8" x2="52" y2="8" />
+            <polygon class="phhead" points="52,3.5 62,8 52,12.5" />
+          </g></svg
+      ></span>
+      <b class="text-warning-emphasis">Press where the robot is, then drag the way it faces.</b>
+    </div>
+    <div class="small text-secondary mt-1">
+      Release to seed. A short drag will not be accepted — the heading has to be unambiguous. Esc
+      cancels.
+    </div>
+  </div>
+</div>
+
+<div class="panel card shadow-lg border-secondary-subtle" id="savepanel">
+  <div class="card-header d-flex align-items-center justify-content-between py-2">
+    <span class="fw-semibold small">Save current map</span>
+    <button class="btn btn-sm btn-link p-0 text-secondary" onclick="togglePanel('savepanel')">
+      <svg class="ico"><use href="#i-close" /></svg>
+    </button>
+  </div>
+  <div class="card-body">
+    <div class="input-group input-group-sm">
+      <input id="saveid" class="form-control" placeholder="map_id e.g. lab_3f" />
+      <button class="btn btn-primary" onclick="doSave()">Save</button>
+    </div>
+    <div class="form-text">
+      A published map is immutable: saving under a name that already exists is refused, and a
+      corrected map goes under a new one.
+    </div>
+  </div>
+</div>
+
+<div class="panel card shadow-lg border-secondary-subtle" id="libpanel">
+  <div class="card-header d-flex align-items-center justify-content-between py-2">
+    <span class="fw-semibold small">Saved maps</span>
+    <button class="btn btn-sm btn-link p-0 text-secondary" onclick="togglePanel('libpanel')">
+      <svg class="ico"><use href="#i-close" /></svg>
+    </button>
+  </div>
+  <div class="card-body overflow-auto"><div id="lib" class="d-flex flex-column gap-2"></div></div>
+</div>
+
+<div class="panel card shadow-lg border-secondary-subtle" id="logpanel">
+  <div class="card-header d-flex align-items-center justify-content-between py-2">
+    <span class="fw-semibold small">Activity log</span>
+    <button class="btn btn-sm btn-link p-0 text-secondary" onclick="togglePanel('logpanel')">
+      <svg class="ico"><use href="#i-close" /></svg>
+    </button>
+  </div>
+  <div class="card-body overflow-auto"><div id="logbox" class="font-monospace small"></div></div>
+</div>
+
+<div class="position-fixed bottom-0 start-0 m-3 small text-secondary" id="maphint">
+  drag = pan · wheel = zoom · double-click = fit · green = live lidar returns
+</div>
+
+<div id="busy">
+  <div class="card border-secondary-subtle shadow-lg text-center" id="busybox">
+    <div class="card-body px-4 py-4">
+      <div class="spinner-border text-primary" role="status"></div>
+      <h6 class="mt-3 mb-2" id="busytitle"></h6>
+      <div class="small text-secondary" id="busybody"></div>
+    </div>
+  </div>
+</div>
+
+<div id="modal">
+  <div class="card border-secondary-subtle shadow-lg" id="modalbox">
+    <div class="card-body p-4">
+      <h5 class="mb-3" id="modaltitle"></h5>
+      <div id="modalbody" class="small text-body-secondary"></div>
+      <div class="d-flex justify-content-end gap-2 mt-4">
+        <button class="btn btn-sm btn-secondary" id="modalno">Cancel</button>
+        <button class="btn btn-sm btn-danger" id="modalyes">Continue</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="/static/app.js"></script>

@@ -1,0 +1,8 @@
+[contract]
+id = "robonix/service/relocalization/cancel"
+version = "1"
+kind = "service"
+idl = "relocalization/srv/Cancel.srv"
+description = "Cancel a relocalization request and invalidate its result."
+[mode]
+type = "rpc"
