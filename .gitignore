@@ -32,6 +32,10 @@ rust/debug
 rust/provider/
 .artifacts/
 rbnx-boot
+
+# Pilot tests write session transcripts under the crate directory, where
+# `cargo test` runs them.
+system/pilot/sessions/
 tmp*
 .libero/
 
