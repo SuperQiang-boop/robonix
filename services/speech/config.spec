@@ -293,8 +293,12 @@ properties:
     type: string
     x-group: Custom backend
     description: >-
-      TTS class as module:Class for custom mode. Empty leaves TTS
-      UNAVAILABLE. Environment fallback: SPEECH_TTS_BACKEND_CLASS.
+      TTS class as module:Class. Overrides the backend that speech_backend
+      would otherwise select, so a robot with its own synthesis can keep it
+      while ASR stays local. Empty changes nothing, and leaves TTS
+      UNAVAILABLE in custom mode. A class that fails to import fails
+      Driver(CMD_INIT) instead of falling back to Edge TTS. Environment
+      fallback: SPEECH_TTS_BACKEND_CLASS.
     default: ""
   # In custom mode a class string without ":" or a module that fails to
   # import fails Driver(CMD_INIT).
