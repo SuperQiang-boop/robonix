@@ -155,19 +155,24 @@ impl HistoryBudget {
     }
 }
 
+/// Whether the greeting encounter a task belongs to may still act.
+///
+/// A refusal is logged here so no call site can drop the task silently: the
+/// encounter is over, and filing the task would answer a face match with motion.
+fn admit_greeting_task(task: &Task) -> bool {
+    if greeting::greeting_task_allowed(task) {
+        return true;
+    }
+    warn!(
+        "[pilot/greeting] refused a task for an encounter that already ended: {}",
+        task.text.trim()
+    );
+    false
+}
+
 /// Take in a user message (a request or a steer): file it with the session's
 /// tasks and put it in history once, labelled with its id and task.
 fn receive_user_message(task: &Task, history: &mut Vec<Message>, tasks: &mut TaskTable) -> bool {
-    // A greeting task carries the encounter its voice authorization was issued
-    // for. Once that encounter is over, filing the task would answer a face
-    // match with motion, so the message is dropped and the drop is logged.
-    if !greeting::greeting_task_allowed(task) {
-        warn!(
-            "[pilot/greeting] dropped a task for an encounter that already ended: {}",
-            task.text.trim()
-        );
-        return false;
-    }
     let Some(message) = tasks.receive(&task.text) else {
         return false;
     };
@@ -995,6 +1000,9 @@ async fn fetch_executor_active_snapshot(executor: &mut ExecutorConn) -> (String,
 /// the caller knows to re-plan. The model decides for itself whether the steer
 /// requires a root plan-control meta op.
 fn append_steer(task: Task, history: &mut Vec<Message>, tasks: &mut TaskTable) -> bool {
+    if !admit_greeting_task(&task) {
+        return false;
+    }
     let pulled = receive_user_message(&task, history, tasks);
     if pulled {
         info!("[pilot/steer] mid-task input: {}", task.text.trim());
@@ -1381,6 +1389,21 @@ pub async fn run_turn(
 
     // 2. Take in the user's message: Pilot files it under a task and puts it in
     // history once, with its id. Compaction keeps the open tasks' messages.
+    // A refused greeting request ends the turn: without its message the planner
+    // would answer from stale context and act on an encounter that is over.
+    if !admit_greeting_task(task) {
+        let _ = tx
+            .send(Ok(service::pack(
+                &session_id,
+                PilotStreamBody::Status(SessionStatusEvent {
+                    session_id: session_id.clone(),
+                    state: SessionState::Failed as u32,
+                    message: "the greeting encounter this request belongs to already ended".into(),
+                }),
+            )))
+            .await;
+        return Ok(());
+    }
     receive_user_message(task, history, tasks);
     if !memory_prompt.is_empty() {
         history.push(Message::user(&memory_prompt));

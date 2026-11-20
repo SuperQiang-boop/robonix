@@ -48,6 +48,7 @@ and file precedence, including explicit key overrides and protocol validation.
 - `ROBONIX_PILOT_MAX_TOOL_ROUNDS`: maximum RTDL execution rounds per turn. Defaults to `64`.
 - `ROBONIX_PILOT_VLM_IDLE_TIMEOUT_SECS`: maximum time without a VLM stream event before ending the turn and canceling its submitted plan. Defaults to `30` seconds and is clamped to `5..=300`. Non-empty `reasoning_content` deltas refresh this timer but are not appended to the assistant JSON.
 - `ROBONIX_SESSION_DIR`: where session transcripts are kept (see Session transcripts). `rbnx boot` sets it; defaults to `./sessions`.
+- `ROBONIX_GREETING_STATE_PATH`: optional JSON state file for a face-greeting deployment. When set, Pilot refuses a task whose `greeting_event_id` no longer matches the current encounter, and a Stop writes `<path>.stop` so late voice input for that encounter is refused too. Unset leaves every greeting gate inert.
 
 With a model catalog configured, `rbnx boot` restricts Pilot's inherited
 environment to the shared [runtime settings](../../pylib/robonix-api/robonix_api/llm/runtime_env.txt)

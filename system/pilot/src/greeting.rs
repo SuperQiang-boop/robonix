@@ -8,7 +8,10 @@
 //! it did before, so the state only matters where a deployment opts in.
 
 use crate::pb::pilot::Task;
+use robonix_scribe::warn;
 use serde_json::{Value, json};
+use std::collections::HashSet;
+use std::sync::{Mutex, OnceLock};
 
 /// Path of the state file, or `None` when this deployment does not greet.
 fn state_path() -> Option<String> {
@@ -17,23 +20,67 @@ fn state_path() -> Option<String> {
     (!path.is_empty()).then(|| path.to_string())
 }
 
+/// Report each distinct read failure once.
+///
+/// The state is read every round, so an unreadable file would otherwise repeat
+/// the same line forever. An operator still sees the cause of a held robot.
+fn report_once(reason: String) {
+    static SEEN: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+    let seen = SEEN.get_or_init(|| Mutex::new(HashSet::new()));
+    let first = seen
+        .lock()
+        .map(|mut seen| seen.insert(reason.clone()))
+        .unwrap_or(true);
+    if first {
+        warn!("[pilot/greeting] {reason}");
+    }
+}
+
+/// State used when the file exists but cannot be read or parsed.
+///
+/// It forbids motion: a greeting whose state is unknown may already own the
+/// floor, so the safe reading is "do not move".
+fn unreadable(detail: &str) -> Value {
+    json!({"movement_allowed": false, "detail": detail})
+}
+
+/// Read the state file, returning the path it came from.
+///
+/// Callers that write beside the file need the path, and re-deriving it from the
+/// environment would let a missing variable redirect the write into the process
+/// working directory instead of failing.
+fn read_state() -> Option<(String, Value)> {
+    let path = state_path()?;
+    match std::fs::read_to_string(&path) {
+        Ok(text) => match serde_json::from_str::<Value>(&text) {
+            Ok(value) if value.is_object() => Some((path, value)),
+            Ok(_) => {
+                report_once(format!("{path} is not a JSON object; holding movement"));
+                Some((path, unreadable("greeting state is not an object")))
+            }
+            Err(error) => {
+                report_once(format!(
+                    "{path} is not valid JSON ({error}); holding movement"
+                ));
+                Some((path, unreadable("greeting state is unparseable")))
+            }
+        },
+        Err(error) => {
+            if error.kind() != std::io::ErrorKind::NotFound {
+                report_once(format!("{path} cannot be read ({error}); holding movement"));
+            }
+            Some((path, unreadable("greeting state unavailable")))
+        }
+    }
+}
+
 /// Read the current greeting state.
 ///
 /// `None` means no greeting is in progress: the deployment does not greet, so no
 /// gate applies. `Some` with `movement_allowed: false` means the deployment
-/// greets but the state cannot be read, which has to block motion — a greeting
-/// whose state is unknown could already own the floor.
+/// greets but its state cannot be read, which has to block motion.
 pub(crate) fn greeting_state() -> Option<Value> {
-    let path = state_path()?;
-    Some(
-        std::fs::read_to_string(path)
-            .ok()
-            .and_then(|text| serde_json::from_str::<Value>(&text).ok())
-            .filter(Value::is_object)
-            .unwrap_or_else(
-                || json!({"movement_allowed": false, "detail": "greeting state unavailable"}),
-            ),
-    )
+    read_state().map(|(_, state)| state)
 }
 
 /// Whether this state forbids the robot from moving.
@@ -49,13 +96,13 @@ pub(crate) fn greeting_blocks(state: &Option<Value>) -> bool {
 /// that owns the state does not have to observe Pilot's write. A Stop for a
 /// different session leaves the current encounter untouched.
 pub(crate) fn stop_greeting(session_id: &str) -> std::io::Result<()> {
-    let Some(state) = greeting_state() else {
+    let Some((path, state)) = read_state() else {
         return Ok(());
     };
     if state["session_id"] != session_id {
         return Ok(());
     }
-    let path = state_path().unwrap_or_default() + ".stop";
+    let path = path + ".stop";
     let temporary = path.clone() + ".tmp";
     std::fs::write(
         &temporary,
@@ -75,14 +122,13 @@ pub(crate) fn greeting_task_allowed(task: &Task) -> bool {
     let Some(event_id) = context["greeting_event_id"].as_str() else {
         return true;
     };
-    let Some(state) = greeting_state() else {
+    let Some((path, state)) = read_state() else {
         return true;
     };
     if state["event_id"] != event_id || state["session_id"] != task.session_id {
         return false;
     }
-    let path = state_path().unwrap_or_default() + ".stop";
-    match std::fs::read_to_string(path) {
+    match std::fs::read_to_string(path + ".stop") {
         Ok(text) => serde_json::from_str::<Value>(&text).is_ok_and(|stopped| {
             stopped["event_id"] != event_id || stopped["session_id"] != task.session_id
         }),
@@ -118,5 +164,41 @@ mod tests {
             "s1",
             r#"{"modality":"voice"}"#
         )));
+    }
+
+    #[test]
+    fn a_stop_refuses_only_its_own_encounter() {
+        let dir = std::env::temp_dir().join(format!("pilot-greeting-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let state = dir.join("greeting_state.json");
+        std::fs::write(
+            &state,
+            json!({"session_id": "s1", "event_id": "e1", "movement_allowed": true}).to_string(),
+        )
+        .unwrap();
+        // SAFETY: no other test in this module reads the variable, and the two
+        // that call greeting_task_allowed either return before it is read or
+        // compare against a state this test cannot change.
+        unsafe { std::env::set_var("ROBONIX_GREETING_STATE_PATH", &state) };
+
+        let current = task("s1", r#"{"greeting_event_id":"e1"}"#);
+        let other = task("s1", r#"{"greeting_event_id":"e2"}"#);
+        let elsewhere = task("s2", r#"{"greeting_event_id":"e1"}"#);
+        assert!(greeting_task_allowed(&current));
+        assert!(!greeting_task_allowed(&other));
+        assert!(!greeting_task_allowed(&elsewhere));
+
+        stop_greeting("s1").unwrap();
+        assert!(
+            !greeting_task_allowed(&current),
+            "a Stop must refuse the encounter"
+        );
+        assert!(
+            std::fs::read_to_string(dir.join("greeting_state.json.stop")).is_ok(),
+            "the marker is written beside the state file"
+        );
+
+        unsafe { std::env::remove_var("ROBONIX_GREETING_STATE_PATH") };
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }
