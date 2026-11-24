@@ -23,7 +23,6 @@ FROM ${ROS_BASE_IMAGE}
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
 
 # ── aliyun apt + huawei pypi (tuna is ~35x slower here) ───────────────────────────────────────────────────
@@ -51,7 +50,10 @@ ENV PIP_INDEX_URL=https://repo.huaweicloud.com/repository/pypi/simple \
 #   tf2 / tf-transformations: pose lookups in atlas_bridge
 #   pointcloud_to_laserscan: depth → 2D scan adapter (used by dlio
 #     fallback paths and any future depth-only deploys)
-RUN apt-get update \
+# Debs survive across builds; the lists stay in the layer so the
+# image does not grow.
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    apt-get update \
  && apt-get install -y --no-install-recommends \
         python3-pip \
         python3-numpy \
@@ -65,7 +67,7 @@ RUN apt-get update \
         ros-humble-rmw-zenoh-cpp \
  && rm -rf /var/lib/apt/lists/*
 
-RUN pip install --no-cache-dir \
+RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked pip install \
         grpcio==1.80.0 \
         grpcio-tools==1.76.0 \
         protobuf==6.33.6 \

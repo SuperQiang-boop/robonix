@@ -15,7 +15,6 @@ FROM ${ROS_BASE_IMAGE}
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
 
 # ── aliyun apt + huawei pypi (tuna is ~35x slower here) ───────────────────────────────────────────────────
@@ -35,7 +34,10 @@ ENV PIP_INDEX_URL=https://repo.huaweicloud.com/repository/pypi/simple
 
 # Nav2 stack + tf + the pointcloud→laserscan adapter (for 3D-lidar-only
 # robots whose costmap wants a LaserScan).
-RUN apt-get update \
+# Debs survive across builds; the lists stay in the layer so the
+# image does not grow.
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    apt-get update \
  && apt-get install -y --no-install-recommends \
         python3-pip \
         python3-yaml \
@@ -58,10 +60,10 @@ RUN apt-get update \
 # AssertionError in get_topological_weights. That is a resolver bug rather than
 # a conflict between these requirements, and it is fixed in newer pip, so
 # upgrade before resolving anything.
-RUN pip install --no-cache-dir --upgrade 'pip>=24'
+RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked pip install --upgrade 'pip>=24'
 
 # grpcio-tools 1.83+ needs setuptools>=77, while ROS colcon-core requires <80.
-RUN pip install --no-cache-dir \
+RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked pip install \
         'setuptools>=77,<80' \
         grpcio>=1.60.0 \
         grpcio-tools>=1.60.0 \
