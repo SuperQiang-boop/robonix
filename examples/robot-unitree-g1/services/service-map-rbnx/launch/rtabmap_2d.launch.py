@@ -176,6 +176,14 @@ def _make_nodes(context, *args, **kwargs):
         "odom_frame_id": rtabmap_odom_frame,
         "map_frame_id": "map",
         "publish_tf": True,
+        # The chassis stamps odom->base_footprint from the SDK state's receive
+        # time, ~105 ms behind the Livox cloud's host-clock stamp. RTAB-Map looks
+        # that transform up at the cloud's stamp, so with the default 0.05 s it
+        # asks for a sample newer than the buffer holds and every lookup fails
+        # with "extrapolation into the future". Must stay a float: the deploy
+        # override path forwards RTAB-Map's slash-named params as strings, and a
+        # string here kills the node.
+        "tf_delay": 0.25,
         # Sensor subscriptions branch on what the deploy actually has.
         # rtabmap accepts EITHER 2D scan OR 3D scan_cloud (or both); the
         # 3D path is what real-robot Mid360 deployments use.
