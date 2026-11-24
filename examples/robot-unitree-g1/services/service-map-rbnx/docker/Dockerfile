@@ -26,24 +26,24 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
 
-# ── TUNA mirrors ───────────────────────────────────────────────────
+# ── aliyun apt + huawei pypi (tuna is ~35x slower here) ───────────────────────────────────────────────────
 # Swap apt sources (Ubuntu/ports + ROS 2) to TUNA. Use `find` + sed
 # --follow-symlinks because /etc/apt/sources.list.d/ros2.sources is
 # a symlink into /usr/share/ros-apt-source/ in the upstream ros image.
 RUN set -eux; \
     find /etc/apt/sources.list.d/ -maxdepth 1 \( -name '*.list' -o -name '*.sources' \) -print0 \
       | xargs -0 -r sed -i --follow-symlinks \
-          -e 's|http://packages\.ros\.org/ros2/ubuntu|https://mirrors.tuna.tsinghua.edu.cn/ros2/ubuntu|g' \
+          -e 's|http://packages\.ros\.org/ros2/ubuntu|https://mirrors.aliyun.com/ros2/ubuntu|g' \
           -e 's|^Types: deb deb-src$|Types: deb|'; \
     if [ -f /etc/apt/sources.list ]; then \
         sed -i --follow-symlinks \
-            -e 's|http://archive\.ubuntu\.com/ubuntu/\?|https://mirrors.tuna.tsinghua.edu.cn/ubuntu/|g' \
-            -e 's|http://security\.ubuntu\.com/ubuntu/\?|https://mirrors.tuna.tsinghua.edu.cn/ubuntu/|g' \
-            -e 's|http://ports\.ubuntu\.com/ubuntu-ports/\?|https://mirrors.tuna.tsinghua.edu.cn/ubuntu-ports/|g' \
+            -e 's|http://archive\.ubuntu\.com/ubuntu/\?|https://mirrors.aliyun.com/ubuntu/|g' \
+            -e 's|http://security\.ubuntu\.com/ubuntu/\?|https://mirrors.aliyun.com/ubuntu/|g' \
+            -e 's|http://ports\.ubuntu\.com/ubuntu-ports/\?|https://mirrors.aliyun.com/ubuntu-ports/|g' \
             /etc/apt/sources.list; \
     fi
-ENV PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple \
-    UV_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple \
+ENV PIP_INDEX_URL=https://repo.huaweicloud.com/repository/pypi/simple \
+    UV_INDEX_URL=https://repo.huaweicloud.com/repository/pypi/simple \
     HF_ENDPOINT=https://hf-mirror.com
 
 # Runtime deps:
