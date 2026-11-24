@@ -24,11 +24,15 @@ ARG HF_ENDPOINT=https://huggingface.co
 ARG DUALMAP_REPO=${GITHUB_PREFIX}https://github.com/Eku127/DualMap.git
 ARG MOBILECLIP_REPO=${GITHUB_PREFIX}https://github.com/apple/ml-mobileclip.git
 
+# A configured mirror can be down while github.com still answers, so every
+# remote here falls back to the origin URL.
 RUN set -e; export https_proxy=$PROXY http_proxy=$PROXY; \
     git clone --filter=blob:none ${DUALMAP_REPO} /opt/dualmap \
- && cd /opt/dualmap && git checkout --quiet ${DUALMAP_COMMIT} \
- && git -c submodule.3rdparty/mobileclip.url=${MOBILECLIP_REPO} submodule update --init 3rdparty/mobileclip \
- && rm -rf /opt/dualmap/.git /opt/dualmap/3rdparty/mobileclip/.git
+  || { rm -rf /opt/dualmap; git clone --filter=blob:none https://github.com/Eku127/DualMap.git /opt/dualmap; }; \
+    cd /opt/dualmap && git checkout --quiet ${DUALMAP_COMMIT}; \
+    git -c submodule.3rdparty/mobileclip.url=${MOBILECLIP_REPO} submodule update --init 3rdparty/mobileclip \
+  || git -c submodule.3rdparty/mobileclip.url=https://github.com/apple/ml-mobileclip.git submodule update --init 3rdparty/mobileclip; \
+    rm -rf /opt/dualmap/.git /opt/dualmap/3rdparty/mobileclip/.git
 
 # rerun-sdk comes from the base image: DualMap only imports it (Scene turns its
 # visualiser off), and the map pages need the base's version.
@@ -39,8 +43,10 @@ RUN set -e; export https_proxy=$PROXY http_proxy=$PROXY; \
  && python3 -c "import sys; sys.path.insert(0, '/opt/dualmap'); import dualmap, utils.object_detector, utils.local_map_manager; print('dualmap import ok')"
 
 RUN set -e; export https_proxy=$PROXY http_proxy=$PROXY; mkdir -p /opt/models/dualmap; \
-    curl -fsSL -o /opt/models/dualmap/FastSAM-s.pt \
+    { curl -fsSL -o /opt/models/dualmap/FastSAM-s.pt \
         ${GITHUB_PREFIX}https://github.com/ultralytics/assets/releases/download/v8.3.0/FastSAM-s.pt \
+   || curl -fsSL -o /opt/models/dualmap/FastSAM-s.pt \
+        https://github.com/ultralytics/assets/releases/download/v8.3.0/FastSAM-s.pt; } \
  && curl -fsSL -o /opt/models/dualmap/mobileclip_s2_datacompdr.bin \
         ${HF_ENDPOINT}/apple/MobileCLIP-S2-OpenCLIP/resolve/main/open_clip_pytorch_model.bin \
  && test "$(stat -c %s /opt/models/dualmap/mobileclip_s2_datacompdr.bin)" = 398202800 \
