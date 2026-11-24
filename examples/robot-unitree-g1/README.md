@@ -14,14 +14,21 @@ Unitree G1 bipedal humanoid robot deployment for Robonix semantic navigation.
 ## Getting Started
 
 ```bash
-# 1. Initialize SDK2 submodule
-git submodule update --init --recursive third_party/unitree_sdk2
+# 1. Fetch the Unitree SDK2 that the chassis, arm and audio primitives link
+#    against. It is not committed here: the tree is 290 MB of third-party code.
+#    The repository ships the static libraries for x86_64 and aarch64 plus the
+#    cyclonedds it needs, so a clone at this commit is all the build wants.
+git clone https://github.com/unitreerobotics/unitree_sdk2.git third_party/unitree_sdk2
+git -C third_party/unitree_sdk2 checkout 9754cd1
 
 # 2. Build
 bash build.sh
 
-# 3. Boot (no-motion for first-time)
-bash start.sh --no-motion
+# 3. Boot with motion disabled for the first run. `start.sh --no-motion`
+#    switches to robonix_manifest.no-motion.yaml, which this repository does not
+#    carry: either add that copy or set G1_ALLOW_MOTION: "false" in the manifest
+#    before booting.
+bash start.sh
 
 # 4. Boot with motion (after operator confirms)
 bash start.sh
