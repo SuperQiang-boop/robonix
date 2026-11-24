@@ -325,6 +325,24 @@ if [[ "${ROBONIX_FORCE_CPU:-0}" != "1" ]]; then
     fi
 fi
 
+# Match the host's Fast DDS interface selection inside Docker, the same way
+# mapping and navigation do. Without it the image keeps its own profile, which
+# has no interface whitelist: discovery then leaves by whichever interface the
+# kernel prefers (Wi-Fi, on a laptop wired to the robot) and never reaches the
+# robot. Reject a bad path before starting the container.
+declare -a FASTRTPS_ARGS=()
+if [[ -n "${FASTRTPS_DEFAULT_PROFILES_FILE:-}" ]]; then
+    if [[ ! -f "$FASTRTPS_DEFAULT_PROFILES_FILE" || ! -r "$FASTRTPS_DEFAULT_PROFILES_FILE" ]]; then
+        echo "[scene/start] Fast DDS profile is not a readable file: $FASTRTPS_DEFAULT_PROFILES_FILE" >&2
+        exit 2
+    fi
+    FASTRTPS_PROFILE="$(realpath -- "$FASTRTPS_DEFAULT_PROFILES_FILE")"
+    FASTRTPS_ARGS=(
+        -v "$FASTRTPS_PROFILE:/tmp/robonix-fastrtps.xml:ro"
+        -e FASTRTPS_DEFAULT_PROFILES_FILE=/tmp/robonix-fastrtps.xml
+    )
+fi
+
 declare -a SOURCE_MOUNTS=()
 if [[ "$PACKAGED" == "0" ]]; then
     SOURCE_MOUNTS=(-v "$PKG:/scene"
@@ -350,6 +368,7 @@ docker run --rm --cidfile "$RUN_DIR/cid" \
     -e ROBONIX_ADVERTISE_HOST="${ROBONIX_ADVERTISE_HOST:-}" \
     -e ROBONIX_CAPABILITY_ID="${ROBONIX_CAPABILITY_ID:-com.robonix.system.scene}" \
     -e ROBONIX_PKG_HOST_DIR="$(pwd)" \
+    ${FASTRTPS_ARGS[@]+"${FASTRTPS_ARGS[@]}"} \
     -e SCENE_WEB_PORT="${SCENE_WEB_PORT:-50107}" \
     -e SCENE_WEB_HOST="${SCENE_WEB_HOST-127.0.0.1}" \
     -e SCENE_LOG_LEVEL="${SCENE_LOG_LEVEL:-INFO}" \
