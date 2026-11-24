@@ -82,6 +82,9 @@ env:
 
 system:
   atlas: {listen: 0.0.0.0:50051, log: info}
+  # Wall time and clock quality for Pilot (robonix/system/chronos/get_wall_time).
+  # Chronos rejects unknown configuration keys, so it takes an empty block.
+  chronos: {}
   executor: {listen: 0.0.0.0:50061, log: info}
   pilot:
     listen: 0.0.0.0:50071
