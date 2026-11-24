@@ -25,6 +25,7 @@ from .perception_concept_graphs import (
     _depth_msg_to_metres,
     _header_stamp,
     _image_msg_to_bgr,
+    _visible_missing_uuids,
 )
 
 from .geometry_gates import KnownGround, fraction_on_known_ground  # noqa: E402
@@ -59,6 +60,13 @@ def _inst_color(uid: str) -> list[float]:
     return [0.35 + 0.65 * ((h >> 16) & 0xFF) / 255.0,
             0.35 + 0.65 * ((h >> 8) & 0xFF) / 255.0,
             0.35 + 0.65 * (h & 0xFF) / 255.0]
+
+
+def _centre(entry: dict) -> Any:
+    """Mean of a map entry's points."""
+    import numpy as np
+    pts = np.asarray(entry["pcd"].points, dtype=np.float64)
+    return pts.mean(axis=0) if len(pts) else np.zeros(3)
 
 
 def _overlap_fraction(a: tuple, b: tuple) -> float:
@@ -128,6 +136,10 @@ class DualMapDetector(ConceptGraphsDetector):
                                     ("downsample_voxel_size", "sim_threshold", "merge_sim_threshold")
                                     if self._dualmap_cfg.get(k) is not None})
         self._all_objects: list = []  # every track, for the Replica export
+        # Registered objects whose track DualMap dropped (see _keep_dropped).
+        self._dropped: dict[str, dict] = {}
+        self._last_entries: dict[str, dict] = {}
+        self._absent_streak: dict[str, int] = {}
         self._classes_file: Optional[str] = None
         self._classes_file_is_temp = False
         self._last_lm_size = -1
@@ -220,9 +232,31 @@ class DualMapDetector(ConceptGraphsDetector):
         os.makedirs(out_dir, exist_ok=True)
         weights = {k: os.environ.get(f"SCENE_DUALMAP_{k.upper()}_WEIGHTS", "").strip() or v
                    for k, v in _DEFAULT_WEIGHTS.items()}
-        for name, path in weights.items():
-            if not os.path.isfile(path):
-                log.warning("[scene-dualmap] %s weights missing: %s", name, path)
+        # RKNPU3 mode keeps only the CLIP text tower on torch; both MobileSAM
+        # stages run from the model bundle.
+        npu_dir = os.environ.get("SCENE_DUALMAP_NPU_DIR", "").strip()
+        clip_weights = os.environ.get("SCENE_DUALMAP_CLIP_WEIGHTS", "").strip()
+        if npu_dir:
+            if not os.path.isfile(os.path.join(npu_dir, "npu_meta.json")):
+                log.warning("[scene-dualmap] SCENE_DUALMAP_NPU_DIR=%s has no npu_meta.json", npu_dir)
+                return False
+            for name in ("yoloworld.rknn", "yoloworld.weight",
+                         "mobilesam.rknn", "mobilesam.weight",
+                         "mobilesam_decoder.rknn", "mobilesam_decoder.weight",
+                         "clip_image.rknn", "clip_image.weight"):
+                if not os.path.isfile(os.path.join(npu_dir, name)):
+                    log.warning("[scene-dualmap] NPU model missing: %s", os.path.join(npu_dir, name))
+                    return False
+            if not os.path.isfile(clip_weights):
+                log.warning("[scene-dualmap] NPU mode needs SCENE_DUALMAP_CLIP_WEIGHTS "
+                            "(openai ViT-B/32 checkpoint) for the CLIP text tower: %r", clip_weights)
+                return False
+            needed = ()
+        else:
+            needed = tuple(weights)
+        for name in needed:
+            if not os.path.isfile(weights[name]):
+                log.warning("[scene-dualmap] %s weights missing: %s", name, weights[name])
                 return False
         try:
             self._classes_file = self._write_classes_file()
@@ -240,6 +274,11 @@ class DualMapDetector(ConceptGraphsDetector):
             f"fastsam.model_path={weights['fastsam']}", f"clip.pretrained={weights['mobileclip']}",
             f"use_fastsam={str(self._use_fastsam).lower()}",
         ]
+        if npu_dir:
+            overrides += [
+                "use_npu=true", f"npu_model_dir={npu_dir}",
+                "clip.model_name=ViT-B-32", f"clip.pretrained={clip_weights}",
+            ]
         overrides += [f"{k}={self._lifecycle_cfg[k]}" for k in sorted(self._lifecycle_cfg)]
         # DualMap's YAML paths are relative to its checkout, not Scene's cwd.
         classes = self._classes_file or os.path.join(root, "config", "class_list", "gpt_indoor_general.txt")
@@ -271,8 +310,8 @@ class DualMapDetector(ConceptGraphsDetector):
         if not self._dm_names:
             log.warning("[scene-dualmap] empty vocabulary — every object would be dropped as unknown; not starting")
             return False
-        log.info("[scene-dualmap] root=%s vocabulary=%d names (%s) device=%s", root, len(self._dm_names),
-                 self._classes_file or "DualMap default list", device)
+        log.info("[scene-dualmap] root=%s vocabulary=%d names (%s) device=%s npu=%s", root, len(self._dm_names),
+                 self._classes_file or "DualMap default list", device, npu_dir or "off")
         return True
 
     # ── per-tick mapping ──────────────────────────────────────────────
@@ -384,9 +423,15 @@ class DualMapDetector(ConceptGraphsDetector):
         tracks = list(getattr(self._lm, "local_map", []) or [])
         if self._gm is not None:
             tracks += list(getattr(self._gm, "global_map", []) or [])
+        # Why each live track is not offered this tick, so an object that goes
+        # missing can say which filter took it (see _apply_snapshot).
+        reasons: dict[str, str] = {}
         for o in tracks:
+            before = dict(dropped)
             d = self._to_map_object(o, dropped)
             if d is None:
+                reasons[str(getattr(o, "uid", ""))] = next(
+                    (k for k in dropped if dropped[k] != before[k]), "no cloud")
                 continue
             all_objects.append(d)
             if known is not None and not self._on_known_ground(d, known):
@@ -395,15 +440,24 @@ class DualMapDetector(ConceptGraphsDetector):
                 continue
             if d["num_detections"] < self._min_observations:
                 dropped["observations"] += 1
+                reasons[d["id"]] = "observations"
                 continue
             if self._stable_only and not d["stable"]:
                 dropped["unstable"] += 1
+                reasons[d["id"]] = "unstable"
                 continue
             objects.append(d)
         # Floor slabs go first: they carry the most points and would win any ranking.
-        objects = self._drop_ground_slabs(objects, dropped)
-        objects = self._drop_class_outliers(objects, dropped)
-        objects = self._absorb_overlapping(objects, dropped)
+        for reason, step in (("ground_slab", self._drop_ground_slabs),
+                             ("class_outlier", self._drop_class_outliers),
+                             ("overlapping", self._absorb_overlapping)):
+            ids = {d["id"] for d in objects}
+            objects = step(objects, dropped)
+            reasons.update(dict.fromkeys(ids - {d["id"] for d in objects}, reason))
+        live = {str(getattr(o, "uid", "")) for o in tracks}
+        reasons.update(self._keep_dropped(live, all_objects, objects, depth_m[:, :, 0], K, pose))
+        held |= self._dropped.keys()
+        self._drop_reasons = reasons
         self._map_objects = objects
         self._all_objects = all_objects
         self._held_uuids = held
@@ -474,6 +528,7 @@ class DualMapDetector(ConceptGraphsDetector):
             self._gm.global_map = []
         self._all_objects = []
         self._held_uuids = set()
+        self._dropped, self._last_entries, self._absent_streak = {}, {}, {}
         self._last_kf_pose = None
         self._last_frame_key = None
         # Old-frame objects must stop being offered even while TF is catching up.
@@ -501,6 +556,49 @@ class DualMapDetector(ConceptGraphsDetector):
             return False
         self._last_kf_pose, self._last_kf_time, self._last_frame_key = pose, now, key
         return True
+
+    def _keep_dropped(self, live: set, entries: list, offered: list,
+                      depth: Any, K: Any, pose: Any) -> dict[str, str]:
+        """Keep registered objects whose DualMap track is gone.
+
+        DualMap drops a track that is not yet stable a few keyframes after it
+        leaves view, which says nothing about the object. Its record is held
+        until the spot is seen empty, or until an unbound track of its class
+        turns up there and takes the record over (_adopt_orphan). Returns why
+        each record let go this tick."""
+        import numpy as np
+        bound = getattr(self, "_uuid_to_oid", {})
+        kept = self._dropped
+        kept.update({u: d for u, d in self._last_entries.items() if u not in live and u in bound})
+        # A live track _to_map_object rejects keeps its last geometry.
+        self._last_entries = {u: d for u, d in self._last_entries.items() if u in live}
+        self._last_entries.update({d["id"]: d for d in entries})
+        for u in [u for u in kept if u in live or u not in bound]:
+            del kept[u]
+        released: dict[str, str] = {}
+        fresh = [(d["class_name"], _centre(d)) for d in offered if d["id"] not in bound]
+        max_d = float(self.cfg["max_merge_dist_m"])
+        for u, d in list(kept.items()):
+            c = _centre(d)
+            if any(cls == d["class_name"] and np.linalg.norm(c - c2) <= max_d for cls, c2 in fresh):
+                del kept[u]
+                released[u] = "seen again"
+        misses = _visible_missing_uuids(
+            list(kept.values()), observed_uuids=set(), depth_m=depth, intrinsics=K,
+            camera_to_world=pose,
+            depth_margin_m=float(self.cfg["visibility_depth_margin_m"]),
+            min_clear_samples=int(self.cfg["visibility_min_clear_samples"]),
+            min_clear_fraction=float(self.cfg["visibility_min_clear_fraction"]),
+        ) if kept else set()
+        streak = self._absent_streak
+        for u in [u for u in streak if u not in misses]:
+            del streak[u]
+        for u in misses:
+            streak[u] = streak.get(u, 0) + 1
+            if streak[u] >= max(1, int(self.cfg["visibility_miss_ticks"])):
+                del streak[u], kept[u]
+                released[u] = "seen absent"
+        return released
 
     def _keep_merged_uids(self, before: list) -> None:
         """Give each merged object the uid of the track that contributed most

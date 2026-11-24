@@ -10,6 +10,7 @@ name = "robonix-pilot"
 path = "src/main.rs"
 
 [dependencies]
+robonix-chronos-clock.workspace = true
 tokio.workspace = true
 tokio-stream = "0.1"
 tonic.workspace = true
@@ -23,10 +24,13 @@ serde_yaml.workspace = true
 robonix-scribe.workspace = true
 robonix-llm-metrics.workspace = true
 uuid.workspace = true
-rmcp = { workspace = true, features = ["client", "transport-child-process", "transport-streamable-http-client-reqwest"] }
+rmcp = { workspace = true, features = ["client", "transport-streamable-http-client-reqwest"] }
 async-openai = { workspace = true, features = ["chat-completion"] }
 reqwest.workspace = true
 futures-util = "0.3"
+base64 = "0.22"
+png = "0.18"
+jpeg-encoder = "0.6"
 robonix-atlas = { path = "../atlas" }
 robonix-llm-catalog = { path = "../llm-catalog" }
 

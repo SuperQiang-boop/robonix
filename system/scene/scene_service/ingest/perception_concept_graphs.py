@@ -2070,10 +2070,13 @@ class ConceptGraphsDetector:
                         self._uuid_to_oid[u] = obj.object_id
                     adopted_oids.add(obj.object_id)
 
-            # Evict registry records whose source uuid is gone.
+            # Evict registry records whose source uuid is gone. A record that
+            # absorbed a duplicate also answers to the duplicate's uuid.
+            answering = {self._registry.resolve_id(o)[0] for o in
+                         (self._uuid_to_oid.get(u) for u in live_uuids) if o}
             doomed = []
             for oid, obj in list(self._registry._objects.items()):
-                if oid in adopted_oids:
+                if oid in adopted_oids or oid in answering:
                     continue
                 if obj.attributes.get("is_robot"):
                     continue
@@ -2100,7 +2103,11 @@ class ConceptGraphsDetector:
             # so a re-detection within SCENE_OBJECT_TTL_SEC can re-bind the
             # same id + observation_count via find_rebindable — fixing the
             # cull→ re-detect obs reset.
+            reasons = getattr(self, "_drop_reasons", {})
             for obj in doomed:
+                if not obj.missing:
+                    log.info("[scene] %s %s is missing: %s", obj.object_id, obj.label,
+                             reasons.get(obj.attributes.get("cg_uuid"), "gone from the tracker"))
                 self._registry.soft_evict(obj)
             # The same gate re-adoption uses, so a forwarding address is
             # never guessed on looser evidence than a merge would need.

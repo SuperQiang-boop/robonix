@@ -1681,6 +1681,7 @@ dependencies = [
  "portable-atomic",
  "portable-atomic-util",
  "serde_core",
+ "windows-link",
 ]
 
 [[package]]
@@ -1752,6 +1753,12 @@ dependencies = [
  "getrandom 0.4.3",
  "libc",
 ]
+
+[[package]]
+name = "jpeg-encoder"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b454d911ac55068f53495488d8ccd0646eaa540c033a28ee15b07838afafb01f"
 
 [[package]]
 name = "js-sys"
@@ -2423,20 +2430,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8fd00f0bb2e90d81d1044c2b32617f68fcb9fa3bb7640c23e9c748e53fb30934"
 dependencies = [
  "unicode-ident",
-]
-
-[[package]]
-name = "process-wrap"
-version = "9.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2e842efad9119158434d193c6682e2ebee4b44d6ad801d7b349623b3f57cdf55"
-dependencies = [
- "futures",
- "indexmap",
- "nix 0.31.3",
- "tokio",
- "tracing",
- "windows",
 ]
 
 [[package]]
@@ -3130,12 +3123,15 @@ checksum = "1d1f571c72940a19d9532fe52dbea8bc9912bf1d766c2970bb824056b86f3f59"
 dependencies = [
  "async-trait",
  "base64",
+ "bytes",
  "chrono",
  "futures",
  "http",
+ "http-body",
+ "http-body-util",
  "pastey",
  "pin-project-lite",
- "process-wrap",
+ "rand 0.10.2",
  "reqwest 0.13.4",
  "rmcp-macros",
  "schemars",
@@ -3146,7 +3142,9 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "tokio-util",
+ "tower-service",
  "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -3168,12 +3166,17 @@ version = "1.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "futures-util",
  "prost",
  "protoc-bin-vendored",
+ "reqwest 0.13.4",
+ "rmcp",
+ "robonix-chronos-clock",
  "robonix-codegen",
  "robonix-scribe",
  "serde",
  "serde_json",
+ "tempfile",
  "tokio",
  "tokio-stream",
  "toml",
@@ -3189,8 +3192,28 @@ dependencies = [
 name = "robonix-chronos"
 version = "1.1.0"
 dependencies = [
+ "anyhow",
+ "clap",
+ "jiff",
+ "libc",
+ "prost",
+ "protoc-bin-vendored",
+ "rmcp",
+ "robonix-atlas",
+ "robonix-chronos-clock",
+ "robonix-codegen",
+ "robonix-scribe",
  "serde",
+ "serde_json",
+ "serde_yaml",
+ "tempfile",
  "thiserror 2.0.18",
+ "tokio",
+ "tokio-stream",
+ "tonic",
+ "tonic-prost",
+ "tonic-prost-build",
+ "tower-http",
 ]
 
 [[package]]
@@ -3199,6 +3222,7 @@ version = "1.1.0"
 dependencies = [
  "libc",
  "pyo3",
+ "serde",
  "tempfile",
  "thiserror 2.0.18",
 ]
@@ -3247,6 +3271,7 @@ version = "1.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "heck",
  "robonix-scribe",
  "serde",
  "serde_json",
@@ -3263,7 +3288,6 @@ dependencies = [
  "nix 0.31.3",
  "prost",
  "protoc-bin-vendored",
- "rmcp",
  "robonix-atlas",
  "robonix-codegen",
  "robonix-scribe",
@@ -3290,10 +3314,12 @@ dependencies = [
  "protoc-bin-vendored",
  "rmcp",
  "robonix-atlas",
+ "robonix-chronos-clock",
  "robonix-codegen",
  "robonix-scribe",
  "serde",
  "serde_json",
+ "tempfile",
  "tokio",
  "tokio-stream",
  "tonic",
@@ -3330,13 +3356,17 @@ version = "1.1.0"
 dependencies = [
  "anyhow",
  "async-openai",
+ "base64",
  "clap",
  "futures-util",
+ "jpeg-encoder",
+ "png",
  "prost",
  "protoc-bin-vendored",
  "reqwest 0.13.4",
  "rmcp",
  "robonix-atlas",
+ "robonix-chronos-clock",
  "robonix-codegen",
  "robonix-llm-catalog",
  "robonix-llm-metrics",
@@ -3403,10 +3433,12 @@ dependencies = [
  "prost",
  "protoc-bin-vendored",
  "robonix-atlas",
+ "robonix-chronos-clock",
  "robonix-codegen",
  "serde",
  "serde_json",
  "serde_yaml",
+ "tempfile",
  "tokio",
  "tokio-stream",
  "tonic",
@@ -4279,6 +4311,7 @@ dependencies = [
  "futures-core",
  "pin-project-lite",
  "tokio",
+ "tokio-util",
 ]
 
 [[package]]
@@ -4431,6 +4464,7 @@ dependencies = [
  "futures-util",
  "http",
  "http-body",
+ "http-body-util",
  "pin-project-lite",
  "tower",
  "tower-layer",
@@ -4988,27 +5022,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "712e227841d057c1ee1cd2fb22fa7e5a5461ae8e48fa2ca79ec42cfc1931183f"
 
 [[package]]
-name = "windows"
-version = "0.62.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "527fadee13e0c05939a6a05d5bd6eec6cd2e3dbd648b9f8e447c6518133d8580"
-dependencies = [
- "windows-collections",
- "windows-core",
- "windows-future",
- "windows-numerics",
-]
-
-[[package]]
-name = "windows-collections"
-version = "0.3.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "23b2d95af1a8a14a3c7367e1ed4fc9c20e0a26e79551b1454d72583c97cc6610"
-dependencies = [
- "windows-core",
-]
-
-[[package]]
 name = "windows-core"
 version = "0.62.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5019,17 +5032,6 @@ dependencies = [
  "windows-link",
  "windows-result",
  "windows-strings",
-]
-
-[[package]]
-name = "windows-future"
-version = "0.3.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e1d6f90251fe18a279739e78025bd6ddc52a7e22f921070ccdc67dde84c605cb"
-dependencies = [
- "windows-core",
- "windows-link",
- "windows-threading",
 ]
 
 [[package]]
@@ -5059,16 +5061,6 @@ name = "windows-link"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f0805222e57f7521d6a62e36fa9163bc891acd422f971defe97d64e70d0a4fe5"
-
-[[package]]
-name = "windows-numerics"
-version = "0.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6e2e40844ac143cdb44aead537bbf727de9b044e107a0f1220392177d15b0f26"
-dependencies = [
- "windows-core",
- "windows-link",
-]
 
 [[package]]
 name = "windows-registry"
@@ -5131,15 +5123,6 @@ dependencies = [
  "windows_x86_64_gnu",
  "windows_x86_64_gnullvm",
  "windows_x86_64_msvc",
-]
-
-[[package]]
-name = "windows-threading"
-version = "0.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3949bd5b99cafdf1c7ca86b43ca564028dfe27d66958f2470940f73d86d75b37"
-dependencies = [
- "windows-link",
 ]
 
 [[package]]

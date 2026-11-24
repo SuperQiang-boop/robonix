@@ -291,7 +291,7 @@ pub async fn start_voice_session(
                     &language
                 },
             ),
-        )))
+        )?))
         .await;
 
     let session_id_for_task = session_id.clone();
@@ -311,16 +311,17 @@ pub async fn start_voice_session(
         match outcome {
             Ok(()) => {
                 let _ = tx
-                    .send(Ok(event_status(
+                    .send(event_status(
                         KIND_SESSION_DONE,
                         &session_id_for_task,
                         "voice session done",
-                    )))
+                    ))
                     .await;
             }
             Err(e) => {
+                warn!("[liaison/voice] session '{session_id_for_task}' failed: {e:#}");
                 let _ = tx
-                    .send(Ok(event_error(&session_id_for_task, &format!("{e:#}"))))
+                    .send(event_error(&session_id_for_task, &format!("{e:#}")))
                     .await;
             }
         }
@@ -363,17 +364,17 @@ async fn run_session(
                 KIND_RECORDING_STARTED,
                 &session_id,
                 "mock mode — skipping mic capture",
-            )))
+            )?))
             .await;
         let _ = tx
             .send(Ok(event_status(
                 KIND_RECORDING_DONE,
                 &session_id,
                 &format!("mock transcript ready ({} bytes)", canned.len()),
-            )))
+            )?))
             .await;
         let _ = tx
-            .send(Ok(event_text(KIND_ASR_FINAL, &session_id, &canned, 1.0)))
+            .send(Ok(event_text(KIND_ASR_FINAL, &session_id, &canned, 1.0)?))
             .await;
         (Vec::new(), canned)
     } else {
@@ -426,7 +427,7 @@ async fn run_session(
         &session_id,
         &tx,
     )
-    .await;
+    .await?;
     let decision = access.authorize_voice(&req.client_user_id, identity.response.as_ref());
     let (user_id, access_context) = match decision {
         access::AccessDecision::Allow {
@@ -445,7 +446,7 @@ async fn run_session(
                     &user_id,
                     confidence,
                     &format!("access allowed: {reason}"),
-                )))
+                )?))
                 .await;
             (
                 user_id,
@@ -485,7 +486,7 @@ async fn run_session(
         &access_context,
         &audio_pcm,
         &req.context_json,
-    );
+    )?;
 
     let mut accumulated_text = String::new();
     // Track whether we've already spoken at least one per-plan answer, so the
@@ -555,7 +556,7 @@ async fn run_session(
                                 pilot: Some(ev),
                                 error: String::new(),
                                 status_message: String::new(),
-                                timestamp_ms: now_ms(),
+                                timestamp_ms: now_ms()?,
                             }))
                             .await;
                         if let Some(s) = say {
@@ -578,7 +579,7 @@ async fn run_session(
                                         KIND_TTS_DONE,
                                         &session_id,
                                         &format!("tts skipped: {e:#}"),
-                                    )))
+                                    )?))
                                     .await;
                             }
                             info!(
@@ -634,7 +635,7 @@ async fn run_session(
                 KIND_TTS_DONE,
                 &session_id,
                 &format!("tts skipped: {e:#}"),
-            )))
+            )?))
             .await;
     }
 
@@ -686,7 +687,7 @@ async fn stream_capture_and_recognize(
             KIND_RECORDING_STARTED,
             session_id,
             &format!("streaming mic {mic_endpoint} → asr_stream {asr_endpoint}"),
-        )))
+        )?))
         .await;
 
     let mut mic_request = Request::new(());
@@ -861,7 +862,7 @@ async fn stream_capture_and_recognize(
                     session_id,
                     &text,
                     ev.confidence,
-                )))
+                )?))
                 .await;
         }
         if is_final {
@@ -876,7 +877,7 @@ async fn stream_capture_and_recognize(
                 session_id,
                 &transcript,
                 last_confidence,
-            )))
+            )?))
             .await;
     }
 
@@ -906,7 +907,7 @@ async fn stream_capture_and_recognize(
                     sample_rate,
                     transcript,
                 ),
-            )))
+            )?))
             .await;
     } else {
         let _ = tx
@@ -920,7 +921,7 @@ async fn stream_capture_and_recognize(
                     sample_rate,
                     transcript,
                 ),
-            )))
+            )?))
             .await;
     }
     Ok((pcm, transcript))
@@ -938,6 +939,7 @@ struct AccessContext {
     reason: String,
 }
 
+/// Resolve speaker identity and propagate timestamp failures before publishing events.
 async fn identify_user(
     atlas: &Arc<Mutex<AtlasClient>>,
     pin_provider_id: &str,
@@ -945,7 +947,7 @@ async fn identify_user(
     fallback_hint: &str,
     session_id: &str,
     tx: &mpsc::Sender<Result<VoiceEvent, Status>>,
-) -> VoiceIdentity {
+) -> Result<VoiceIdentity> {
     let fallback = if fallback_hint.is_empty() {
         "voice:unknown".to_string()
     } else if fallback_hint.starts_with("voice:") || fallback_hint.starts_with("local:") {
@@ -971,9 +973,9 @@ async fn identify_user(
                     &fallback,
                     0.0,
                     "voiceprint provider unavailable",
-                )))
+                )?))
                 .await;
-            return VoiceIdentity { response: None };
+            return Ok(VoiceIdentity { response: None });
         }
     };
 
@@ -988,9 +990,9 @@ async fn identify_user(
                     &fallback,
                     0.0,
                     "voiceprint connect failed",
-                )))
+                )?))
                 .await;
-            return VoiceIdentity { response: None };
+            return Ok(VoiceIdentity { response: None });
         }
     };
 
@@ -1022,11 +1024,11 @@ async fn identify_user(
                     &user,
                     resp.confidence,
                     detail,
-                )))
+                )?))
                 .await;
-            VoiceIdentity {
+            Ok(VoiceIdentity {
                 response: Some(resp),
-            }
+            })
         }
         Err(e) => {
             warn!("[voice] voiceprint RPC failed: {e}; using hint {fallback}");
@@ -1037,9 +1039,9 @@ async fn identify_user(
                     &fallback,
                     0.0,
                     "voiceprint rpc failed",
-                )))
+                )?))
                 .await;
-            VoiceIdentity { response: None }
+            Ok(VoiceIdentity { response: None })
         }
     }
 }
@@ -1165,15 +1167,15 @@ async fn synthesize_and_play(
     tx: &mpsc::Sender<Result<VoiceEvent, Status>>,
 ) -> Result<()> {
     let _ = tx
-        .send(Ok(event_status(
+        .send(event_status(
             KIND_TTS_STARTED,
             session_id,
             "speech playback requested",
-        )))
+        ))
         .await;
     if let Some(detail) = speak_text(atlas, tts_pin, speaker_pin, text).await? {
         let _ = tx
-            .send(Ok(event_status(KIND_TTS_DONE, session_id, &detail)))
+            .send(event_status(KIND_TTS_DONE, session_id, &detail))
             .await;
         return Ok(());
     }
@@ -1183,6 +1185,17 @@ async fn synthesize_and_play(
     let speaker_endpoint = resolve_endpoint(atlas, "robonix/primitive/audio/speaker", speaker_pin)
         .await
         .ok_or_else(|| anyhow::anyhow!("no RobonixPrimitiveAudioSpeaker provider"))?;
+
+    let _ = tx
+        .send(Ok(event_status(
+            KIND_TTS_STARTED,
+            session_id,
+            &format!(
+                "synthesising {} chars via {tts_endpoint}",
+                text.chars().count()
+            ),
+        )?))
+        .await;
 
     let mut tts_client = RobonixServiceSpeechTtsClient::connect(tts_endpoint.clone())
         .await
@@ -1212,13 +1225,15 @@ async fn synthesize_and_play(
         .audio_data
         .chunks(SLICE)
         .enumerate()
-        .map(|(i, slice)| AudioChunk {
-            timestamp_ns: now_ns(),
-            data: slice.to_vec(),
-            sequence: i as u32,
-            duration_s: 0.0,
+        .map(|(i, slice)| {
+            Ok(AudioChunk {
+                timestamp_ns: now_ns()?,
+                data: slice.to_vec(),
+                sequence: i as u32,
+                duration_s: 0.0,
+            })
         })
-        .collect();
+        .collect::<Result<Vec<_>, Status>>()?;
     let stream = futures::stream::iter(chunks);
     speaker_client
         .speaker(Request::new(stream))
@@ -1233,7 +1248,7 @@ async fn synthesize_and_play(
                 "played {} bytes via {speaker_endpoint}",
                 resp.audio_data.len()
             ),
-        )))
+        )?))
         .await;
     Ok(())
 }
@@ -1252,6 +1267,7 @@ pub(crate) async fn play_prompt(
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
+/// Attach voice identity and a Chronos timestamp before submitting a task.
 fn build_task(
     session_id: &str,
     transcript: &str,
@@ -1259,7 +1275,7 @@ fn build_task(
     access: &AccessContext,
     audio_pcm: &[u8],
     extra_context_json: &str,
-) -> Task {
+) -> Result<Task> {
     let mut ctx: serde_json::Value = if extra_context_json.trim().is_empty() {
         serde_json::json!({})
     } else {
@@ -1282,15 +1298,15 @@ fn build_task(
             }),
         );
     }
-    Task {
+    Ok(Task {
         task_id: Uuid::new_v4().to_string(),
         session_id: session_id.to_string(),
         source: crate::INTENT_SOURCE_AUDIO,
         text: transcript.to_string(),
         audio_data: audio_pcm.to_vec(),
         context_json: ctx.to_string(),
-        timestamp_ms: now_ms(),
-    }
+        timestamp_ms: now_ms()?,
+    })
 }
 
 fn context_flag(raw: &str, key: &str) -> bool {
@@ -1329,8 +1345,8 @@ fn is_narration_boundary(kind: u32) -> bool {
     matches!(kind, 1..=4)
 }
 
-fn event_status(kind: u32, session_id: &str, message: &str) -> VoiceEvent {
-    VoiceEvent {
+fn event_status(kind: u32, session_id: &str, message: &str) -> Result<VoiceEvent, Status> {
+    Ok(VoiceEvent {
         event_kind: kind,
         session_id: session_id.to_string(),
         text: String::new(),
@@ -1339,12 +1355,17 @@ fn event_status(kind: u32, session_id: &str, message: &str) -> VoiceEvent {
         pilot: None,
         error: String::new(),
         status_message: message.to_string(),
-        timestamp_ms: now_ms(),
-    }
+        timestamp_ms: now_ms()?,
+    })
 }
 
-fn event_text(kind: u32, session_id: &str, text: &str, confidence: f32) -> VoiceEvent {
-    VoiceEvent {
+fn event_text(
+    kind: u32,
+    session_id: &str,
+    text: &str,
+    confidence: f32,
+) -> Result<VoiceEvent, Status> {
+    Ok(VoiceEvent {
         event_kind: kind,
         session_id: session_id.to_string(),
         text: text.to_string(),
@@ -1353,8 +1374,8 @@ fn event_text(kind: u32, session_id: &str, text: &str, confidence: f32) -> Voice
         pilot: None,
         error: String::new(),
         status_message: String::new(),
-        timestamp_ms: now_ms(),
-    }
+        timestamp_ms: now_ms()?,
+    })
 }
 
 fn event_user(
@@ -1363,8 +1384,8 @@ fn event_user(
     user_id: &str,
     confidence: f32,
     status_message: &str,
-) -> VoiceEvent {
-    VoiceEvent {
+) -> Result<VoiceEvent, Status> {
+    Ok(VoiceEvent {
         event_kind: kind,
         session_id: session_id.to_string(),
         text: String::new(),
@@ -1373,12 +1394,15 @@ fn event_user(
         pilot: None,
         error: String::new(),
         status_message: status_message.to_string(),
-        timestamp_ms: now_ms(),
-    }
+        timestamp_ms: now_ms()?,
+    })
 }
 
-fn event_error(session_id: &str, error: &str) -> VoiceEvent {
-    VoiceEvent {
+/// Preserve the original failure when its event cannot be timestamped.
+pub(crate) fn event_error(session_id: &str, error: &str) -> Result<VoiceEvent, Status> {
+    let timestamp_ms = now_ms()
+        .map_err(|clock| Status::new(clock.code(), format!("{error}; {}", clock.message())))?;
+    Ok(VoiceEvent {
         event_kind: KIND_ERROR,
         session_id: session_id.to_string(),
         text: String::new(),
@@ -1387,8 +1411,8 @@ fn event_error(session_id: &str, error: &str) -> VoiceEvent {
         pilot: None,
         error: error.to_string(),
         status_message: String::new(),
-        timestamp_ms: now_ms(),
-    }
+        timestamp_ms,
+    })
 }
 
 fn is_mock_mode() -> bool {
@@ -1403,20 +1427,16 @@ fn mock_transcript() -> String {
         .unwrap_or_else(|_| "Hello, please introduce yourself.".to_string())
 }
 
-fn now_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as u64
+pub(crate) fn now_ms() -> Result<u64, Status> {
+    Ok(now_ns()? / 1_000_000)
 }
 
-fn now_ns() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos() as u64
+fn now_ns() -> Result<u64, Status> {
+    robonix_chronos_clock::reference_timestamp_ns()
+        .map_err(|error| Status::unavailable(format!("Chronos time read failed: {error}")))
 }
 
+// Diagnostic recording must not fail a voice turn when its clock is unavailable.
 fn save_voice_recording(session_id: &str, pcm: &[u8], sample_rate: u32) -> Option<PathBuf> {
     let dump_dir = std::env::var("ROBONIX_LIAISON_VOICE_SAVE_DIR")
         .ok()
@@ -1426,7 +1446,23 @@ fn save_voice_recording(session_id: &str, pcm: &[u8], sample_rate: u32) -> Optio
     if fs::create_dir_all(dir).is_err() {
         return None;
     }
-    let ts = now_ms();
+    let ts = match now_ms() {
+        Ok(timestamp) => timestamp,
+        Err(error) => {
+            warn!("[liaison/voice] skipping recording: {error}");
+            return None;
+        }
+    };
+    let session_id: String = session_id
+        .bytes()
+        .map(|byte| {
+            if byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-') {
+                char::from(byte).to_string()
+            } else {
+                format!("%{byte:02X}")
+            }
+        })
+        .collect();
     let file_name = format!("voice_{}_{}.wav", session_id, ts);
     let path = dir.join(file_name);
     if write_wav(&path, pcm, sample_rate).is_ok() {
@@ -1437,6 +1473,7 @@ fn save_voice_recording(session_id: &str, pcm: &[u8], sample_rate: u32) -> Optio
 }
 
 fn write_wav(path: &Path, pcm: &[u8], sample_rate: u32) -> Result<(), std::io::Error> {
+    use std::io::Write;
     const CHANNELS: u16 = 1;
     const BITS_PER_SAMPLE: u16 = 16;
     let data_size = pcm.len() as u32;
@@ -1460,7 +1497,11 @@ fn write_wav(path: &Path, pcm: &[u8], sample_rate: u32) -> Result<(), std::io::E
     buf.extend_from_slice(&data_size.to_le_bytes());
     buf.extend_from_slice(pcm);
 
-    fs::write(path, buf)
+    fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)?
+        .write_all(&buf)
 }
 
 /// Apply a partial delta or replace it with the complete final transcript.
@@ -1489,6 +1530,47 @@ fn pcm_rms_s16le(data: &[u8]) -> f32 {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(target_os = "linux")]
+    mod clock_faults {
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../chronos/clock/tests/support/mod.rs"
+        ));
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    /// Event and audio timestamps reject clock faults, including error-event timestamps.
+    fn clock_errors_return_status_without_events() {
+        clock_faults::run_case(
+            "voice::tests::clock_errors_return_status_without_events",
+            || {
+                for mode in [1, 2, 4] {
+                    clock_faults::mode(mode);
+                    assert_eq!(
+                        event_status(KIND_SESSION_STARTED, "s", "start")
+                            .unwrap_err()
+                            .code(),
+                        tonic::Code::Unavailable
+                    );
+                    let error = event_error("s", "voice error").unwrap_err();
+                    assert_eq!(error.code(), tonic::Code::Unavailable);
+                    assert!(error.message().contains("voice error"));
+                    assert!(error.message().contains("Chronos time read failed"));
+                    assert!(save_voice_recording("s", &[], 16_000).is_none());
+                    assert!(now_ns().is_err());
+                    clock_faults::mode(0);
+                    assert!(
+                        event_status(KIND_SESSION_STARTED, "s", "start")
+                            .unwrap()
+                            .timestamp_ms
+                            > 0
+                    );
+                }
+            },
+        );
+    }
+
     use super::*;
 
     /// Run a real Atlas gRPC server on an ephemeral port for playback tests.
@@ -1726,6 +1808,55 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_os = "linux")]
+    fn recording_ids_remain_in_save_directory() {
+        let directory = tempfile::tempdir().unwrap();
+        let dump = directory.path().join("dump");
+        clock_faults::run_case_with_env(
+            "voice::tests::recording_ids_remain_in_save_directory",
+            &[("ROBONIX_LIAISON_VOICE_SAVE_DIR", dump.as_os_str())],
+            || {
+                let dump =
+                    PathBuf::from(std::env::var_os("ROBONIX_LIAISON_VOICE_SAVE_DIR").unwrap());
+                fs::create_dir_all(dump.join("voice_probe")).unwrap();
+                for session in [
+                    "probe/../../escaped",
+                    "/tmp/escaped",
+                    "a\\b",
+                    "a%2Fb",
+                    "plain-id",
+                ] {
+                    let path = save_voice_recording(session, &[0, 0], 16_000).unwrap();
+                    assert_eq!(path.parent(), Some(dump.as_path()));
+                    assert!(
+                        path.file_name()
+                            .unwrap()
+                            .to_string_lossy()
+                            .starts_with("voice_")
+                    );
+                    let bytes = fs::read(&path).unwrap();
+                    assert!(bytes.starts_with(b"RIFF"));
+                    assert!(write_wav(&path, &[1, 2], 16_000).is_err());
+                    assert_eq!(fs::read(&path).unwrap(), bytes);
+                }
+                assert!(!fs::read_dir(dump.parent().unwrap()).unwrap().any(|entry| {
+                    entry
+                        .unwrap()
+                        .file_name()
+                        .to_string_lossy()
+                        .starts_with("escaped_")
+                }));
+                let outside = dump.parent().unwrap().join("outside.wav");
+                fs::write(&outside, b"keep").unwrap();
+                let link = dump.join("linked.wav");
+                std::os::unix::fs::symlink(&outside, &link).unwrap();
+                assert!(write_wav(&link, &[0, 0], 16_000).is_err());
+                assert_eq!(fs::read(&outside).unwrap(), b"keep");
+            },
+        );
+    }
+
+    #[test]
     fn fallback_user_id_normalises_hint() {
         let hint = "liukaile";
         let normalised = if hint.is_empty() {
@@ -1751,7 +1882,8 @@ mod tests {
             },
             &[],
             r#"{"foo":"bar"}"#,
-        );
+        )
+        .unwrap();
         let v: serde_json::Value = serde_json::from_str(&task.context_json).unwrap();
         assert_eq!(v["user_id"], "voice:alice");
         assert_eq!(v["voice_session"], true);

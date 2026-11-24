@@ -129,11 +129,14 @@ one JSON line per model request (see `robonix_api.llm`); boot exports it as
 ## Built-in system components
 
 `rbnx boot` launches each declared built-in component in dependency order:
-Atlas, Executor, Soma, Vitals, Pilot, then Liaison. Their `system.<name>`
-manifest blocks are translated into CLI flags and also passed intact through
-`--config-json`. Components not present in the manifest are not started, except
-that Soma is added automatically when the deployment contains primitives or
-skills.
+Atlas, Chronos, Executor, Soma, Vitals, Pilot, then Liaison. Their
+`system.<name>` manifest blocks are translated into CLI flags and also passed
+through `--config-json`, without rbnx's own `status` key. Components not
+present in the manifest are not started, except that Soma is added
+automatically when the deployment contains primitives or skills.
+
+Chronos registers `robonix/system/chronos/get_wall_time`. Pilot lists it like
+any other capability, so the model can read the current date and time.
 
 The optional `system.pilot.vlm.reasoning_effort` manifest setting is forwarded
 to Pilot's OpenAI-compatible request.
@@ -220,10 +223,11 @@ sections. `rbnx boot` passes that
 identity to the package as `RBNX_INSTANCE_NAME`; the Python SDK uses it for
 registration, capability declaration, heartbeat, and lifecycle state while
 preserving the package's source-level id for standalone `rbnx start`. Startup
-waits only for a fresh registration of that exact id, so unrelated providers
-that register concurrently cannot receive the instance's lifecycle config. If
-that id is already live in Atlas before spawn, startup fails rather than taking
-over the existing provider.
+waits up to 60 seconds (override with `ROBONIX_DRIVER_REGISTER_TIMEOUT_S`) for
+a fresh registration of that exact id, so unrelated providers that register
+concurrently cannot receive the instance's lifecycle config. If that id is
+already live in Atlas before spawn, startup fails rather than taking over the
+existing provider.
 
 Package authors normally omit Driver from `capabilities`; rbnx and current
 codegen automatically select and register `robonix/lifecycle/driver`. Explicit

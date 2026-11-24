@@ -55,6 +55,76 @@ against an Atlas process. The tests cover provider declaration, Query, Connect,
 channel cleanup, optional delay presence, the old-stub declaration error, and
 reads with old response types.
 
+## Client execution channels
+
+`AtlasClient::connect_channel::<C>(consumer_id, provider_id, contract_id, transport)`
+prepares one execution using a compile-time contract binding. `Mcp` uses JSON
+requests and responses. gRPC bindings use generated protobuf messages; no
+reflection, descriptor files, or Cargo feature is needed. Business traffic goes
+directly to the provider. `AtlasClient::connect_capability(...)` is deprecated
+and will be removed in a future release. It currently retains its tuple return
+value. Migrate to `connect_channel::<C>(...)` and replace manual MCP or gRPC
+client setup with `channel.call(...)`.
+
+| API | Purpose |
+|---|---|
+| `atlas.connect_channel::<C>(consumer_id, provider_id, contract_id, transport).await` | Prepare a `Channel<C>` using a contract binding. |
+| `channel.call(request).await` | Submit one execution with the binding's input and output types. |
+| `channel.status().await` / `channel.cancel().await` | Query or cancel async work; resolve companions and pass `run_id` automatically. |
+| `channel.close().await` | Confirm termination and release resources, waiting up to five seconds for active work to end. |
+| `channel.close_with_timeout(duration).await` | Set the termination wait using `std::time::Duration`. |
+| `atlas.get_channel::<C>(channel_id)` | Return `Result<Option<Channel<C>>>` for a retained allocation; the binding must match. |
+| `channel.run_id()` / `channel.is_async()` | Inspect the execution ID or whether status/cancel companions are present. |
+| `channel.is_terminal()` / `channel.is_closed()` | Check confirmed execution completion or allocation release. |
+
+Include codegen's `contract_proto_modules.rs` for protobuf messages and their
+Channel bindings in the existing IDL modules. For example:
+
+```rust,ignore
+let channel = atlas.connect_channel::<pb::map::ServiceMapGetMode>(
+    consumer_id, provider_id, "robonix/service/map/get_mode", Transport::Grpc,
+).await?;
+let response = channel.call(pb::map::GetModeRequest {}).await?;
+channel.close().await?;
+```
+
+All four gRPC forms use `call`: unary takes and returns a message; server
+streaming returns a stream; client streaming takes a boxed request stream;
+bidirectional streaming takes and returns streams. Output streams yield
+`Result<Message>` with a bounded 16-message buffer. gRPC `topic_out` and
+`topic_in` use server and client streaming respectively. Empty protobuf
+messages use `()`. ROS 2 execution channels remain available through Python.
+
+The shared `channel::validate_contract::<C>` function validates contract metadata
+before communication; bindings supply types, metadata, and message adapters.
+Bindings with a fixed contract ID require an exact match by default. The generated
+`LifecycleDriver` binding also accepts legacy `*/driver` contracts with the same
+Driver IDL, using their Atlas service routes.
+`Mcp` leaves its ID empty and uses the contract selected at connection time.
+Async `status()` and `cancel()` return generated protobuf responses for gRPC and
+JSON for MCP.
+
+A channel starts one execution. For async `rpc` capabilities, both `/status` and
+`/cancel` companions must support the selected transport. Each companion gets its
+own allocation. An MCP tool error on the start call lets `close()` release the
+channel without canceling a run. `close()` waits up to five seconds for confirmed
+completion. `close_with_timeout(Duration)` changes the wait. Async close cancels
+and polls status every two seconds. Stream close stops sending and drains
+responses until the server ends the stream. A local timeout, lost connection, or
+cancellation acceptance does not confirm termination. If the server never ends a stream,
+close fails and retains its allocation rather than canceling it locally and
+claiming completion.
+
+Errors report retained channel IDs. `get_channel::<C>(id)?` recovers the typed handle from
+any clone of the same client. `is_terminal()` reports confirmed completion and
+`is_closed()` reports release. Dropping a waiter does not abandon the execution,
+and business requests are never automatically retried.
+
+Each client holds at most 1024 allocations (`ROBONIX_ATLAS_CHANNEL_LIMIT` overrides
+the limit), reserving two for companions.
+Setup failures clean up allocations; failed cleanup remains recoverable by ID.
+Execution records are local to the consumer process and do not survive restart.
+
 ## Namespace diagnostics
 
 A provider's namespace is its primary grouping for discovery and operator
@@ -105,3 +175,21 @@ Configuration:
   `log` key of `--config-json`, which `rbnx` fills from the manifest. Falls back
   to `SCRIBE_FILE_LEVEL`, then `info`. A standalone `--log` flag is accepted but
   not applied.
+
+Atlas reads reference timestamps and local steady time through the in-process
+[`robonix-chronos-clock`](../chronos/clock/README.md) library, without requiring
+a running Chronos service. Registration, takeover, heartbeat, and channel
+creation return `UNAVAILABLE` before mutating state if reference time cannot
+be read, is unavailable, or cannot fit the unsigned timestamp. Unverified Linux
+reference time is accepted. Heartbeat eviction uses steady time, so reference
+clock steps cannot expire or extend a provider's timeout. A steady read failure
+or regression stops Atlas with an error rather than leaving eviction disabled.
+`AtlasRegistry::now_ms()` now returns `Result<u64, tonic::Status>`.
+
+Heartbeat eviction settings are `ROBONIX_ATLAS_HEARTBEAT_TIMEOUT_MS` (default
+90000; 0 disables eviction), `ROBONIX_ATLAS_GC_AFTER_TERMINATED_MS` (default
+600000), and `ROBONIX_ATLAS_EVICTION_INTERVAL_MS` (default 10000).
+
+Run `cargo test -p robonix-atlas --test clock_failures` on Linux with `cc` for
+clock failure, recovery and heartbeat expiry tests over real gRPC connections.
+Fault injection runs in a subprocess and does not change host time.
