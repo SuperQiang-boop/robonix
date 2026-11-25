@@ -166,24 +166,38 @@ local_costmap:
       footprint: "__ROBONIX_FOOTPRINT__"
       footprint_padding: 0.10
 
-      plugins: ["obstacle_layer", "inflation_layer"]
-      obstacle_layer:
-        plugin: "nav2_costmap_2d::ObstacleLayer"
+      footprint_clearing_enabled: true
+      # A 360-bin LaserScan clears only along the bearings that carry a return,
+      # so a person walking past left a trail on the ground until the robot
+      # turned. The voxel layer clears in 3D straight from the cloud: every
+      # point casts a ray, and the vertical extent stops the floor and the
+      # robot's own legs from being folded onto one plane.
+      plugins: ["voxel_layer", "inflation_layer"]
+      voxel_layer:
+        plugin: "nav2_costmap_2d::VoxelLayer"
         enabled: true
-        observation_sources: scan
-        scan:
-          topic: "__ROBONIX_SCAN_TOPIC__"
+        z_resolution: 0.10
+        z_voxels: 20
+        # One unknown voxel per column is allowed, matching z_voxels - 1;
+        # at z_voxels a column would almost never count as known.
+        unknown_threshold: 19
+        publish_voxel_map: false
+        observation_sources: cloud
+        cloud:
+          topic: "__ROBONIX_SCAN_CLOUD_TOPIC__"
+          data_type: "PointCloud2"
           marking: true
           clearing: true
-          # Nav2 source keys; ROS 1 names silently leave the 2.5/3.0 m defaults.
-          obstacle_max_range: 5.0
-          raytrace_max_range: 8.0
-          inf_is_valid: true
           observation_persistence: 0.0
-          expected_update_rate: 0.50
-          # The source cloud is height-filtered before projection. LaserScan
-          # returns lie at z=0 in base_footprint and must remain eligible.
-          min_obstacle_height: 0.0
+          expected_update_rate: 1.0
+          # The head-mounted Mid-360 sits ~0.5 m from its own shoulders; the
+          # projection used to discard those as its range_min. Same job here.
+          obstacle_min_range: 0.65
+          obstacle_max_range: 4.0
+          raytrace_min_range: 0.0
+          raytrace_max_range: 6.0
+          # Heights are measured from the floor plane of the rolling window.
+          min_obstacle_height: 0.20
           max_obstacle_height: 2.00
 
       inflation_layer:
