@@ -214,6 +214,10 @@ global_costmap:
         enabled: true
         map_topic: "__ROBONIX_MAP_TOPIC__"
         map_subscribe_transient_local: true
+        # Without this the layer only takes the map once and ignores the
+        # incremental updates, so a cell RTAB-Map has cleared stays in the
+        # global costmap until the whole map is replaced.
+        subscribe_to_updates: true
 
       obstacle_layer:
         plugin: "nav2_costmap_2d::ObstacleLayer"

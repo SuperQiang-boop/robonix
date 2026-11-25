@@ -6,8 +6,11 @@
 RGBD/CreateOccupancyGrid: true
 Grid/Sensor: 0
 Grid/FromDepth: false
-Grid/RangeMin: 0.30
-# Mid-360 effective range: 0.3 – 10 m, map local horizon at 6 m.
+# The head-mounted Mid-360 sits 0.3-0.5 m from the robot's own shoulders and
+# arms. A 0.30 m minimum kept those returns as obstacles that travelled with
+# the robot, so raise it past the body.
+Grid/RangeMin: 0.60
+# Mid-360 effective range: 0.6 – 10 m, map local horizon at 6 m.
 Grid/RangeMax: 6.0
 Grid/CellSize: 0.05
 # Mid-360 packets are sparse and non-repetitive; ray tracing draws long
@@ -25,10 +28,12 @@ Grid/MaxGroundHeight: 0.20
 # filtering cleans noise while preserving thin wall continuity.
 Grid/NoiseFilteringRadius: 0.20
 Grid/NoiseFilteringMinNeighbors: 3
-# G1 narrow footprint (feet on a line). Footprint bounds affect the
-# occupancy grid cell marking but not the 2D grid shape.
-Grid/FootprintLength: 0.40
-Grid/FootprintWidth: 0.15
+# This rectangle is what RTAB-Map uses to reject the robot's own points, so it
+# has to cover the whole body rather than the feet. At 0.40 x 0.15 the torso,
+# shoulders and swinging legs fell outside it and were marked as obstacles
+# around the robot; a 0.70 x 0.60 box covers a 1.3 m humanoid.
+Grid/FootprintLength: 0.70
+Grid/FootprintWidth: 0.60
 Reg/Strategy: 1
 Reg/Force3DoF: true
 Optimizer/Strategy: 1
