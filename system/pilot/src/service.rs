@@ -21,7 +21,7 @@ use crate::vlm::{Message, VlmClient};
 use anyhow::Context;
 use robonix_atlas::client::{self as atlas_client, AtlasClient};
 use robonix_scribe::{debug, error};
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::{Mutex, broadcast, mpsc, watch};
@@ -106,28 +106,34 @@ pub fn pack(session_id: &str, body: PilotStreamBody) -> PilotEvent {
 type Histories = Arc<Mutex<HashMap<String, Arc<Mutex<Vec<Message>>>>>>;
 type TaskStates = Arc<Mutex<HashMap<String, Arc<Mutex<Option<TaskState>>>>>>;
 
+type PendingPlans = Arc<std::sync::Mutex<HashSet<String>>>;
+
 #[derive(Clone)]
 struct ActiveTurnInput {
     turn_id: String,
     tx: mpsc::Sender<Task>,
     events: broadcast::Sender<Result<PilotEvent, String>>,
     reply_generation: Arc<AtomicU64>,
+    pending_plans: PendingPlans,
 }
 
 /// Give each SubmitTask caller its own view of the active supervisor stream.
-/// A caller is complete after one user-facing FinalText, while the underlying
-/// supervisor and its long-running RTDL trees may remain alive for later input.
+/// A final reply only closes the view once its observed plans have finished.
+/// Subscribe and snapshot atomically with the relay, including same-session
+/// steers that attach after a long-running plan was already dispatched.
 fn subscribe_turn_events(
     events: &broadcast::Sender<Result<PilotEvent, String>>,
     reply_generation: &Arc<AtomicU64>,
+    pending_plans: &PendingPlans,
 ) -> ReceiverStream<Result<PilotEvent, Status>> {
-    view_turn_events(events, reply_generation, true)
+    view_turn_events(events, reply_generation, pending_plans, true)
 }
 
 /// Greeting voice observes the live turn without detaching the frontend's view.
 fn view_turn_events(
     events: &broadcast::Sender<Result<PilotEvent, String>>,
     reply_generation: &Arc<AtomicU64>,
+    pending_plans: &PendingPlans,
     take_reply: bool,
 ) -> ReceiverStream<Result<PilotEvent, Status>> {
     let generation = if take_reply {
@@ -136,18 +142,50 @@ fn view_turn_events(
         reply_generation.load(Ordering::Acquire)
     };
     let reply_generation = Arc::clone(reply_generation);
-    let mut subscriber = events.subscribe();
+    let (mut subscriber, mut pending) = {
+        let plans = pending_plans.lock().expect("pending plan lock poisoned");
+        (events.subscribe(), plans.clone())
+    };
     let (tx, rx) = mpsc::channel(64);
     tokio::spawn(async move {
         loop {
             match subscriber.recv().await {
-                Ok(Ok(event)) => {
+                Ok(Ok(mut event)) => {
                     // A newer same-session SubmitTask owns all subsequent
                     // user-facing events. Closing this stale view prevents one
                     // supervisor reply from being rendered by every historical
                     // request stream while leaving its RTDL trees untouched.
                     if reply_generation.load(Ordering::Acquire) != generation {
                         break;
+                    }
+                    match event.event_kind {
+                        EVT_PLAN => {
+                            if let Some(plan) = &event.plan {
+                                pending.insert(plan.plan_id.clone());
+                            }
+                        }
+                        EVT_BATCH_RESULT => {
+                            if let Some(batch) = &event.batch_result {
+                                pending.remove(&batch.plan_id);
+                            }
+                        }
+                        EVT_FINAL_TEXT if !pending.is_empty() => {
+                            // Acknowledging startup is not task completion. Keep
+                            // forwarding real execution outcomes to this caller.
+                            event = pack(
+                                &event.session_id,
+                                PilotStreamBody::Status(SessionStatusEvent {
+                                    session_id: event.session_id.clone(),
+                                    state: SessionState::Active as u32,
+                                    message: format!(
+                                        "{}（仍有 {} 个计划执行中，结束后将主动通知）",
+                                        event.final_text,
+                                        pending.len()
+                                    ),
+                                }),
+                            );
+                        }
+                        _ => {}
                     }
                     let complete = event.event_kind == EVT_FINAL_TEXT;
                     if tx.send(Ok(event)).await.is_err() || complete {
@@ -171,6 +209,30 @@ fn view_turn_events(
         }
     });
     ReceiverStream::new(rx)
+}
+
+/// Record execution lifetime and broadcast in the same critical section used
+/// by subscription snapshots. Subscriber-local state then follows event order,
+/// rather than racing against a plan that completed while its reply was queued.
+fn relay_turn_event(
+    events: &broadcast::Sender<Result<PilotEvent, String>>,
+    pending_plans: &PendingPlans,
+    item: Result<PilotEvent, String>,
+) {
+    let mut plans = pending_plans.lock().expect("pending plan lock poisoned");
+    if let Ok(event) = &item {
+        if let Some(plan) = &event.plan
+            && event.event_kind == EVT_PLAN
+        {
+            plans.insert(plan.plan_id.clone());
+        }
+        if let Some(batch) = &event.batch_result
+            && event.event_kind == EVT_BATCH_RESULT
+        {
+            plans.remove(&batch.plan_id);
+        }
+    }
+    let _ = events.send(item);
 }
 
 const SEEN_TASK_IDS_PER_SESSION: usize = 256;
@@ -378,6 +440,7 @@ impl RobonixSystemPilot for PilotServiceImpl {
         let (steer_tx, steer_rx) = mpsc::channel::<Task>(32);
         let (candidate_events, _) = broadcast::channel(128);
         let candidate_reply_generation = Arc::new(AtomicU64::new(0));
+        let candidate_pending_plans = PendingPlans::default();
         let explicit_steer = task_is_steer(&task);
         let expected_turn = expected_turn_id(&task);
         let existing_turn = {
@@ -398,6 +461,7 @@ impl RobonixSystemPilot for PilotServiceImpl {
                             tx: steer_tx.clone(),
                             events: candidate_events.clone(),
                             reply_generation: Arc::clone(&candidate_reply_generation),
+                            pending_plans: Arc::clone(&candidate_pending_plans),
                         },
                     );
                     None
@@ -427,9 +491,18 @@ impl RobonixSystemPilot for PilotServiceImpl {
             let greeting_voice =
                 task_context(&task).is_some_and(|context| context["greeting_event_id"].is_string());
             let rx = if greeting_voice {
-                view_turn_events(&existing.events, &existing.reply_generation, false)
+                view_turn_events(
+                    &existing.events,
+                    &existing.reply_generation,
+                    &existing.pending_plans,
+                    false,
+                )
             } else {
-                subscribe_turn_events(&existing.events, &existing.reply_generation)
+                subscribe_turn_events(
+                    &existing.events,
+                    &existing.reply_generation,
+                    &existing.pending_plans,
+                )
             };
             let ok = existing.tx.send(task).await.is_ok();
             debug!("[pilot] steer task for session {id} (queued={ok})");
@@ -449,12 +522,17 @@ impl RobonixSystemPilot for PilotServiceImpl {
         // https://tokio.rs/tokio/tutorial/channels
         // MPSC: Multiple Producer Single Consumer
         let (tx, mut internal_rx) = tokio::sync::mpsc::channel::<Result<PilotEvent, Status>>(64);
-        let rx = subscribe_turn_events(&candidate_events, &candidate_reply_generation);
+        let rx = subscribe_turn_events(
+            &candidate_events,
+            &candidate_reply_generation,
+            &candidate_pending_plans,
+        );
         let relay_events = candidate_events.clone();
+        let relay_pending = candidate_pending_plans.clone();
         tokio::spawn(async move {
             while let Some(item) = internal_rx.recv().await {
                 let shared = item.map_err(|status| status.message().to_string());
-                let _ = relay_events.send(shared);
+                relay_turn_event(&relay_events, &relay_pending, shared);
             }
         });
         let atlas = self.atlas.clone();
@@ -602,10 +680,11 @@ async fn build_executor_conn(
 mod tests {
     use super::{
         EVT_FINAL_TEXT, EVT_STATUS, MODULE_HEALTH_OK, MODULE_HEALTH_SCHEMA_VERSION,
-        MODULE_HEALTH_TTL_MS, expected_turn_id, pilot_health_report, strict_expected_turn,
-        subscribe_turn_events, task_is_abort_turn, task_is_steer,
+        MODULE_HEALTH_TTL_MS, PendingPlans, PilotStreamBody, expected_turn_id, pack,
+        pilot_health_report, relay_turn_event, strict_expected_turn, subscribe_turn_events,
+        task_is_abort_turn, task_is_steer,
     };
-    use crate::pb::pilot::{PilotEvent, Task};
+    use crate::pb::pilot::{BatchResult, PilotEvent, Plan, RtdlNodeState, Task};
     use tokio_stream::StreamExt;
 
     fn task(ctx: &str) -> Task {
@@ -665,7 +744,7 @@ mod tests {
     async fn submit_subscriber_closes_at_its_final_text_boundary() {
         let (events, _) = tokio::sync::broadcast::channel(8);
         let generation = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
-        let mut stream = subscribe_turn_events(&events, &generation);
+        let mut stream = subscribe_turn_events(&events, &generation, &Default::default());
         events
             .send(Ok(PilotEvent {
                 event_kind: EVT_STATUS,
@@ -718,8 +797,8 @@ mod tests {
     async fn newest_submit_subscriber_exclusively_owns_future_replies() {
         let (events, _) = tokio::sync::broadcast::channel(8);
         let generation = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
-        let mut stale = subscribe_turn_events(&events, &generation);
-        let mut current = subscribe_turn_events(&events, &generation);
+        let mut stale = subscribe_turn_events(&events, &generation, &Default::default());
+        let mut current = subscribe_turn_events(&events, &generation, &Default::default());
 
         events
             .send(Ok(PilotEvent {
@@ -734,5 +813,322 @@ mod tests {
         assert_eq!(final_event.event_kind, EVT_FINAL_TEXT);
         assert_eq!(final_event.final_text, "one reply");
         assert!(current.next().await.is_none());
+    }
+    /// Send through the same relay as the live supervisor, preserving event order.
+    fn publish(
+        events: &tokio::sync::broadcast::Sender<Result<PilotEvent, String>>,
+        pending: &PendingPlans,
+        body: PilotStreamBody,
+    ) {
+        relay_turn_event(events, pending, Ok(pack("s", body)));
+    }
+
+    #[tokio::test]
+    async fn startup_reply_does_not_hide_any_terminal_execution_outcome() {
+        for (state, name) in [
+            (2, "SUCCEEDED"),
+            (3, "FAILED"),
+            (4, "CANCELED"),
+            (5, "TIMEOUT"),
+        ] {
+            let (events, _) = tokio::sync::broadcast::channel(32);
+            let generation = Default::default();
+            let pending = PendingPlans::default();
+            let mut stream = subscribe_turn_events(&events, &generation, &pending);
+            publish(
+                &events,
+                &pending,
+                PilotStreamBody::Plan(Plan {
+                    plan_id: "p".into(),
+                    ..Default::default()
+                }),
+            );
+            publish(
+                &events,
+                &pending,
+                PilotStreamBody::FinalText("task started".into()),
+            );
+            let results = vec![RtdlNodeState {
+                state,
+                ..Default::default()
+            }];
+            let notice = crate::execution_notice::terminal(
+                "s",
+                "p",
+                "explore",
+                &results,
+                state != 2,
+                state == 4,
+            );
+            // Queue completion before the subscriber runs. Consulting only
+            // shared current pending state would close on the old startup reply.
+            publish(
+                &events,
+                &pending,
+                PilotStreamBody::BatchResult(BatchResult {
+                    plan_id: "p".into(),
+                    results,
+                    any_failed: state != 2,
+                    ..Default::default()
+                }),
+            );
+            publish(&events, &pending, PilotStreamBody::Status(notice.clone()));
+            publish(
+                &events,
+                &pending,
+                PilotStreamBody::FinalText(notice.message.clone()),
+            );
+            let mut received = Vec::new();
+            while let Some(event) =
+                tokio::time::timeout(std::time::Duration::from_secs(1), stream.next())
+                    .await
+                    .unwrap()
+            {
+                received.push(event.unwrap());
+            }
+            assert_eq!(received.len(), 5);
+            assert_eq!(received[1].event_kind, EVT_STATUS);
+            assert!(
+                received
+                    .iter()
+                    .any(|e| e.status.as_ref().is_some_and(|s| s.message.contains(name)))
+            );
+            assert_eq!(received.last().unwrap().final_text, notice.message);
+        }
+    }
+
+    #[tokio::test]
+    async fn new_same_session_view_keeps_old_background_plan_until_it_finishes() {
+        let (events, _) = tokio::sync::broadcast::channel(32);
+        let generation = Default::default();
+        let pending = PendingPlans::default();
+        let mut old = subscribe_turn_events(&events, &generation, &pending);
+        publish(
+            &events,
+            &pending,
+            PilotStreamBody::Plan(Plan {
+                plan_id: "old-plan".into(),
+                ..Default::default()
+            }),
+        );
+        let mut current = subscribe_turn_events(&events, &generation, &pending);
+        publish(
+            &events,
+            &pending,
+            PilotStreamBody::FinalText("cancellation requested, not confirmed".into()),
+        );
+        assert!(old.next().await.is_none());
+        assert_eq!(
+            current.next().await.unwrap().unwrap().event_kind,
+            EVT_STATUS
+        );
+        publish(
+            &events,
+            &pending,
+            PilotStreamBody::BatchResult(BatchResult {
+                plan_id: "old-plan".into(),
+                ..Default::default()
+            }),
+        );
+        publish(
+            &events,
+            &pending,
+            PilotStreamBody::FinalText("cancel confirmed".into()),
+        );
+        assert_eq!(
+            current.next().await.unwrap().unwrap().event_kind,
+            super::EVT_BATCH_RESULT
+        );
+        assert_eq!(
+            current.next().await.unwrap().unwrap().final_text,
+            "cancel confirmed"
+        );
+        assert!(current.next().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn one_finished_plan_does_not_close_an_unrelated_running_plan() {
+        let (events, _) = tokio::sync::broadcast::channel(32);
+        let generation = Default::default();
+        let pending = PendingPlans::default();
+        let mut stream = subscribe_turn_events(&events, &generation, &pending);
+        for id in ["a", "b"] {
+            publish(
+                &events,
+                &pending,
+                PilotStreamBody::Plan(Plan {
+                    plan_id: id.into(),
+                    ..Default::default()
+                }),
+            );
+        }
+        publish(
+            &events,
+            &pending,
+            PilotStreamBody::BatchResult(BatchResult {
+                plan_id: "a".into(),
+                ..Default::default()
+            }),
+        );
+        publish(
+            &events,
+            &pending,
+            PilotStreamBody::FinalText("a finished, b running".into()),
+        );
+        publish(
+            &events,
+            &pending,
+            PilotStreamBody::BatchResult(BatchResult {
+                plan_id: "b".into(),
+                ..Default::default()
+            }),
+        );
+        publish(
+            &events,
+            &pending,
+            PilotStreamBody::FinalText("all finished".into()),
+        );
+        let mut received = Vec::new();
+        while let Some(event) = stream.next().await {
+            received.push(event.unwrap());
+        }
+        assert_eq!(received.len(), 6);
+        assert_eq!(received[3].event_kind, EVT_STATUS);
+        assert_eq!(received[5].final_text, "all finished");
+    }
+    #[derive(Clone)]
+    struct SubscriptionFixture {
+        events: tokio::sync::broadcast::Sender<Result<PilotEvent, String>>,
+        pending: PendingPlans,
+        generation: std::sync::Arc<std::sync::atomic::AtomicU64>,
+        submits: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    #[tonic::async_trait]
+    impl crate::pb::contracts::robonix_system_pilot_server::RobonixSystemPilot for SubscriptionFixture {
+        type SubmitTaskStream =
+            tokio_stream::wrappers::ReceiverStream<Result<PilotEvent, tonic::Status>>;
+
+        /// Use the real production subscription/relay over a loopback gRPC connection.
+        async fn submit_task(
+            &self,
+            _request: tonic::Request<Task>,
+        ) -> Result<tonic::Response<Self::SubmitTaskStream>, tonic::Status> {
+            self.submits
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let stream = subscribe_turn_events(&self.events, &self.generation, &self.pending);
+            publish(
+                &self.events,
+                &self.pending,
+                PilotStreamBody::Plan(Plan {
+                    plan_id: "p".into(),
+                    ..Default::default()
+                }),
+            );
+            publish(
+                &self.events,
+                &self.pending,
+                PilotStreamBody::FinalText("started, still running".into()),
+            );
+            Ok(tonic::Response::new(stream))
+        }
+    }
+
+    #[tokio::test]
+    async fn grpc_subscription_delivers_every_terminal_state_without_another_submit() {
+        use crate::pb::contracts::robonix_system_pilot_client::RobonixSystemPilotClient;
+        use crate::pb::contracts::robonix_system_pilot_server::RobonixSystemPilotServer;
+        use std::sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        };
+        for (state, label) in [
+            (2, "SUCCEEDED"),
+            (3, "FAILED"),
+            (4, "CANCELED"),
+            (5, "TIMEOUT"),
+        ] {
+            let (events, _) = tokio::sync::broadcast::channel(32);
+            let fixture = SubscriptionFixture {
+                events: events.clone(),
+                pending: Default::default(),
+                generation: Default::default(),
+                submits: Arc::new(AtomicUsize::new(0)),
+            };
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let endpoint = format!("http://{}", listener.local_addr().unwrap());
+            let incoming = futures_util::stream::unfold(listener, |listener| async {
+                let result = listener.accept().await.map(|(socket, _)| socket);
+                Some((result, listener))
+            });
+            let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
+            let server = tokio::spawn(
+                tonic::transport::Server::builder()
+                    .add_service(RobonixSystemPilotServer::new(fixture.clone()))
+                    .serve_with_incoming_shutdown(incoming, async {
+                        let _ = stopped.await;
+                    }),
+            );
+            let mut client = RobonixSystemPilotClient::connect(endpoint).await.unwrap();
+            let mut stream = client.submit_task(task("{}")).await.unwrap().into_inner();
+            assert_eq!(
+                stream.message().await.unwrap().unwrap().event_kind,
+                super::EVT_PLAN
+            );
+            // The starter reply must be progress, not an EOF-producing FinalText.
+            assert_eq!(
+                stream.message().await.unwrap().unwrap().event_kind,
+                EVT_STATUS
+            );
+            let results = vec![RtdlNodeState {
+                state,
+                ..Default::default()
+            }];
+            let notice = crate::execution_notice::terminal(
+                "s",
+                "p",
+                "explore",
+                &results,
+                state != 2,
+                state == 4,
+            );
+            publish(
+                &events,
+                &fixture.pending,
+                PilotStreamBody::BatchResult(BatchResult {
+                    plan_id: "p".into(),
+                    results,
+                    any_failed: state != 2,
+                    ..Default::default()
+                }),
+            );
+            publish(
+                &events,
+                &fixture.pending,
+                PilotStreamBody::Status(notice.clone()),
+            );
+            publish(
+                &events,
+                &fixture.pending,
+                PilotStreamBody::FinalText(notice.message),
+            );
+            let result = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+                let mut notices = 0;
+                while let Some(event) = stream.message().await.unwrap() {
+                    if event.event_kind == EVT_STATUS
+                        && event.status.is_some_and(|s| s.message.contains(label))
+                    {
+                        notices += 1;
+                    }
+                }
+                notices
+            })
+            .await
+            .unwrap();
+            assert_eq!(result, 1);
+            assert_eq!(fixture.submits.load(Ordering::SeqCst), 1);
+            let _ = stop.send(());
+            server.await.unwrap().unwrap();
+        }
     }
 }

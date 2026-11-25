@@ -44,6 +44,16 @@ cargo install --force --path tools/rbnx --bin rbnx
 
 Run `rbnx <cmd> --help` for full flags.
 
+## Long-running task feedback
+
+`rbnx chat` keeps the active Pilot subscription attached after the initial
+"started" response and displays execution progress plus its final succeeded,
+failed, timed-out, or canceled result. A same-session steer replaces the old
+subscription with the live plan stream; steering or asking for status does not
+cancel the running action. Voice-mode text steers likewise keep forwarding Pilot
+events to the foreground. The final status is generated from Executor results,
+not inferred from the model saying a task was started.
+
 ## Built-in system components
 
 `rbnx boot` launches each declared built-in component in dependency order:

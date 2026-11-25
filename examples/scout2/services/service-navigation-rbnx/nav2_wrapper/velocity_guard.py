@@ -18,10 +18,14 @@ from action_msgs.srv import CancelGoal
 from geometry_msgs.msg import Twist
 from nav2_msgs.action import NavigateToPose
 from nav2_msgs.msg import SpeedLimit
-from nav_msgs.msg import Odometry, Path as NavPath
+from nav_msgs.msg import OccupancyGrid, Odometry, Path as NavPath
 from sensor_msgs.msg import LaserScan
 from rclpy.node import Node
 from rclpy.executors import ExternalShutdownException
+from rclpy.parameter import Parameter
+from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy, qos_profile_sensor_data
+from rclpy.time import Time
+from tf2_ros import Buffer, TransformException, TransformListener
 
 from nav2_wrapper.configuration import resolve_velocity_output_topic
 from nav2_wrapper.rotation_guard_core import GuardLimits, RotationGuard, normalize_uuid_octets
@@ -62,11 +66,24 @@ class VelocityGuardNode(Node):
                 "ROBONIX_NAV_DEFAULT_SPEED_PERCENTAGE must be in (0, 100]"
             )
         super().__init__("robonix_velocity_guard")
+        self.set_parameters([Parameter('use_sim_time', value=(
+            os.environ.get('ROBONIX_NAV_GUARD_USE_SIM_TIME', 'false') == 'true'))])
         self._localization_dir = os.environ.get('RELOCALIZATION_COORDINATION_DIR')
         self._localization_check = None
         self._localization_angular = None
         self._last_localization_cancel = 0.0
         self._stationary = deque(maxlen=100)
+        self._mapping_identity = None
+        self._checked_identity = None
+        self._map_ready = False
+        self._odom_received_at = None
+        self._odom_stamp_ns = 0
+        self._scan_received_at = None
+        self._scan_stamp_ns = 0
+        self._scan_frame = ''
+        self._costmap_received_at = None
+        self._tf_buffer = None
+        self._tf_listener = None
         if self._localization_dir:
             sys.path.insert(0, os.environ['RELOCALIZATION_PACKAGE_ROOT'])
             from relocalization_rbnx.navigation import check
@@ -101,15 +118,27 @@ class VelocityGuardNode(Node):
         self._effective_linear_speed_mps = (
             max_linear_speed_mps * default_percentage / 100.0
         )
+        if self._localization_dir:
+            self._tf_buffer = Buffer()
+            self._tf_listener = TransformListener(self._tf_buffer, self)
+            map_qos = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE,
+                                 durability=DurabilityPolicy.TRANSIENT_LOCAL)
+            self.create_subscription(OccupancyGrid,
+                os.environ.get('ROBONIX_NAV_GUARD_MAP_TOPIC', '/map'),
+                self._on_map, map_qos)
+            self.create_subscription(OccupancyGrid, '/global_costmap/costmap',
+                self._on_costmap, map_qos)
 
         self._pub = self.create_publisher(Twist, output_topic, 10)
         self.create_subscription(Twist, "/cmd_vel_guard_input", self._on_cmd, 20)
         self.create_subscription(
             SpeedLimit, speed_limit_topic, self._on_speed_limit, 10
         )
-        self.create_subscription(Odometry, os.environ.get('ROBONIX_NAV_GUARD_ODOM_TOPIC', '/odom'), self._on_odom, 50)
+        self.create_subscription(Odometry, os.environ.get('ROBONIX_NAV_GUARD_ODOM_TOPIC', '/odom'), self._on_odom, qos_profile_sensor_data)
         self.create_subscription(NavPath, "/plan", self._on_plan, 10)
-        self.create_subscription(LaserScan, "/scanner/scan", self._on_scan, 20)
+        self.create_subscription(LaserScan,
+            os.environ.get('ROBONIX_NAV_GUARD_SCAN_TOPIC', '/scanner/scan'),
+            self._on_scan, qos_profile_sensor_data)
         self.create_subscription(
             GoalStatusArray, "/navigate_to_pose/_action/status", self._on_status, 10
         )
@@ -224,7 +253,8 @@ class VelocityGuardNode(Node):
         with self._lock:
             pose = msg.pose.pose
             yaw = _yaw(pose.orientation)
-            self.guard.observe_odom(yaw)
+            if math.isfinite(yaw):
+                self.guard.observe_odom(yaw)
             if self._localization_dir:
                 stamp = msg.header.stamp.sec*1_000_000_000+msg.header.stamp.nanosec
                 age = self.get_clock().now().nanoseconds-stamp
@@ -232,6 +262,16 @@ class VelocityGuardNode(Node):
                 values = (pose.position.x, pose.position.y, pose.position.z, yaw,
                     twist.linear.x, twist.linear.y, twist.linear.z,
                     twist.angular.x, twist.angular.y, twist.angular.z)
+                valid = (bool(msg.header.frame_id) and bool(msg.child_frame_id)
+                         and all(math.isfinite(x) for x in values)
+                         and all(math.isfinite(x) for x in (
+                             pose.orientation.x, pose.orientation.y,
+                             pose.orientation.z, pose.orientation.w))
+                         and sum(x*x for x in (pose.orientation.x, pose.orientation.y,
+                             pose.orientation.z, pose.orientation.w)) > 1e-6
+                         and 0 <= age <= 500_000_000)
+                self._odom_received_at = time.monotonic() if valid else None
+                self._odom_stamp_ns = stamp
                 if (not 0 <= age <= 200_000_000 or not all(math.isfinite(x) for x in values) or
                         math.sqrt(sum(x*x for x in values[4:7])) > 0.02 or
                         math.sqrt(sum(x*x for x in values[7:])) > 0.02):
@@ -245,6 +285,19 @@ class VelocityGuardNode(Node):
 
     def _on_scan(self, msg: LaserScan) -> None:
         """Persist sudden/isolated close returns even when no goal is active."""
+        stamp = msg.header.stamp.sec * 1_000_000_000 + msg.header.stamp.nanosec
+        age = self.get_clock().now().nanoseconds - stamp
+        valid = (bool(msg.header.frame_id) and len(msg.ranges) > 0
+                 and math.isfinite(msg.range_min) and math.isfinite(msg.range_max)
+                 and 0 <= msg.range_min < msg.range_max
+                 and math.isfinite(msg.angle_min) and math.isfinite(msg.angle_increment)
+                 and msg.angle_increment != 0 and 0 <= age <= 500_000_000
+                 and any(value == math.inf or (math.isfinite(value) and
+                         msg.range_min <= value <= msg.range_max) for value in msg.ranges))
+        with self._lock:
+            self._scan_received_at = time.monotonic() if valid else None
+            self._scan_stamp_ns = stamp
+            self._scan_frame = msg.header.frame_id
         front = []
         for index, value in enumerate(msg.ranges):
             angle = msg.angle_min + index * msg.angle_increment
@@ -301,10 +354,103 @@ class VelocityGuardNode(Node):
             self._last_scan_summary_at = now
         self._front_min_history.append(front_min)
 
-    def _on_cmd(self, msg: Twist) -> None:
-        """Gate every Nav2 output on live localization, including direct action clients."""
+    def _on_map(self, msg: OccupancyGrid) -> None:
+        """Accept nonempty occupancy without expiring a stationary latched map."""
+        from relocalization_rbnx.coordination import read_record
+        info = msg.info
         with self._lock:
-            if self._localization_check is not None and not self._localization_check()[0]:
+            try:
+                state = read_record(Path(self._localization_dir) / 'mapping.json', 0.6)
+                if state.get('ready') is not True:
+                    self._map_ready = False
+                    return
+                self._mapping_identity = (state['process_id'], state['load_id'])
+            except (OSError, ValueError, TypeError, KeyError, RuntimeError):
+                self._map_ready = False
+                return
+            self._map_ready = (msg.header.frame_id == 'map'
+                and info.width > 0 and info.height > 0
+                and math.isfinite(info.resolution) and info.resolution > 0
+                and len(msg.data) == info.width * info.height
+                and any(value >= 0 for value in msg.data))
+
+    def _on_costmap(self, msg: OccupancyGrid) -> None:
+        """Track live Nav2 costmap updates independently of static map content."""
+        info = msg.info
+        valid = (msg.header.frame_id == 'map' and info.width > 0 and info.height > 0
+                 and math.isfinite(info.resolution) and info.resolution > 0
+                 and len(msg.data) == info.width * info.height)
+        with self._lock:
+            self._costmap_received_at = time.monotonic() if valid else None
+
+    def _mapping_inputs_ready(self) -> bool:
+        """Check this mapping load's map, live sensors and TF before forwarding.
+
+        Called with the guard lock held. A changed process/load invalidates the
+        previous occupancy sample; initial startup may use its latched sample.
+        """
+        from relocalization_rbnx.coordination import read_record
+        try:
+            mapping = read_record(Path(self._localization_dir) / 'mapping.json', 0.6)
+            identity = (mapping['process_id'], mapping['load_id'])
+            if self._mapping_identity is not None and identity != self._mapping_identity:
+                self._map_ready = False
+            self._mapping_identity = identity
+            if mapping.get('ready') is not True or mapping.get('mode') != 'mapping':
+                return False
+            now = time.monotonic()
+            stamp_now = self.get_clock().now().nanoseconds
+            if not self._map_ready or self._tf_buffer is None:
+                return False
+            if (self._costmap_received_at is None or
+                    not 0 <= now - self._costmap_received_at <= 1.0):
+                return False
+            for received, stamp in ((self._odom_received_at, self._odom_stamp_ns),
+                                    (self._scan_received_at, self._scan_stamp_ns)):
+                if received is None or not 0 <= now - received <= 0.5:
+                    return False
+                if not 0 <= stamp_now - stamp <= 500_000_000:
+                    return False
+            transform = self._tf_buffer.lookup_transform('map', 'base_link', Time())
+            stamp = transform.header.stamp
+            age = stamp_now - (stamp.sec * 1_000_000_000 + stamp.nanosec)
+            if not -100_000_000 <= age <= 500_000_000:
+                return False
+            pose = transform.transform
+            if not all(math.isfinite(value) for value in (
+                    pose.translation.x, pose.translation.y, pose.translation.z,
+                    pose.rotation.x, pose.rotation.y, pose.rotation.z, pose.rotation.w)):
+                return False
+            self._tf_buffer.lookup_transform('base_link', self._scan_frame, Time())
+            return True
+        except (OSError, KeyError, ValueError, TypeError, RuntimeError, TransformException):
+            return False
+
+    def _navigation_ready(self) -> bool:
+        """Evaluate one mapping identity, failing if it changes during validation."""
+        from relocalization_rbnx.coordination import read_record
+        self._checked_identity = None
+        try:
+            path = Path(self._localization_dir) / 'mapping.json'
+            before = read_record(path, 0.6)
+            fields = ('process_id', 'load_id', 'mode')
+            identity = tuple(before[key] for key in fields)
+            if not self._localization_check()[0]:
+                return False
+            if before.get('mode') == 'mapping' and not self._mapping_inputs_ready():
+                return False
+            after = read_record(path, 0.6)
+            if after.get('ready') is not True or identity != tuple(after[key] for key in fields):
+                return False
+            self._checked_identity = identity
+            return True
+        except (OSError, KeyError, ValueError, TypeError, RuntimeError):
+            return False
+
+    def _on_cmd(self, msg: Twist) -> None:
+        """Gate Nav2 output on verified localization or healthy mapping inputs."""
+        with self._lock:
+            if self._localization_check is not None and not self._navigation_ready():
                 self._pub.publish(Twist())
                 self._cancel_for_localization()
                 return
@@ -359,24 +505,20 @@ class VelocityGuardNode(Node):
         self._event("cancel_requested", uuid=self._active_uuid)
 
     def _publish_latched_zero(self) -> None:
-        """Stop on lost localization; leave steady manual mapping undisturbed.
-
-        A fresh mapping heartbeat suppresses unsolicited timer zeros only.
-        _on_cmd still rejects every autonomous command in mapping mode, and
-        map transitions revoke readiness before requesting a stationary stop.
-        """
+        """Stop invalid autonomous motion while leaving idle manual mapping free."""
         with self._lock:
             mapping = False
             if self._localization_check is not None:
                 from relocalization_rbnx.navigation import mapping_active
                 mapping = mapping_active(self._localization_dir)
-                valid, _ = self._localization_check()
+                valid = self._navigation_ready()
                 if not valid:
-                    if not mapping:
+                    if not mapping or self._active_uuid or any(self._last_cmd):
                         self._pub.publish(Twist())
+                        self._last_cmd = (0.0, 0.0)
                     self._cancel_for_localization()
                 self._write_localization_stop(not valid)
-            if self.guard.latched_reason and not mapping:
+            if self.guard.latched_reason and (not mapping or self._active_uuid):
                 self._pub.publish(Twist())
 
     def _cancel_for_localization(self):
@@ -406,7 +548,11 @@ class VelocityGuardNode(Node):
                 stopped = stopped and all(a[1] < b[1] and b[0]-a[0] <= 0.1
                     for a, b in zip(samples, samples[1:]))
             write_record(directory / 'navigation.json',
-                dict(load_id=mapping['load_id'], stopped=bool(stopped)))
+                dict(load_id=mapping['load_id'], stopped=bool(stopped),
+                     mapping_process_id=mapping['process_id'],
+                     ready=(not blocked and mapping.get('ready') is True and
+                         self._checked_identity == (mapping['process_id'],
+                             mapping['load_id'], mapping['mode']))))
         except (OSError, ValueError, KeyError, RuntimeError) as exc:
             self.get_logger().error(f'cannot acknowledge localization stop: {exc}')
 

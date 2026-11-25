@@ -49,7 +49,11 @@ User
 - `robonix/system/liaison/voice`: starts a voice session and streams
   `VoiceEvent` state, ASR, voiceprint, Pilot, and TTS progress.
 
-Both contracts are registered by the `liaison` provider id.
+Both contracts are registered by the `liaison` provider id. SubmitTask relays
+the complete Pilot event stream until its execution-aware final boundary, so
+long-running task progress and terminal notifications reach text/API callers.
+Voice sessions forward the same Pilot events through `VoiceEvent`; each
+completed plan outcome also closes its narration/TTS segment.
 
 Voice replies and prompts prefer `robonix/service/speech/speak` over MCP,
 using the selected TTS provider and speaker target. This supports G1's built-in

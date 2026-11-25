@@ -9,19 +9,35 @@ discovers map, odometry, and lidar inputs through Atlas and exposes
 The optional Scout2 relocalization deployment sets
 `RELOCALIZATION_COORDINATION_DIR` and `RELOCALIZATION_PACKAGE_ROOT` to shared
 same-host paths, mounted by the Docker launcher. Relative paths resolve from
-the deployment directory. The wrapper and final velocity
-guard check a fresh result bound to the exact mapping process and database load.
-Unverified or expired localization rejects goals, blocks velocity output and
-cancels NavigateToPose actions, including direct action clients.
+the deployment directory. The wrapper and final velocity guard check either a
+live mapping session or a verified localization result bound to the exact
+mapping process and database load. Mapping permits Nav2 exploration only while
+the occupancy map is valid and the global costmap, odometry, lidar scan, and
+map-to-base/sensor transforms are available. Sensor data and map-to-base TF
+expire after 0.5 s; the costmap expires after 1 s. A stationary latched occupancy
+map does not expire merely because its header stamp is old. Localization still
+requires the verified snapshot.
+Invalid or expired state rejects goals, blocks velocity output, and cancels
+NavigateToPose actions, including direct action clients.
 
 Set `relocalization_provider_id` (default `relocalization`) and
 `relocalization_max_angular_rps` in `(0, 0.2]` when enabling this integration.
-Scout2 uses one deployment manifest and conservative linear/angular limits
-matched to scan duration. A fresh ready mapping heartbeat suppresses timer
-zero velocities so teleoperation can build the map; Nav2 commands still require
-verified localization. Missing/stale heartbeats and transitions still stop
-autonomous motion. The guard
-acknowledges map transitions only after fresh, continuously stationary odometry.
+Scout2 configures the DWB planar/forward ceiling and final velocity guard at
+0.35 m/s with a default speed percentage of 100. This shared session default
+also applies to navigation outside exploration. The angular limit remains
+0.1485148514851485 rad/s. The controller can command lower speeds for obstacles
+and turns; the configured ceiling is not a measured or guaranteed cruise speed. A fresh mapping heartbeat suppresses idle timer zero
+velocities so teleoperation can build the map. Nav2 output during mapping
+additionally requires valid occupancy and fresh costmap, odometry, lidar, and TF inputs;
+unhealthy inputs cancel active Nav2 goals. Missing/stale heartbeats and map
+transitions stop autonomous motion. The guard acknowledges map transitions only
+after fresh, continuously stationary odometry.
+
+The final guard publishes its readiness with the current mapping process/load
+in the private `navigation.json` coordination record. Admission requires this
+acknowledgement to be at most 0.3 s old and rechecks it before dispatch. Queued
+coordinates cannot cross a map reload. Map/odom/scan topic bindings are passed
+from Atlas discovery to the guard; the scan need not be `/scanner/scan`.
 
 ## Deployment config
 
@@ -127,10 +143,30 @@ bash scripts/build.sh
 python3 -m unittest -v \
   test_configuration.py \
   test_runtime_integration.py \
+  test_localization_guard.py \
+  test_mapping_navigation.py \
   test_rotation_guard.py \
   test_scan_filter.py \
   test_speed_control.py \
   test_velocity_limit.py
+```
+
+To exercise the real ROS guard with synthetic inputs, run the following from
+this package root. The container has no network, uses ROS Domain 191, and sends
+output exclusively to `/robonix/nomotion/cmd_vel`. It does not restart the
+deployed services or connect to a chassis. The test covers mapping admission,
+speed bounds, scan/TF loss, map reload, and localization verification/expiry.
+
+```bash
+docker run --rm --network none \
+  -e ROS_DOMAIN_ID=191 -e RMW_IMPLEMENTATION=rmw_fastrtps_cpp \
+  -e ROBONIX_VELOCITY_OUTPUT_TOPIC=/robonix/nomotion/cmd_vel \
+  -e RELOCALIZATION_PACKAGE_ROOT=/relocalization \
+  -e PYTHONPATH=/nav2:/relocalization \
+  -v "$PWD:/nav2:ro" \
+  -v "$PWD/../service-relocalization:/relocalization:ro" \
+  --entrypoint bash robonix-nav2 -lc \
+  'source /opt/ros/humble/setup.bash && python3 /nav2/scripts/test_mapping_navigation_ros.py'
 ```
 
 Jetson native builds require ROS 2 Humble and Nav2 packages compatible with the

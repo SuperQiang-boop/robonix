@@ -14,23 +14,33 @@ way. User-invocable via the LLM/pilot.
 ### `robonix/skill/explore/explore`
 
 Start an exploration task. Returns immediately with a `run_id`; poll
-`status` to track progress.
+`status` to track progress. **If the user has not explicitly requested a
+duration, pass `timeout_s=-1` to use the deployment default (currently no total
+deadline). Do not invent a 300-second limit.** An explicit positive value
+overrides the deployment; 0 also means no total deadline. Per-leg hard timeout,
+stall detection, cancellation, and no-progress/no-safe-target termination
+remain active. The start response message includes the effective timeout.
+
+For Scout2, pass `max_speed_m_s=0.35` unless the user explicitly requests a
+lower ceiling. This is a ceiling, not a constant driving speed; the navigation
+controller slows for turns and obstacles. A lower requested ceiling requires
+lowering the navigation session limit first.
 
 | param            | type   | default | meaning                                    |
 |------------------|--------|---------|--------------------------------------------|
 | `area_hint`      | string | `""`    | free-form ("this room", "ground floor")    |
-| `timeout_s`      | float  | 600     | hard ceiling, 0 = no timeout               |
-| `max_speed_m_s`  | float  | 0.25    | safety cap on forward speed during explore |
+| `timeout_s`      | float  | -1      | -1 = deployment default; 0 = unlimited; positive = explicit override |
+| `max_speed_m_s`  | float  | 0.35    | required positive ceiling for exploration; Scout2 Nav2 is configured for 0.35 m/s; does not bypass the velocity guard |
 
 Returns `{accepted, run_id, message}`. `accepted=false` if a task is
-already running.
+already running or a previous navigation stop remains unconfirmed.
 
 ### `robonix/skill/explore/explore/status`
 
 Poll an exploration's progress. Empty `run_id` returns the most
 recent task.
 
-Returns `{known, state, area_m2, frontiers_left, elapsed_s, eta_s, detail}`.
+Returns `{known, state, area_m2, frontiers_left, frontier_regions, safe_observation_candidates, budget_rejected_candidates, rejected_goal_clearance, rejected_route_reachability, rejected_visibility, rejected_view_distance, rejected_local_distance, rejected_near_robot, rejected_cooldown, viewpoint_cells_checked, current_target_valid, current_target_x, current_target_y, elapsed_s, eta_s, detail}`. Rejection counts classify each searched viewpoint cell by its first failed condition; later route filters apply only to candidates that passed viewpoint generation. `frontier_regions` is the latest-map cluster count; it is not a precomputed goal queue.
 `state ∈ {PENDING | RUNNING | SUCCEEDED | FAILED | CANCELED | TIMEOUT}`
 (terminal: SUCCEEDED / FAILED / CANCELED / TIMEOUT).
 
@@ -49,22 +59,66 @@ Abort the active exploration. Idempotent.
 3. To stop it, call `cancel` with that SAME `run_id`.
 
 Passing an empty `run_id` uses the most recent exploration task.
+Before answering whether an exploration is still running, query `status` again
+with its exact run_id. A RUNNING result from earlier in the conversation cannot
+override a later FAILED/TIMEOUT result from the Executor or skill. `map/get_mode`
+reports SLAM mode, not the exploration task's lifecycle. A no-candidate error
+alone is not evidence of map corruption and does not justify a map reset.
 
 ## Behaviour
 
 1. Wait for `/map` (mapping service publishes it).
 2. Loop:
-   - Find frontier cells (free cells adjacent to unknown).
-   - Cluster them with size ≥ 8 cells; reject any centroid
-     - within 30 cm of an obstacle (skill-side safety filter), or
-     - more than 6 m from the robot (local exploration only), or
-     - inside cells we've already visited
-   - Pick highest-scoring frontier (info_gain ÷ travel_cost).
+   - Find free frontier cells adjacent to unknown space; cluster and split
+     large boundaries into local segments.
+   - Search in two dimensions from actual boundary segments for known-free
+     observation positions, within 2.5 m of the boundary. Each position needs a
+     known-free sight line to its source boundary, a 0.65 m known-free clearance
+     disk, and a clearance-safe route from the robot. Reject goals outside the
+     15 m local range or in a recently failed-goal area; visits add a penalty.
+   - Flood the clearance-safe known-free map from the robot pose; only score
+     goals in the robot's reachable component. Nav2 still checks the actual
+     path and full configured footprint.
+   - Room traversal is based on the occupancy grid, not semantic door detection.
+     Cross a doorway only if its known-free corridor belongs to the robot's
+     0.65 m footprint-clear route component; never assume an unknown or narrow
+     opening is traversable. Nav2 validates the actual route and footprint.
+   - Read `navigation/get_speed_limit` and estimate known-free routes. Prefer
+     shorter safe routes. The configured per-leg timeout is a hard cap; a route
+     estimate above the advisory scheduling reference is still attempted when
+     it fits that cap. Finite task deadlines reserve cancellation and arrival
+     verification time. If a frontier route exceeds one hard-capped leg, choose
+     a safe waypoint on the reconstructed known-free route and recompute after
+     arrival; never send one over-cap route or interpolate across unknown space.
+     Estimates do not replace Nav2's planner.
    - Send goal via `service/navigation/navigate` MCP; poll status.
-   - On arrival, conditionally do a 360° in-place sweep to fill
-     camera viewing-angle coverage at the leg endpoint.
-3. Declare `done` when 0 frontier clusters remain and area hasn't
-   grown for 30 seconds.
+   - Translation goals face the travel direction. A fresh robot pose held
+     inside the configured 0.45 m observation radius for 2 seconds completes
+     the exploration leg after navigation cancellation is confirmed. This is
+     an exploration observation criterion; Nav2's own checker is unchanged.
+   - In-place sweeps are disabled by default (`sweep_every_n_legs=0`). Opt-in
+     sweeps require time and missing viewing coverage; sweeps without meaningful
+     free-area growth are not repeated.
+3. Declare `done` only when no frontier clusters remain and confirmed map
+   growth/translation has been quiet for 30 seconds. Remaining frontiers with
+   no safe reachable goal are reported as an error, not successful coverage.
+   When no candidate is available, wait for at least a 30-second no-progress
+   window from the first missing candidate or latest progress, not just five
+   fast polls. Reports include start clearance, reachable cell count, generated
+   viewpoints and distance/cooldown/budget rejection counts. A disabled sweep
+   is reported as disabled, never as a performed rotation. Terminal elapsed_s
+   is frozen at completion.
+
+Progress is measured from accumulated free-area growth or at least 0.25 m of
+translation since the last confirmed progress. Slow growth accumulates against
+the last progress snapshot; in-place sweeps and RPC success alone do not reset
+the 120-second no-progress limit. Failed goal regions are excluded for 120 s.
+A finite task may report TIMEOUT before dispatch if its remaining time cannot
+fit any reachable frontier. This does not mean the map is fully explored.
+Cancellation is bound to the exact owned navigation run; an unconfirmed stop
+blocks the next exploration. Navigation speed is queried, not raised; if the
+current navigation limit exceeds `max_speed_m_s`, the task fails with an explicit
+instruction to lower the navigation limit.
 
 ## What this skill does NOT do
 
@@ -85,6 +139,7 @@ hardcoded inter-package topic names.
 | nav_navigate    | robonix/service/navigation/navigate      | MCP       |
 | nav_status      | robonix/service/navigation/navigate/status | MCP     |
 | nav_cancel      | robonix/service/navigation/navigate/cancel | MCP     |
+| nav_get_speed   | robonix/service/navigation/get_speed_limit | MCP     |
 
 Skill refuses to start if any of these is missing — there is no
 hardcoded fallback (packaging-spec invariant #1).

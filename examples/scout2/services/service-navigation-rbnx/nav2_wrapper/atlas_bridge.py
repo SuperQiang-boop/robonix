@@ -61,14 +61,20 @@ logging.basicConfig(level=os.environ.get("NAV2_LOG_LEVEL", "INFO").upper(),
                     format="[nav2_wrapper] %(message)s")
 log = logging.getLogger("nav2_wrapper")
 _localization_check = None
+_mapping_active_check = None
+_mapping_navigation_check = None
+_map_load_identity = None
 
 
 def _configure_relocalization(cfg):
-    """Enable snapshot-bound navigation admission for coordinated deployments."""
-    global _localization_check
+    """Configure mapping readiness and snapshot-bound localization admission."""
+    global _localization_check, _mapping_active_check, _mapping_navigation_check, _map_load_identity
     directory = cfg.get('coordination_dir') or os.environ.get('RELOCALIZATION_COORDINATION_DIR')
     if not directory:
         _localization_check = None
+        _mapping_active_check = None
+        _mapping_navigation_check = None
+        _map_load_identity = None
         return
     root = cfg.get('relocalization_package_root') or os.environ.get('RELOCALIZATION_PACKAGE_ROOT')
     invocation_dir = os.environ.get('RBNX_INVOCATION_CWD')
@@ -83,7 +89,8 @@ def _configure_relocalization(cfg):
     if not root or not Path(directory).is_absolute() or not Path(root).is_absolute():
         raise ValueError('absolute coordination_dir and relocalization_package_root are required')
     sys.path.insert(0, str(Path(root).resolve(strict=True)))
-    from relocalization_rbnx.navigation import check
+    from relocalization_rbnx.navigation import check, mapping_active, mapping_navigation_ready
+    from relocalization_rbnx.coordination import read_record
     provider_id = cfg.get('relocalization_provider_id', 'relocalization')
     os.environ.update(RELOCALIZATION_COORDINATION_DIR=str(directory),
         RELOCALIZATION_PACKAGE_ROOT=str(root), RELOCALIZATION_PROVIDER_ID=provider_id)
@@ -92,6 +99,17 @@ def _configure_relocalization(cfg):
         raise ValueError('relocalization_max_angular_rps must be in (0, 0.2]')
     os.environ['ROBONIX_RELOCALIZATION_MAX_ANGULAR_RPS'] = str(angular)
     _localization_check = lambda: check(directory, provider_id)
+    _mapping_active_check = lambda: mapping_active(directory)
+    _mapping_navigation_check = lambda: mapping_navigation_ready(directory)
+
+    def map_load_identity():
+        """Bind queued coordinates to the exact live map process and load."""
+        state = read_record(Path(directory) / 'mapping.json', 0.6)
+        if state.get('ready') is not True:
+            raise RuntimeError('mapping is not ready')
+        return (state['process_id'], state['load_id'], state['mode'])
+
+    _map_load_identity = map_load_identity
 
 
 def _pump_output(stream, tag: str) -> None:
@@ -204,6 +222,7 @@ _map_ready = False
 # Costmap state for goal reachability checking
 _costmap_sub = None
 _costmap_data = None
+_costmap_updated_at = 0.0
 _costmap_lock = threading.Lock()
 _costmap_resolution = 0.05
 _costmap_origin_x = 0.0
@@ -240,7 +259,7 @@ def _import_ros2() -> None:
 # ── costmap subscription for goal reachability checking ──────────────────────
 def _costmap_callback(msg):
     """Update local costmap data from global_costmap topic."""
-    global _costmap_data, _costmap_resolution, _costmap_origin_x, _costmap_origin_y
+    global _costmap_data, _costmap_updated_at, _costmap_resolution, _costmap_origin_x, _costmap_origin_y
     global _costmap_width, _costmap_height
     with _costmap_lock:
         _costmap_resolution = msg.info.resolution
@@ -249,6 +268,24 @@ def _costmap_callback(msg):
         _costmap_width = msg.info.width
         _costmap_height = msg.info.height
         _costmap_data = bytes(msg.data)
+        _costmap_updated_at = time.monotonic()
+
+
+def _mapping_costmap_ready() -> bool:
+    """Require the final guard's readiness and a current Nav2 costmap."""
+    if _mapping_navigation_check is None or not _mapping_navigation_check():
+        return False
+    with _costmap_lock:
+        expected = _costmap_width * _costmap_height
+        return (
+            _costmap_data is not None
+            and _costmap_width > 0
+            and _costmap_height > 0
+            and len(_costmap_data) == expected
+            and math.isfinite(_costmap_resolution)
+            and _costmap_resolution > 0
+            and 0 <= time.monotonic() - _costmap_updated_at <= 1.0
+        )
 
 
 def _setup_costmap_subscriber(node) -> None:
@@ -953,9 +990,17 @@ def _spawn_velocity_guard(cfg: dict) -> None:
 
 
 def _spawn_nav2(cfg: dict, remap_args: list[str]) -> None:
+    """Start Nav2 and pass its resolved sensor bindings to the final guard."""
     global _nav2_proc
     params_file, launch_remaps = _materialize_params(cfg, remap_args)
-    os.environ['ROBONIX_NAV_GUARD_ODOM_TOPIC'] = _binding_value(remap_args, 'odom')
+    for key in ('map', 'odom', 'scan'):
+        topic = _binding_value(remap_args, key)
+        variable = f'ROBONIX_NAV_GUARD_{key.upper()}_TOPIC'
+        if topic:
+            os.environ[variable] = topic
+        else:
+            os.environ.pop(variable, None)
+    os.environ['ROBONIX_NAV_GUARD_USE_SIM_TIME'] = 'true' if cfg.get('use_sim_time', False) else 'false'
     _spawn_velocity_guard(cfg)
     launch_file = _materialize_guarded_launch()
     use_sim_time = "true" if cfg.get("use_sim_time", False) else "false"
@@ -1354,12 +1399,35 @@ def _result_cb(fut, gid: str):
 
 
 def _dispatch_goal(node, gid: str, payload: dict):
-    """Recheck localization at dispatch, including targets queued before a reload."""
+    """Recheck readiness and reject coordinates queued before a map reload."""
+    if _map_load_identity is not None:
+        try:
+            same_load = payload.get('map_load_identity') == _map_load_identity()
+        except (OSError, ValueError, TypeError, KeyError, RuntimeError):
+            same_load = False
+        if not same_load:
+            with _state_lock:
+                _goal_states[gid] = {'state': 'FAILED', 'detail': 'map changed after goal was queued'}
+            _restore_speed_after_run(gid)
+            return
+    if not _map_ready:
+        with _state_lock:
+            _goal_states[gid] = {'state': 'FAILED', 'detail': 'map is not ready'}
+        _restore_speed_after_run(gid)
+        return
     if _localization_check is not None:
         valid, detail = _localization_check()
         if not valid:
             with _state_lock:
                 _goal_states[gid] = {'state': 'FAILED', 'detail': detail}
+            _restore_speed_after_run(gid)
+            return
+        if _mapping_active_check is not None and _mapping_active_check() and not _mapping_costmap_ready():
+            with _state_lock:
+                _goal_states[gid] = {
+                    'state': 'FAILED',
+                    'detail': 'mapping navigation inputs or global costmap are not ready',
+                }
             _restore_speed_after_run(gid)
             return
     with _state_lock:
@@ -1518,12 +1586,20 @@ def _navigate_impl(goal) -> dict:
     global _last_run_id
     if _ros_node is None:
         return {"accepted": False, "run_id": "", "detail": "ROS2 not initialized"}
+    try:
+        map_load_identity = _map_load_identity() if _map_load_identity is not None else None
+    except (OSError, ValueError, TypeError, KeyError, RuntimeError) as exc:
+        return {'accepted': False, 'run_id': '', 'detail': f'mapping unavailable: {exc}'}
     if _localization_check is not None:
         valid, detail = _localization_check()
         if not valid:
             return {'accepted': False, 'run_id': '', 'detail': detail}
     if not _map_ready:
         return {"accepted": False, "run_id": "", "detail": "map is not ready; wait for a non-empty map"}
+    if not _nav_action_ready:
+        return {"accepted": False, "run_id": "", "detail": "Nav2 navigate_to_pose action server is not ready"}
+    if _mapping_active_check is not None and _mapping_active_check() and not _mapping_costmap_ready():
+        return {"accepted": False, "run_id": "", "detail": "mapping navigation inputs or global costmap are not ready"}
     run_id = str(uuid.uuid4())
     frame_id = goal.header.frame_id or "map"
     yaw = _quat_to_yaw(goal.pose.orientation.z, goal.pose.orientation.w)
@@ -1556,6 +1632,7 @@ def _navigate_impl(goal) -> dict:
         "x": x,
         "y": y,
         "yaw": float(yaw),
+        "map_load_identity": map_load_identity,
     }))
     return {"accepted": True, "run_id": run_id, "detail": "queued"}
 

@@ -10,3 +10,17 @@ int32 frontiers_left        # frontier clusters above min_size threshold
 float32 elapsed_s
 float32 eta_s               # estimated seconds until done; -1 unknown
 string detail               # human-readable
+int32 frontier_regions            # recomputed frontier clusters in latest map
+int32 safe_observation_candidates # ranked safe observation goals before budget
+int32 budget_rejected_candidates  # direct routes over the hard per-leg/global limit; long routes may use waypoints
+int32 rejected_goal_clearance     # observation cells failing footprint clearance plus arrival tolerance
+int32 rejected_route_reachability # clear observation cells disconnected from the robot's safe route
+int32 rejected_visibility         # reachable, clear cells without a known-free line of sight to frontier
+int32 rejected_view_distance       # observation search cells beyond the frontier-view distance
+int32 rejected_local_distance      # candidates beyond the robot's local navigation range
+int32 rejected_near_robot          # candidates too close to be useful observation stops
+int32 rejected_cooldown            # candidates in recently failed goal neighborhoods
+int32 viewpoint_cells_checked      # boundary-view cell evaluations before later route filters
+bool current_target_valid
+float32 current_target_x
+float32 current_target_y

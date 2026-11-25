@@ -179,7 +179,12 @@ fn forest_panel_lines(forest: &ForestView) -> Vec<Line<'static>> {
             Style::default().fg(Color::DarkGray),
         )));
     }
-    let (status_txt, status_style) = match forest.status.as_str() {
+    let display_status = if forest.plans.iter().any(|plan| !plan.done) {
+        "in_progress"
+    } else {
+        forest.status.as_str()
+    };
+    let (status_txt, status_style) = match display_status {
         "done" => ("done", Style::default().fg(Color::Green)),
         "in_progress" => ("in_progress", Style::default().fg(Color::Yellow)),
         _ => ("—", Style::default().fg(Color::DarkGray)),
@@ -1745,14 +1750,14 @@ async fn abort_session(liaison_endpoint: &str, session_id: &str, user_id: &str) 
 /// Fire-and-forget a mid-turn VOICE steer (Ctrl+V during a running turn):
 /// record + ASR another utterance via a fresh voice session and let its
 /// transcript submit — Pilot steers it into the active turn. TTS is disabled
-/// here (the per-segment playback rides the main turn's stream); we just drain
-/// this session's events on a spawned task.
+/// here; return its events to the foreground because it becomes the newest
+/// Pilot subscriber and owns subsequent execution notifications.
 fn spawn_voice_steer(
     liaison_endpoint: &str,
     session_id: &str,
     user_id: &str,
     chat_cfg: &ChatConfig,
-) {
+) -> tokio::sync::mpsc::Receiver<Result<crate::pb::liaison::VoiceEvent, tonic::Status>> {
     use crate::pb::contracts::robonix_system_liaison_voice_client::RobonixSystemLiaisonVoiceClient;
     use crate::pb::liaison::StartVoiceSessionRequest;
     let ep = liaison_endpoint.to_string();
@@ -1772,14 +1777,32 @@ fn spawn_voice_steer(
         ),
         context_json: String::new(),
     };
+    let (tx, rx) = tokio::sync::mpsc::channel(64);
     tokio::spawn(async move {
-        if let Ok(mut client) = RobonixSystemLiaisonVoiceClient::connect(ep).await
-            && let Ok(resp) = client.start_voice_session(tonic::Request::new(req)).await
-        {
-            let mut s = resp.into_inner();
-            while s.next().await.is_some() {}
+        let stream = async {
+            let mut client = RobonixSystemLiaisonVoiceClient::connect(ep)
+                .await
+                .map_err(|error| tonic::Status::unavailable(error.to_string()))?;
+            client
+                .start_voice_session(tonic::Request::new(req))
+                .await
+                .map(|response| response.into_inner())
+        }
+        .await;
+        match stream {
+            Ok(mut stream) => {
+                while let Some(event) = stream.next().await {
+                    if tx.send(event).await.is_err() {
+                        break;
+                    }
+                }
+            }
+            Err(error) => {
+                let _ = tx.send(Err(error)).await;
+            }
         }
     });
+    rx
 }
 
 // ── Text turn ────────────────────────────────────────────────────────────────
@@ -1875,14 +1898,11 @@ async fn run_text_intent_with_esc_abort(
                                         role: Role::User,
                                         text: format!("(steer) {steer}"),
                                     });
-                                    if let Err(e) =
-                                        send_steer(liaison_endpoint, session_id, user_id, &steer)
-                                            .await
-                                    {
-                                        messages.borrow_mut().push(ChatMessage {
-                                            role: Role::Status,
-                                            text: format!("steer failed: {e:#}"),
-                                        });
+                                    match send_steer(liaison_endpoint, session_id, user_id, &steer).await {
+                                        Ok(next) => rx = forward_pilot_events(next),
+                                        Err(e) => messages.borrow_mut().push(ChatMessage {
+                                            role: Role::Status, text: format!("steer failed: {e:#}"),
+                                        }),
                                     }
                                     *scroll = 0;
                                     draw(terminal, &messages.borrow(), &forest.borrow(), &steer_input, *scroll, true)?;
@@ -1914,26 +1934,74 @@ async fn run_text_intent_with_esc_abort(
 }
 
 /// Submit `text` as a mid-task steer on an already-running session. Pilot routes
-/// it to the live turn's steer queue and returns an empty stream, which we drain.
+/// it to the live turn. Return the newest event stream to the foreground UI.
 async fn send_steer(
     liaison_endpoint: &str,
     session_id: &str,
     user_id: &str,
     text: &str,
-) -> Result<()> {
+) -> Result<tonic::Streaming<crate::pb::pilot::PilotEvent>> {
     use crate::pb::contracts::robonix_system_liaison_submit_client::RobonixSystemLiaisonSubmitClient;
 
     let mut client = RobonixSystemLiaisonSubmitClient::connect(liaison_endpoint.to_string())
         .await
         .context("failed to connect to Liaison for steer")?;
     let task = build_text_task(session_id, user_id, text);
-    let mut stream = client
+    let stream = client
         .submit_task(tonic::Request::new(task))
         .await
         .context("Liaison steer submit failed")?
         .into_inner();
-    while stream.next().await.is_some() {}
-    Ok(())
+    Ok(stream)
+}
+
+/// Forward the newest text subscription to the foreground without dropping events.
+fn forward_pilot_events<S>(
+    mut stream: S,
+) -> tokio::sync::mpsc::Receiver<Result<crate::pb::pilot::PilotEvent, tonic::Status>>
+where
+    S: tokio_stream::Stream<Item = Result<crate::pb::pilot::PilotEvent, tonic::Status>>
+        + Send
+        + Unpin
+        + 'static,
+{
+    let (tx, rx) = tokio::sync::mpsc::channel(64);
+    tokio::spawn(async move {
+        while let Some(event) = stream.next().await {
+            if tx.send(event).await.is_err() {
+                break;
+            }
+        }
+    });
+    rx
+}
+
+/// Preserve Pilot notifications when a text steer takes over a voice turn.
+fn pilot_events_as_voice<S>(
+    mut stream: S,
+    session_id: String,
+) -> tokio::sync::mpsc::Receiver<Result<crate::pb::liaison::VoiceEvent, tonic::Status>>
+where
+    S: tokio_stream::Stream<Item = Result<crate::pb::pilot::PilotEvent, tonic::Status>>
+        + Send
+        + Unpin
+        + 'static,
+{
+    let (tx, rx) = tokio::sync::mpsc::channel(64);
+    tokio::spawn(async move {
+        while let Some(event) = stream.next().await {
+            let event = event.map(|pilot| crate::pb::liaison::VoiceEvent {
+                event_kind: 6,
+                session_id: session_id.clone(),
+                pilot: Some(pilot),
+                ..Default::default()
+            });
+            if tx.send(event).await.is_err() {
+                break;
+            }
+        }
+    });
+    rx
 }
 
 // ── Voice turn ───────────────────────────────────────────────────────────────
@@ -2033,7 +2101,7 @@ async fn run_voice_session_with_esc_abort(
                                 role: Role::Voice,
                                 text: "Ctrl+V — voice steer: speak your addition…".to_string(),
                             });
-                            spawn_voice_steer(liaison_endpoint, session_id, user_id, chat_cfg);
+                            rx = spawn_voice_steer(liaison_endpoint, session_id, user_id, chat_cfg);
                             draw(terminal, &messages.borrow(), &forest.borrow(), &steer_input, *scroll, true)?;
                         } else {
                             match key.code {
@@ -2053,13 +2121,11 @@ async fn run_voice_session_with_esc_abort(
                                             role: Role::User,
                                             text: format!("(steer) {steer}"),
                                         });
-                                        if let Err(e) =
-                                            send_steer(liaison_endpoint, session_id, user_id, &steer).await
-                                        {
-                                            messages.borrow_mut().push(ChatMessage {
-                                                role: Role::Status,
-                                                text: format!("steer failed: {e:#}"),
-                                            });
+                                        match send_steer(liaison_endpoint, session_id, user_id, &steer).await {
+                                            Ok(next) => rx = pilot_events_as_voice(next, session_id.to_string()),
+                                            Err(e) => messages.borrow_mut().push(ChatMessage {
+                                                role: Role::Status, text: format!("steer failed: {e:#}"),
+                                            }),
                                         }
                                         *scroll = 0;
                                     }
@@ -2136,6 +2202,7 @@ fn apply_pilot_event(
     const EVT_TEXT_CHUNK: u32 = 0;
     const EVT_PLAN: u32 = 1;
     const EVT_BATCH_RESULT: u32 = 2;
+    const EVT_STATUS: u32 = 3;
     const EVT_FINAL_TEXT: u32 = 4;
     const EVT_NODE_STATE: u32 = 5;
     const EVT_TASK_STATE: u32 = 6;
@@ -2161,12 +2228,24 @@ fn apply_pilot_event(
             }
         }
         EVT_FINAL_TEXT => {
-            let t = event.final_text.clone();
-            let has_agent = m.last().is_some_and(|x| matches!(x.role, Role::Agent));
-            if !has_agent && !t.is_empty() {
+            let text = &event.final_text;
+            // Deterministic final Status may also be the turn's final reply.
+            // Deduplicate only identical text, not all replies after an agent chunk.
+            if !text.is_empty() && !m.last().is_some_and(|last| last.text == *text) {
                 m.push(ChatMessage {
                     role: Role::Agent,
-                    text: t,
+                    text: text.clone(),
+                });
+            }
+        }
+        EVT_STATUS => {
+            if let Some(status) = &event.status
+                && !status.message.is_empty()
+                && !m.last().is_some_and(|last| last.text == status.message)
+            {
+                m.push(ChatMessage {
+                    role: Role::Status,
+                    text: status.message.clone(),
                 });
             }
         }
@@ -2193,7 +2272,14 @@ fn apply_pilot_event(
         EVT_NODE_STATE => {
             if let Some(ref ns) = event.node_state {
                 let mut f = forest.borrow_mut();
-                if let Some(pv) = f.plan_mut(&ns.plan_id) {
+                if let Some(pv) = f.plan_mut(&ns.plan_id)
+                    && !pv.done
+                    && !(pv
+                        .node_states
+                        .get(&ns.node_index)
+                        .is_some_and(|state| matches!(state, 2..=5))
+                        && !matches!(ns.state, 2..=5))
+                {
                     pv.node_states.insert(ns.node_index, ns.state);
                 }
             }
@@ -2204,6 +2290,9 @@ fn apply_pilot_event(
                 if let Some(pv) = f.plan_mut(&b.plan_id) {
                     pv.done = true;
                     pv.any_failed = b.any_failed;
+                    for result in &b.results {
+                        pv.node_states.insert(result.node_index, result.state);
+                    }
                 }
             }
         }
@@ -2482,4 +2571,173 @@ fn whoami_username() -> String {
     std::env::var("USER")
         .or_else(|_| std::env::var("USERNAME"))
         .unwrap_or_else(|_| "user".to_string())
+}
+
+#[cfg(test)]
+mod notification_tests {
+    use super::*;
+    use crate::pb::pilot::{
+        BatchResult, PilotEvent, Plan, RtdlNode, RtdlNodeState, SessionStatusEvent, TaskStateEvent,
+    };
+
+    /// Create the minimal real plan payload used by the live forest renderer.
+    fn plan_event() -> PilotEvent {
+        PilotEvent {
+            event_kind: 1,
+            plan: Some(Plan {
+                plan_id: "p".into(),
+                root_index: 0,
+                nodes: vec![RtdlNode {
+                    node_kind: 2,
+                    description: "explore".into(),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn all_execution_outcomes_render_once_and_replace_old_running_state() {
+        for (state, label) in [
+            (2, "SUCCEEDED"),
+            (3, "FAILED"),
+            (4, "CANCELED"),
+            (5, "TIMEOUT"),
+        ] {
+            let messages = Rc::new(RefCell::new(Vec::new()));
+            let forest = Rc::new(RefCell::new(ForestView::default()));
+            apply_pilot_event(&messages, &forest, &plan_event()).unwrap();
+            apply_pilot_event(
+                &messages,
+                &forest,
+                &PilotEvent {
+                    event_kind: 6,
+                    task_state: Some(TaskStateEvent {
+                        status: "done".into(),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            let panel = forest_panel_lines(&forest.borrow())
+                .iter()
+                .map(ToString::to_string)
+                .collect::<String>();
+            assert!(panel.contains("in_progress"));
+            let node = RtdlNodeState {
+                plan_id: "p".into(),
+                node_index: 0,
+                state,
+                ..Default::default()
+            };
+            apply_pilot_event(
+                &messages,
+                &forest,
+                &PilotEvent {
+                    event_kind: 2,
+                    batch_result: Some(BatchResult {
+                        plan_id: "p".into(),
+                        results: vec![node.clone()],
+                        any_failed: state != 2,
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            let text = format!("[plan p] {label}: actual execution outcome");
+            let event = PilotEvent {
+                event_kind: 3,
+                status: Some(SessionStatusEvent {
+                    message: text.clone(),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            };
+            apply_pilot_event(&messages, &forest, &event).unwrap();
+            apply_pilot_event(&messages, &forest, &event).unwrap();
+            apply_pilot_event(
+                &messages,
+                &forest,
+                &PilotEvent {
+                    event_kind: 4,
+                    final_text: text.clone(),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            assert_eq!(
+                messages.borrow().iter().filter(|m| m.text == text).count(),
+                1
+            );
+            let mut old = node;
+            old.state = 1;
+            apply_pilot_event(
+                &messages,
+                &forest,
+                &PilotEvent {
+                    event_kind: 5,
+                    node_state: Some(old),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            assert_eq!(forest.borrow().plans[0].node_states[&0], state);
+        }
+    }
+
+    #[tokio::test]
+    async fn text_steer_forwards_completion_instead_of_silently_draining_it() {
+        let events = vec![Ok(PilotEvent {
+            event_kind: 3,
+            status: Some(SessionStatusEvent {
+                message: "CANCELED confirmed".into(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        })];
+        let mut receiver = forward_pilot_events(tokio_stream::iter(events));
+        assert!(
+            receiver
+                .recv()
+                .await
+                .unwrap()
+                .unwrap()
+                .status
+                .unwrap()
+                .message
+                .contains("CANCELED")
+        );
+        assert!(receiver.recv().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn text_steer_on_voice_turn_preserves_notifications_and_errors() {
+        let event = PilotEvent {
+            event_kind: 3,
+            status: Some(SessionStatusEvent {
+                message: "TIMEOUT".into(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let mut receiver = pilot_events_as_voice(
+            tokio_stream::iter(vec![
+                Ok(event),
+                Err(tonic::Status::unavailable("connection lost")),
+            ]),
+            "s".into(),
+        );
+        let forwarded = receiver.recv().await.unwrap().unwrap();
+        assert_eq!(forwarded.event_kind, 6);
+        assert_eq!(forwarded.pilot.unwrap().status.unwrap().message, "TIMEOUT");
+        assert_eq!(
+            receiver.recv().await.unwrap().unwrap_err().code(),
+            tonic::Code::Unavailable
+        );
+        assert!(receiver.recv().await.is_none());
+    }
 }

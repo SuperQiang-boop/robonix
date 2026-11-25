@@ -21,6 +21,7 @@
 
 mod config;
 mod discovery;
+mod execution_notice;
 mod history;
 mod memory;
 mod navigation_goal;

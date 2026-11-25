@@ -77,6 +77,36 @@ import explore_pb2  # noqa: F401, E402
 import explore_mcp  # noqa: F401, E402
 import robonix_contracts_pb2_grpc  # noqa: F401, E402
 
+# Keep the checked-in IDL, generated protobuf descriptor, and MCP dataclass
+# in lockstep. A stale image/codegen previously omitted the frontier diagnostic
+# fields, causing status responses to fail during serialization.
+status_fields = {
+    "rejected_goal_clearance",
+    "rejected_route_reachability",
+    "rejected_visibility",
+    "rejected_view_distance",
+    "rejected_local_distance",
+    "rejected_near_robot",
+    "rejected_cooldown",
+    "viewpoint_cells_checked",
+}
+proto_fields = {
+    field.name
+    for field in explore_pb2.GetExploreStatus_Response.DESCRIPTOR.fields
+}
+mcp_fields = set(explore_mcp.GetExploreStatus_Response.__dataclass_fields__)
+missing = {
+    "protobuf": sorted(status_fields - proto_fields),
+    "mcp": sorted(status_fields - mcp_fields),
+}
+missing = {layer: fields for layer, fields in missing.items() if fields}
+if missing:
+    raise RuntimeError(f"GetExploreStatus generated fields are stale: {missing}")
+
+probe = explore_pb2.GetExploreStatus_Response(rejected_goal_clearance=1)
+if probe.rejected_goal_clearance != 1:
+    raise RuntimeError("GetExploreStatus protobuf diagnostic field round-trip failed")
+
 print(
     "[explore/codegen] generated protobuf, gRPC, and MCP imports OK "
     f"(protobuf={actual['protobuf']} grpcio-tools={actual['grpcio-tools']} "

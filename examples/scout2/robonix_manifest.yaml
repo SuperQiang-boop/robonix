@@ -197,8 +197,8 @@ service:
       action_wait_s: 240.0
       guard_terminal_xy_m: 0.20
       dynamic_speed:
-        max_linear_speed_mps: 0.19801980198019803
-        default_percentage: 75
+        max_linear_speed_mps: 0.35
+        default_percentage: 100
         step_percentage: 20
         min_percentage: 20
       scan_projection:
@@ -223,7 +223,11 @@ skill:
     #branch: main
     config:
       explore_mode: frontier
-      timeout_s: 600
+      # Free exploration defaults to no total deadline; per-leg and stall guards remain active.
+      timeout_s: 0
+      nav_goal_timeout_s: 180
+      # Mid360 occupancy already observes all azimuths; avoid periodic camera sweeps.
+      sweep_every_n_legs: 0
   - name: move
     path: ./skills/move
   - name: patrol

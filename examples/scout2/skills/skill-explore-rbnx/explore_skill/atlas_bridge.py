@@ -14,6 +14,7 @@ import time
 from robonix_api import ATLAS, Skill, Ok, Err, Deferred
 
 from .controller import ExploreController
+from .configuration import ExploreSettings
 
 logging.basicConfig(level=logging.INFO,
                     format="[explore] %(levelname)s %(message)s")
@@ -21,6 +22,7 @@ log = logging.getLogger("explore_rbnx")
 
 explore_skill = Skill(id="explore", namespace="robonix/skill/explore")
 ctrl: ExploreController | None = None
+settings = ExploreSettings()
 
 # Atlas-resolved inputs the skill consumes. Hard-fail if any required
 # input isn't atlas-resolvable: the packaging-spec rule is "no hardcoded
@@ -35,6 +37,7 @@ REQUIRED_INPUTS = {
     "nav_navigate":  ("robonix/service/navigation/navigate", "mcp"),
     "nav_status":    ("robonix/service/navigation/navigate/status", "mcp"),
     "nav_cancel":    ("robonix/service/navigation/navigate/cancel", "mcp"),
+    "nav_get_speed": ("robonix/service/navigation/get_speed_limit", "mcp"),
 }
 
 # Optional inputs: used when available for enhanced features (e.g., glass door
@@ -131,17 +134,19 @@ def _canonical_state(state: str) -> str:
 
 @explore_skill.mcp("robonix/skill/explore/explore")
 def explore(req: Explore_Request) -> Explore_Response:
-    """Start an autonomous exploration task. Returns a run_id; poll
-    status() with that run_id to track."""
+    """Start exploration; use timeout_s=-1 unless the user specified a duration.
+    -1 uses deployment settings, 0 is unlimited, positive values override.
+    For Scout2 use max_speed_m_s=0.35 unless a lower ceiling is requested.
+    Returns the effective timeout in message; poll status() with run_id."""
     if ctrl is None:
         raise RuntimeError("controller not initialized")
     try:
         handle = ctrl.start(area_hint=req.area_hint,
-                            timeout_s=float(req.timeout_s),
+                            timeout_s=settings.resolve_timeout(req.timeout_s),
                             max_speed_m_s=float(req.max_speed_m_s))
         return Explore_Response(accepted=True, run_id=handle.task_id,
                                 message=handle.detail)
-    except RuntimeError as e:
+    except (RuntimeError, ValueError) as e:
         return Explore_Response(accepted=False, run_id="", message=str(e))
 
 
@@ -155,6 +160,13 @@ def status(req: GetExploreStatus_Request) -> GetExploreStatus_Response:
         return GetExploreStatus_Response(
             known=False, state="PENDING", area_m2=0.0, frontiers_left=0,
             elapsed_s=0.0, eta_s=-1.0, detail="no task with that id",
+            frontier_regions=0, safe_observation_candidates=0,
+            budget_rejected_candidates=0, rejected_goal_clearance=0,
+            rejected_route_reachability=0, rejected_visibility=0,
+            rejected_view_distance=0, rejected_local_distance=0,
+            rejected_near_robot=0, rejected_cooldown=0,
+            viewpoint_cells_checked=0, current_target_valid=False,
+            current_target_x=0.0, current_target_y=0.0,
         )
     return GetExploreStatus_Response(
         known=True,
@@ -164,6 +176,20 @@ def status(req: GetExploreStatus_Request) -> GetExploreStatus_Response:
         elapsed_s=float(s.get("elapsed_s", 0.0)),
         eta_s=float(s.get("eta_s", -1.0)),
         detail=str(s.get("detail", "")),
+        frontier_regions=int(s.get("frontier_regions", s.get("frontiers_left", 0))),
+        safe_observation_candidates=int(s.get("safe_observation_candidates", 0)),
+        budget_rejected_candidates=int(s.get("budget_rejected_candidates", 0)),
+        rejected_goal_clearance=int(s.get("rejected_goal_clearance", 0)),
+        rejected_route_reachability=int(s.get("rejected_route_reachability", 0)),
+        rejected_visibility=int(s.get("rejected_visibility", 0)),
+        rejected_view_distance=int(s.get("rejected_view_distance", 0)),
+        rejected_local_distance=int(s.get("rejected_local_distance", 0)),
+        rejected_near_robot=int(s.get("rejected_near_robot", 0)),
+        rejected_cooldown=int(s.get("rejected_cooldown", 0)),
+        viewpoint_cells_checked=int(s.get("viewpoint_cells_checked", 0)),
+        current_target_valid=bool(s.get("current_target_xy")),
+        current_target_x=float((s.get("current_target_xy") or [0.0, 0.0])[0]),
+        current_target_y=float((s.get("current_target_xy") or [0.0, 0.0])[1]),
     )
 
 
@@ -184,11 +210,14 @@ def cancel(req: CancelExplore_Request) -> CancelExplore_Response:
 # subs, frontier loop, …). See docs/cap-lifecycle.md for the full FSM.
 @explore_skill.on_init
 def init(cfg):
-    """CMD_INIT: light. The state machine wants every cap to reach
-    INITIALIZED at boot time even if its upstream peers are still warming
-    up — so we deliberately don't query atlas for nav / map here. cfg is
-    accepted for forward-compat (no manifest knobs declared yet)."""
-    log.info("CMD_INIT ok")
+    """Validate deployment settings at INIT without connecting to ROS or Atlas."""
+    global settings
+    try:
+        settings = ExploreSettings.parse(cfg)
+    except (TypeError, ValueError) as exc:
+        return Err(f"invalid explore configuration: {exc}")
+    log.info("CMD_INIT ok: timeout_s=%s sweep_every_n_legs=%s",
+             settings.timeout_s, settings.sweep_every_n_legs)
     return Ok()
 
 
@@ -209,6 +238,8 @@ def activate():
         nav_navigate_endpoint=inputs["nav_navigate"],
         nav_status_endpoint=inputs["nav_status"],
         nav_cancel_endpoint=inputs["nav_cancel"],
+        nav_get_speed_endpoint=inputs["nav_get_speed"],
+        settings=settings,
         scene_list_objects_endpoint=inputs.get("scene_list_objects"),
     )
     ctrl.start_runtime()

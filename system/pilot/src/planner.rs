@@ -2,6 +2,7 @@
 // Author: wheatfox <wheatfox17@icloud.com>
 //
 use crate::discovery::{self, llm_name};
+use crate::execution_notice;
 use crate::history;
 use crate::memory;
 use crate::navigation_goal::SceneNavigationGoals;
@@ -324,6 +325,20 @@ async fn drive_plan(
     forest_revision: Arc<AtomicU64>,
 ) {
     let plan_id = plan.plan_id.clone();
+    let root_index = plan.root_index;
+    let description = plan
+        .nodes
+        .get(root_index as usize)
+        .map(|node| node.description.clone())
+        .unwrap_or_default();
+    let failure_node = |detail: String| RtdlNodeState {
+        plan_id: plan_id.clone(),
+        node_index: root_index,
+        description: description.clone(),
+        state: RtdlNodeStateEnum::Failed as u32,
+        operator_detail: detail,
+        ..Default::default()
+    };
     let mut stream = match client.execute(Request::new(plan)).await {
         Ok(resp) => resp.into_inner(),
         Err(e) => {
@@ -331,8 +346,8 @@ async fn drive_plan(
             forest_revision.fetch_add(1, Ordering::Release);
             let _ = events_tx
                 .send(ForestEvent::PlanDone {
+                    results: vec![failure_node(format!("Executor Execute RPC failed: {e}"))],
                     plan_id,
-                    results: Vec::new(),
                     any_failed: true,
                     canceled: false,
                 })
@@ -344,6 +359,7 @@ async fn drive_plan(
     let mut results: Vec<RtdlNodeState> = Vec::new();
     let mut any_failed = false;
     let mut canceled = false;
+    let mut complete = false;
     loop {
         match stream.message().await {
             Ok(Some(event)) => {
@@ -351,7 +367,8 @@ async fn drive_plan(
                     && let Some(pc) = event.plan_complete
                 {
                     any_failed |= pc.any_failed;
-                    continue;
+                    complete = true;
+                    break;
                 }
                 if event.event_kind == RtdlEventEnum::NodeState as u32
                     && let Some(ns) = event.node_state
@@ -389,12 +406,19 @@ async fn drive_plan(
             Ok(None) => break,
             Err(e) => {
                 warn!("[pilot/forest] plan_id={plan_id} stream recv error: {e}");
+                results.push(failure_node(format!("Executor stream error: {e}")));
                 any_failed = true;
                 break;
             }
         }
     }
 
+    if !complete {
+        any_failed = true;
+        results.push(failure_node(
+            "Executor stream closed before PlanComplete".into(),
+        ));
+    }
     forest_revision.fetch_add(1, Ordering::Release);
     let _ = events_tx
         .send(ForestEvent::PlanDone {
@@ -413,13 +437,16 @@ async fn drive_plan(
 async fn cancel_forest_plans(
     executor: &mut ExecutorConn,
     forest: &HashMap<String, TreeMeta>,
-    _session_id: &str,
+    session_id: &str,
+    events: &mut mpsc::Receiver<ForestEvent>,
+    tx: &mpsc::Sender<std::result::Result<PilotEvent, tonic::Status>>,
 ) {
     let targets: Vec<String> = forest
         .iter()
         .filter(|(_, meta)| !meta.control_only)
         .map(|(plan_id, _)| plan_id.clone())
         .collect();
+    let mut pending: HashSet<String> = targets.iter().cloned().collect();
     for target in targets {
         let cancel = executor
             .control
@@ -433,8 +460,10 @@ async fn cancel_forest_plans(
         match tokio::time::timeout(std::time::Duration::from_secs(7), cancel).await {
             Ok(Ok(response)) => {
                 let response = response.into_inner();
-                if response.success {
-                    info!("[pilot] canceled executor plan {target} on abort_turn");
+                if response.success && response.completed {
+                    info!(
+                        "[pilot] executor cancellation completed for plan {target}; waiting for terminal result"
+                    );
                 } else {
                     warn!(
                         "[pilot] cancel executor plan {target} rejected: {}",
@@ -447,6 +476,74 @@ async fn cancel_forest_plans(
             }
             Err(_) => warn!("[pilot] cancel executor plan {target} timed out"),
         }
+    }
+    // Cancellation acceptance alone is not a CANCELED result. Drain the
+    // actual driver outcomes before the aborted subscription ends.
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+    while !pending.is_empty() {
+        match tokio::time::timeout_at(deadline, events.recv()).await {
+            Ok(Some(ForestEvent::NodeState { node_state, .. })) => {
+                let _ = tx
+                    .send(Ok(service::pack(
+                        session_id,
+                        PilotStreamBody::NodeState(*node_state),
+                    )))
+                    .await;
+            }
+            Ok(Some(ForestEvent::PlanDone {
+                plan_id,
+                results,
+                any_failed,
+                canceled,
+            })) => {
+                if !pending.remove(&plan_id) {
+                    continue;
+                }
+                let description = forest
+                    .get(&plan_id)
+                    .map(|meta| meta.description.as_str())
+                    .unwrap_or("执行计划");
+                let notice = execution_notice::terminal(
+                    session_id,
+                    &plan_id,
+                    description,
+                    &results,
+                    any_failed,
+                    canceled,
+                );
+                let _ = tx
+                    .send(Ok(service::pack(
+                        session_id,
+                        PilotStreamBody::BatchResult(BatchResult {
+                            plan_id,
+                            session_id: session_id.into(),
+                            round: 0,
+                            results,
+                            any_failed,
+                        }),
+                    )))
+                    .await;
+                let _ = tx
+                    .send(Ok(service::pack(
+                        session_id,
+                        PilotStreamBody::Status(notice),
+                    )))
+                    .await;
+            }
+            _ => break,
+        }
+    }
+    for plan_id in pending {
+        let _ = tx
+            .send(Ok(service::pack(
+                session_id,
+                PilotStreamBody::Status(SessionStatusEvent {
+                    session_id: session_id.into(),
+                    state: SessionState::Failed as u32,
+                    message: format!("[plan {plan_id}] 取消尚未确认：不能断言后台任务已停止"),
+                }),
+            )))
+            .await;
     }
 }
 
@@ -1057,13 +1154,13 @@ pub async fn run_turn(
     let prompt_cache_key = Uuid::new_v4().simple().to_string();
 
     macro_rules! return_interrupted {
-        ($forest:expr) => {{
+        ($forest:expr, $events:expr) => {{
             if let Some(state) = standing_task.as_mut() {
                 state.control.clear();
                 state.pending_done = false;
                 state.status = "done".into();
             }
-            cancel_forest_plans(executor, $forest, &session_id).await;
+            cancel_forest_plans(executor, $forest, &session_id, $events, &tx).await;
             let _ = tx
                 .send(Ok(service::pack(
                     &session_id,
@@ -1223,11 +1320,13 @@ pub async fn run_turn(
     let (forest_tx, mut forest_rx) = mpsc::channel::<ForestEvent>(256);
     let mut forest: HashMap<String, TreeMeta> = HashMap::new();
     let mut cancel_requested: HashSet<String> = HashSet::new();
+    let mut running_notified: HashSet<String> = HashSet::new();
     let forest_revision = Arc::new(AtomicU64::new(0));
     let mut should_plan = true;
     let mut control_due = false;
     let mut greeting_seen = greeting_state();
     let mut greeting_tick = tokio::time::interval(Duration::from_millis(500));
+    let mut planning_exhausted = false;
     let mut capability_prompt_cache = CapabilityPromptCache::default();
     let mut scene_navigation_goals = SceneNavigationGoals::default();
     // Last user-facing narration; surfaced as FinalText when the turn ends.
@@ -1236,7 +1335,7 @@ pub async fn run_turn(
     'supervisor: loop {
         // Check for hard interrupt at the top of every iteration.
         if *cancel_rx.borrow() {
-            return_interrupted!(&forest);
+            return_interrupted!(&forest, &mut forest_rx);
         }
 
         // Consume queued execution changes before asking about control targets;
@@ -1252,6 +1351,19 @@ pub async fn run_turn(
                 .map(TaskState::is_done)
                 .unwrap_or(false);
             if forest.is_empty() {
+                if planning_exhausted {
+                    let reply = format!(
+                        "{}\nPlanning round limit reached; all dispatched execution outcomes have been reported.",
+                        last_content
+                    );
+                    let _ = tx
+                        .send(Ok(service::pack(
+                            &session_id,
+                            PilotStreamBody::FinalText(reply),
+                        )))
+                        .await;
+                    break;
+                }
                 if task_done || standing_task.is_none() {
                     let _ = tx
                         .send(Ok(service::pack(
@@ -1268,7 +1380,7 @@ pub async fn run_turn(
                 tokio::select! {
                     biased;
                     _ = cancel_rx.changed() => {
-                        return_interrupted!(&forest);
+                        return_interrupted!(&forest, &mut forest_rx);
                     }
                     _ = greeting_tick.tick() => {
                         let latest = greeting_state();
@@ -1298,7 +1410,7 @@ pub async fn run_turn(
             tokio::select! {
                 biased;
                 _ = cancel_rx.changed() => {
-                    return_interrupted!(&forest);
+                    return_interrupted!(&forest, &mut forest_rx);
                 }
                 _ = greeting_tick.tick() => {
                     let latest = greeting_state();
@@ -1332,6 +1444,15 @@ pub async fn run_turn(
                             }
                             if control_due || ns.state == RtdlNodeStateEnum::Paused as u32 {
                                 should_plan = true;
+                            }
+                            if ns.state == RtdlNodeStateEnum::Running as u32
+                                && running_notified.insert(plan_id.clone())
+                            {
+                                let description = forest.get(&plan_id)
+                                    .map(|meta| meta.description.as_str()).unwrap_or("执行计划");
+                                let _ = tx.send(Ok(service::pack(&session_id,
+                                    PilotStreamBody::Status(execution_notice::running(
+                                        &session_id, &plan_id, description))))).await;
                             }
                             // Feed every node's result into context the moment it
                             // reaches a terminal state, using names rather than
@@ -1383,7 +1504,14 @@ pub async fn run_turn(
                                 .await;
                         }
                         Some(ForestEvent::PlanDone { plan_id, results, any_failed, canceled }) => {
-                            forest.remove(&plan_id);
+                            let Some(finished) = forest.remove(&plan_id) else {
+                                // Drivers normally finish once; never duplicate a final notice.
+                                continue;
+                            };
+                            running_notified.remove(&plan_id);
+                            let notice = execution_notice::terminal(&session_id, &plan_id,
+                                &finished.description, &results, any_failed, canceled);
+                            last_content = notice.message.clone();
                             let requested_cancellation = cancel_requested.remove(&plan_id);
                             if let Some(state) = standing_task.as_mut() {
                                 state.control.finish(&plan_id, any_failed, canceled, requested_cancellation);
@@ -1414,6 +1542,10 @@ pub async fn run_turn(
                                     PilotStreamBody::BatchResult(batch),
                                 )))
                                 .await;
+                            // Always deliver the actual outcome, even if the user
+                            // interaction was already marked "done" by the model.
+                            let _ = tx.send(Ok(service::pack(&session_id,
+                                PilotStreamBody::Status(notice)))).await;
                             // Re-plan after natural completion or exactly once
                             // when a cancellation explicitly requested by this
                             // supervisor is fulfilled. Unsolicited canceled
@@ -1449,7 +1581,7 @@ pub async fn run_turn(
                                 canceled,
                                 requested_cancellation,
                                 cancel_requested.is_empty(),
-                                interaction_active,
+                                interaction_active && !planning_exhausted,
                             ) {
                                 should_plan = true;
                             }
@@ -1655,7 +1787,7 @@ pub async fn run_turn(
                         // Cancel takes priority — checked before every new VLM token.
                         _ = cancel_rx.changed() => {
                             drop(stream);
-                            return_interrupted!(&forest);
+                            return_interrupted!(&forest, &mut forest_rx);
                         }
                         steer = steer_rx.recv() => {
                             if let Some(task) = steer {
@@ -2189,36 +2321,28 @@ pub async fn run_turn(
                     .await;
                 break;
             }
-            // A completed interaction may close while unrelated long-running
-            // work remains. If this interaction is still in progress, keep its
-            // stream open: surface the model text as progress and wait for the
-            // relevant plan result before producing FinalText.
+            // A startup acknowledgement must not terminate the execution
+            // subscription while any tree is alive, even if the LLM marks the
+            // interaction done. PlanDone will provide deterministic notices.
             if !assistant_content.trim().is_empty() {
-                let body = if task_done {
-                    PilotStreamBody::FinalText(assistant_content.clone())
-                } else {
-                    PilotStreamBody::TextChunk(assistant_content.clone())
-                };
-                let _ = tx.send(Ok(service::pack(&session_id, body))).await;
-                if !task_done {
-                    // Status is the narration boundary consumed by Liaison:
-                    // display/TTS the complete progress text now without
-                    // closing the SubmitTask stream.
-                    let _ = tx
-                        .send(Ok(service::pack(
-                            &session_id,
-                            PilotStreamBody::Status(SessionStatusEvent {
-                                session_id: session_id.clone(),
-                                state: SessionState::Active as u32,
-                                message: "Waiting for in-flight work".to_string(),
-                            }),
-                        )))
-                        .await;
-                }
+                let _ = tx
+                    .send(Ok(service::pack(
+                        &session_id,
+                        PilotStreamBody::TextChunk(assistant_content.clone()),
+                    )))
+                    .await;
+                let _ = tx.send(Ok(service::pack(&session_id,
+                    PilotStreamBody::Status(SessionStatusEvent {
+                        session_id: session_id.clone(),
+                        state: SessionState::Active as u32,
+                        message: "Waiting for in-flight work; completion will be reported automatically".into(),
+                    })))).await;
             }
             if hit_cap {
-                warn!("[pilot] hit max tool rounds ({max_rounds}), stopping turn");
-                break;
+                warn!(
+                    "[pilot] hit max tool rounds ({max_rounds}); awaiting dispatched execution outcomes"
+                );
+                planning_exhausted = true;
             }
             // should_plan stays false: wait for a forest event, or for a steer
             // when an in-progress task has intentionally produced no new tree.
@@ -2271,8 +2395,10 @@ pub async fn run_turn(
         );
 
         if hit_cap {
-            warn!("[pilot] hit max tool rounds ({max_rounds}), stopping turn");
-            break;
+            warn!(
+                "[pilot] hit max tool rounds ({max_rounds}); awaiting dispatched execution outcomes"
+            );
+            planning_exhausted = true;
         }
         // should_plan stays false: wait for this tree (and any others) to report.
     }
