@@ -163,7 +163,6 @@ _odom_topic = "/odom"
 _chassis_health_required = False
 _chassis_health_sample = None
 _chassis_health_level = 3
-_chassis_faulted = False
 _chassis_health_message = "waiting for chassis diagnostics"
 _speed_publisher = None
 _guard_speed_publisher = None
@@ -1290,7 +1289,7 @@ def _greeting_motion_error() -> str:
 
 def _observe_chassis_health(msg) -> None:
     """Keep G1 motion faults separate from truthful odometry used for display."""
-    global _chassis_health_sample, _chassis_health_level, _chassis_faulted
+    global _chassis_health_sample, _chassis_health_level
     global _chassis_health_message, _stationary_since
     with _state_lock:
         for status in msg.status:
@@ -1301,17 +1300,14 @@ def _observe_chassis_health(msg) -> None:
             _chassis_health_level = (status.level[0] if isinstance(status.level, (bytes, bytearray))
                                      else int(status.level))
             _chassis_health_message = status.message
-            _chassis_faulted = _chassis_faulted or _chassis_health_level == 2
             if _chassis_health_error():
                 _stationary_since = None
 
 
 def _chassis_health_error() -> str:
-    """Require fresh healthy G1 diagnostics; a latched fault needs a project restart."""
+    """Require fresh healthy G1 diagnostics; the daemon owns its fault latch."""
     if not _chassis_health_required:
         return ""
-    if _chassis_faulted:
-        return "chassis motion fault is latched; navigation inhibited until restart"
     if _chassis_health_sample is None or time.monotonic() - _chassis_health_sample > 0.5:
         return "fresh chassis diagnostics are required for navigation"
     if _chassis_health_level != 0:

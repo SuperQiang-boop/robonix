@@ -34,7 +34,7 @@ class PauseResumeTest(unittest.TestCase):
         self.addCleanup(environment.stop)
         self.n = dict(_state_lock=threading.Lock(),
             _chassis_health_required=False, _chassis_health_sample=None,
-            _chassis_health_level=3, _chassis_faulted=False,
+            _chassis_health_level=3,
             _chassis_health_message='waiting', _ros_node=object(),
             _last_run_id='run', _goal_states={'run': {'state': 'RUNNING'}},
             _nav_status_active=False, _nav_action_ready=True,
@@ -214,17 +214,14 @@ class PauseResumeTest(unittest.TestCase):
         n['_observe_odom'](msg)
         self.assertFalse(n['_stationary']())
 
-    def test_chassis_fault_blocks_resume_even_with_fresh_stationary_odometry(self):
-        """Live display telemetry cannot authorize movement after an SDK fault."""
+    def test_chassis_fault_blocks_resume_until_health_returns(self):
+        """A faulted chassis blocks resume; a healthy sample only reopens the normal gate."""
         n = self.n
         n['_chassis_health_required'] = True
         n['_goal_states']['run']['state'] = 'PAUSED'
         status = SimpleNamespace(name='g1_chassis', hardware_id='g1_chassis',
-                                 level=2, message='motion fault')
+                                 level=2, message='chassis motion fault is latched')
         n['_observe_chassis_health'](SimpleNamespace(status=[status]))
-        n['_stationary_since'] = time.monotonic() - 1
-        n['_odom_sample'] = time.monotonic()
-        self.assertFalse(n['_stationary']())
         result = n['_resume_impl']('run')
         self.assertFalse(result['accepted'])
         self.assertIn('chassis motion fault', result['detail'])
@@ -232,7 +229,13 @@ class PauseResumeTest(unittest.TestCase):
         status.level = 0
         n['_observe_chassis_health'](SimpleNamespace(status=[status]))
         self.assertFalse(n['_resume_impl']('run')['accepted'])
-        self.assertTrue(n['_nav_queue'].empty())
+        stopped = SimpleNamespace(twist=SimpleNamespace(twist=SimpleNamespace(
+            linear=SimpleNamespace(x=0.0, y=0.0), angular=SimpleNamespace(z=0.0))))
+        n['_observe_odom'](stopped)
+        self.assertFalse(n['_resume_impl']('run')['accepted'])
+        n['_stationary_since'] = time.monotonic() - 1
+        self.assertTrue(n['_resume_impl']('run')['accepted'])
+        self.assertFalse(n['_nav_queue'].empty())
 
     def test_g1_requires_diagnostics_but_other_chassis_keep_existing_behavior(self):
         """Missing, stale and unrelated diagnostics cannot authorize G1 recovery."""
@@ -254,7 +257,10 @@ class PauseResumeTest(unittest.TestCase):
     def test_chassis_fault_rejects_new_and_already_queued_goals(self):
         """Chassis health is checked both before queueing and before sending to Nav2."""
         n = self.n
-        n['_chassis_health_required'] = n['_chassis_faulted'] = True
+        n['_chassis_health_required'] = True
+        n['_chassis_health_level'] = 2
+        n['_chassis_health_message'] = 'chassis motion fault is latched'
+        n['_chassis_health_sample'] = time.monotonic()
         goal = SimpleNamespace(header=SimpleNamespace(frame_id='map'),
             pose=SimpleNamespace(orientation=SimpleNamespace(z=0, w=1)))
         self.assertFalse(n['_navigate_impl'](goal)['accepted'])
@@ -272,6 +278,7 @@ class PauseResumeTest(unittest.TestCase):
         n['_observe_chassis_health'](SimpleNamespace(status=[status]))
         self.assertEqual(n['_chassis_health_error'](), '')
         status.level = b'\x02'
+        status.message = 'chassis motion fault is latched'
         n['_observe_chassis_health'](SimpleNamespace(status=[status]))
         self.assertIn('chassis motion fault', n['_chassis_health_error']())
 

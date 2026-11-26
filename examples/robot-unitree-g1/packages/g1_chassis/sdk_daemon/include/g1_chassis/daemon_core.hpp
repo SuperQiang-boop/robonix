@@ -65,6 +65,9 @@ class DaemonCore {
   // Last time a valid command was successfully processed.
   uint64_t last_arm_time_ns_{0};
   uint64_t last_motion_time_ns_{0};
+  // One transport timeout is already awaiting its retry on the next command;
+  // a second consecutive failure latches the fault.
+  bool velocity_retry_pending_{false};
   uint64_t velocity_calls_{0};
   uint64_t last_velocity_time_ns_{0};
   uint64_t last_velocity_log_ns_{0};

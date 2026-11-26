@@ -50,6 +50,10 @@ class FakeLocoClient final : public ILocoClient {
     last_vy = vy;
     last_omega = omega;
     last_duration = duration;
+    if (velocity_failures_remaining > 0) {
+      --velocity_failures_remaining;
+      return velocity_failure_code;
+    }
     return velocity_result;
   }
   int32_t StopMove() override {
@@ -74,6 +78,8 @@ class FakeLocoClient final : public ILocoClient {
   int32_t prepare_result{0};
   int32_t velocity_result{0};
   int velocity_delay_ms{0};
+  int32_t velocity_failure_code{3104};
+  int velocity_failures_remaining{0};
   int32_t stop_result{0};
   int32_t stop_failure_code{3104};
   int stop_failures_remaining{0};
@@ -205,7 +211,10 @@ TEST_CASE("SDK errors and stop causes are logged without waiting for the summary
   core.Handle(VelocityCommand(0.2F, 0.0F, 0.0F), 1);
   client.velocity_result = 3104;
   core.Handle(VelocityCommand(0.2F, 0.0F, 0.0F), 60'000'001ULL);
-  REQUIRE(captured.text().find("SetVelocity calls=2 cmd_seq=") != std::string::npos);
+  core.Handle(VelocityCommand(0.2F, 0.0F, 0.0F), 120'000'001ULL);
+  REQUIRE(captured.text().find("SetVelocity calls=3 cmd_seq=") != std::string::npos);
+  REQUIRE(captured.text().find("retrying on the next command before latching a fault") !=
+          std::string::npos);
   REQUIRE(captured.text().find("rpc=3104") != std::string::npos);
   REQUIRE(captured.text().find("StopMove reason=velocity_rpc_error rpc=0") != std::string::npos);
   REQUIRE(core.faulted());
@@ -227,13 +236,73 @@ TEST_CASE("SDK velocity failure rejects the command", "[daemon]") {
   client.velocity_result = 3104;
   DaemonCore core(MotionConfig(), client);
 
-  const ReplyPacket reply = core.Handle(VelocityCommand(0.2F, 0.0F, 0.0F), 1);
+  const ReplyPacket first = core.Handle(VelocityCommand(0.2F, 0.0F, 0.0F), 1);
+  REQUIRE(first.code == static_cast<uint8_t>(ReplyCode::kSdkError));
+  REQUIRE(first.faulted == 0);
+  REQUIRE_FALSE(core.faulted());
 
-  REQUIRE(reply.code == static_cast<uint8_t>(ReplyCode::kSdkError));
-  REQUIRE(client.velocity_calls == 1);
+  const ReplyPacket second = core.Handle(VelocityCommand(0.2F, 0.0F, 0.0F), 60'000'001ULL);
+
+  REQUIRE(second.code == static_cast<uint8_t>(ReplyCode::kSdkError));
+  REQUIRE(second.faulted == 1);
+  REQUIRE(client.velocity_calls == 2);
   REQUIRE(client.stop_calls == 1);
   REQUIRE(core.faulted());
   REQUIRE_FALSE(core.armed());
+}
+
+TEST_CASE("a transient SDK failure is retried on the next command", "[daemon]") {
+  FakeLocoClient client;
+  client.velocity_failures_remaining = 1;
+  DaemonCore core(MotionConfig(), client);
+
+  REQUIRE(core.Handle(VelocityCommand(0.2F, 0.0F, 0.0F), 1).code ==
+          static_cast<uint8_t>(ReplyCode::kSdkError));
+  REQUIRE_FALSE(core.faulted());
+  REQUIRE(core.Handle(VelocityCommand(0.2F, 0.0F, 0.0F), 60'000'001ULL).code ==
+          static_cast<uint8_t>(ReplyCode::kOk));
+  REQUIRE(client.velocity_calls == 2);
+  REQUIRE(client.stop_calls == 0);
+  REQUIRE(core.armed());
+}
+
+TEST_CASE("a non-transport SDK rejection latches without a retry", "[daemon]") {
+  FakeLocoClient client;
+  client.velocity_result = 7301;
+  DaemonCore core(MotionConfig(), client);
+
+  const ReplyPacket reply = core.Handle(VelocityCommand(0.2F, 0.0F, 0.0F), 1);
+
+  REQUIRE(reply.faulted == 1);
+  REQUIRE(client.velocity_calls == 1);
+  REQUIRE(client.stop_calls == 1);
+  REQUIRE(core.faulted());
+}
+
+TEST_CASE("a zero command supersedes a pending velocity retry", "[daemon]") {
+  FakeLocoClient client;
+  DaemonCore core(MotionConfig(), client);
+  core.Handle(VelocityCommand(0.2F, 0.0F, 0.0F), 1);
+  client.velocity_result = 3104;
+  core.Handle(VelocityCommand(0.2F, 0.0F, 0.0F), 60'000'001ULL);
+
+  client.velocity_result = 0;
+  const ReplyPacket stop = core.Handle(VelocityCommand(0.0F, 0.0F, 0.0F), 120'000'001ULL);
+
+  REQUIRE(stop.code == static_cast<uint8_t>(ReplyCode::kOk));
+  REQUIRE(client.stop_calls == 1);
+  REQUIRE_FALSE(core.faulted());
+}
+
+TEST_CASE("a slow velocity call starts the watchdog window on return", "[daemon]") {
+  FakeLocoClient client;
+  client.velocity_delay_ms = 50;
+  DaemonCore core(MotionConfig(), client);
+
+  REQUIRE(core.Handle(VelocityCommand(0.2F, 0.0F, 0.0F), 1'000'000'000ULL).code ==
+          static_cast<uint8_t>(ReplyCode::kOk));
+  REQUIRE_FALSE(core.CheckWatchdog(1'310'000'000ULL));
+  REQUIRE(core.CheckWatchdog(1'500'000'000ULL));
 }
 
 TEST_CASE("SDK velocity duration stays within the motion watchdog", "[daemon]") {
@@ -317,8 +386,10 @@ TEST_CASE("stop retry spacing includes time spent waiting for velocity failure",
   client.velocity_delay_ms = 50;
   DaemonCore core(MotionConfig(), client);
   core.Handle(VelocityCommand(0.2F, 0, 0), 1'000'000'000ULL);
+  REQUIRE(client.stop_calls == 0);
+  core.Handle(VelocityCommand(0.2F, 0, 0), 1'050'000'000ULL);
   REQUIRE(client.stop_calls == 1);
-  REQUIRE_FALSE(core.CheckWatchdog(1'120'000'000ULL));
+  REQUIRE_FALSE(core.CheckWatchdog(1'160'000'000ULL));
   REQUIRE(client.stop_calls == 1);
   REQUIRE(core.CheckWatchdog(1'400'000'000ULL));
   REQUIRE(client.stop_calls == 2);

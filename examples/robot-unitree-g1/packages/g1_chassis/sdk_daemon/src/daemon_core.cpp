@@ -16,6 +16,10 @@ namespace g1_chassis {
 namespace {
 constexpr uint64_t kVelocityIntervalNs = 50'000'000ULL;
 constexpr uint64_t kStopRetryIntervalNs = 100'000'000ULL;
+// Unitree SDK2 transport failures (internal_error.hpp). Any other non-zero code
+// is a deterministic rejection that a retry cannot fix.
+constexpr int32_t kSdkClientSendError = 3102;
+constexpr int32_t kSdkClientApiTimeout = 3104;
 }
 
 // ---- Deployment eligibility helper ----
@@ -135,6 +139,7 @@ ReplyPacket DaemonCore::Handle(const CommandPacket &cmd, uint64_t now_ns) {
     // Stop promptly on the first zero command after motion. Nav2 commonly
     // publishes zero commands at a high rate, so suppress duplicate RPCs.
     if (is_zero) {
+      velocity_retry_pending_ = false;
       if (moving_ && IssueStop("zero_command", now_ns) != 0) {
         faulted_ = true;
         armed_ = false;
@@ -157,20 +162,38 @@ ReplyPacket DaemonCore::Handle(const CommandPacket &cmd, uint64_t now_ns) {
 
     // Non-zero command: issue velocity.
     const auto velocity_started = std::chrono::steady_clock::now();
-    if (IssueVelocity(static_cast<float>(vx), static_cast<float>(vy),
-                      static_cast<float>(omega), cmd.sequence, now_ns) != 0) {
+    const int32_t velocity_result = IssueVelocity(static_cast<float>(vx), static_cast<float>(vy),
+                                                  static_cast<float>(omega), cmd.sequence, now_ns);
+    const auto velocity_elapsed_ns = static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now() - velocity_started).count());
+    if (velocity_result != 0) {
+      const bool transport_timeout =
+          velocity_result == kSdkClientApiTimeout || velocity_result == kSdkClientSendError;
+      if (transport_timeout && !velocity_retry_pending_) {
+        // Retrying inside this call would block the poll loop for a second 250 ms
+        // timeout, so the next command retries instead; only that second failure
+        // latches the fault. A queued stop still wins, because zeros are handled
+        // before this path.
+        velocity_retry_pending_ = true;
+        std::cerr << "[g1-daemon] SetVelocity failed rpc=" << velocity_result
+                  << "; retrying on the next command before latching a fault\n";
+        sequence_ = (sequence_ + 1) & 0xFF;
+        return MakeReply(cmd.sequence, ReplyCode::kSdkError, armed_, faulted_);
+      }
       faulted_ = true;
       armed_ = false;
-      const auto elapsed_ns = static_cast<uint64_t>(
-          std::chrono::duration_cast<std::chrono::nanoseconds>(
-              std::chrono::steady_clock::now() - velocity_started).count());
-      IssueStop("velocity_rpc_error", now_ns + elapsed_ns);
+      velocity_retry_pending_ = false;
+      IssueStop("velocity_rpc_error", now_ns + velocity_elapsed_ns);
       moving_ = false;
       sequence_ = (sequence_ + 1) & 0xFF;
       return MakeReply(cmd.sequence, ReplyCode::kSdkError, armed_, faulted_);
     }
+    velocity_retry_pending_ = false;
     moving_ = true;
-    last_motion_time_ns_ = now_ns;
+    // Either attempt can block for the 250 ms RPC timeout, so anchor the watchdog
+    // window at return; otherwise a slow success expires it on the next tick.
+    last_motion_time_ns_ = now_ns + velocity_elapsed_ns;
   }
 
   sequence_ = (sequence_ + 1) & 0xFF;
@@ -196,6 +219,7 @@ bool DaemonCore::CheckWatchdog(uint64_t now_ns) {
       std::cerr << "[g1-daemon] WATCHDOG EXPIRED — issuing StopMove\n";
       faulted_ = true;
       armed_ = false;
+      velocity_retry_pending_ = false;
       IssueStop("watchdog_expired", now_ns);
       moving_ = false;
       return true;
@@ -216,6 +240,7 @@ void DaemonCore::OnDisconnect() {
     faulted_ = true;
   }
   armed_ = false;
+  velocity_retry_pending_ = false;
 }
 
 bool DaemonCore::stop_unconfirmed() {
