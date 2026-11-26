@@ -72,8 +72,10 @@ alone is not evidence of map corruption and does not justify a map reset.
    - Find free frontier cells adjacent to unknown space; cluster and split
      large boundaries into local segments.
    - Search in two dimensions from actual boundary segments for known-free
-     observation positions, within 2.5 m of the boundary. Each position needs a
-     known-free sight line to its source boundary, a 0.65 m known-free clearance
+     observation positions, within 2.5 m of the boundary. If a safe view is too
+     close to be a useful stop, continue that bounded branch for a farther
+     candidate. Each goal needs a known-free sight line to its source boundary,
+     a 0.65 m known-free clearance
      disk, and a clearance-safe route from the robot. Reject goals outside the
      15 m local range or in a recently failed-goal area; visits add a penalty.
    - Flood the clearance-safe known-free map from the robot pose; only score
@@ -101,7 +103,8 @@ alone is not evidence of map corruption and does not justify a map reset.
      free-area growth are not repeated.
 3. Declare `done` only when no frontier clusters remain and confirmed map
    growth/translation has been quiet for 30 seconds. Remaining frontiers with
-   no safe reachable goal are reported as an error, not successful coverage.
+   no safe reachable goal are reported as an error with an explicit partial-
+   mapping/not-complete explanation, not successful coverage.
    When no candidate is available, wait for at least a 30-second no-progress
    window from the first missing candidate or latest progress, not just five
    fast polls. Reports include start clearance, reachable cell count, generated

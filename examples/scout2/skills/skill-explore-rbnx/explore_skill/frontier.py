@@ -283,7 +283,8 @@ def _known_free_line(gv: GridView, start: Tuple[int, int],
 def _frontier_goal_candidates(gv: GridView, cells: np.ndarray,
                               reachable: np.ndarray,
                               safe_goal_mask: np.ndarray,
-                              diagnostics: Optional[dict] = None
+                              diagnostics: Optional[dict] = None,
+                              robot_xy: Optional[Tuple[float, float]] = None
                               ) -> list[Tuple[int, int]]:
     """Search two-dimensional known space for safe views of actual boundaries.
 
@@ -303,6 +304,7 @@ def _frontier_goal_candidates(gv: GridView, cells: np.ndarray,
     stats.setdefault('rejected_route_reachability', 0)
     stats.setdefault('rejected_visibility', 0)
     stats.setdefault('rejected_view_distance', 0)
+    stats.setdefault('rejected_near_robot', 0)
     stats.setdefault('viewpoint_cells_checked', 0)
     for raw_x, raw_y in cells:
         cell = int(raw_x), int(raw_y)
@@ -322,8 +324,15 @@ def _frontier_goal_candidates(gv: GridView, cells: np.ndarray,
         elif not _known_free_line(gv, (cx, cy), (source_x, source_y)):
             stats['rejected_visibility'] += 1
         else:
-            candidates.add((cx, cy))
-            continue
+            wx, wy = gv.cell_to_world(cx, cy)
+            if (robot_xy is not None
+                    and math.dist((wx, wy), robot_xy) < MIN_TARGET_DISTANCE_M):
+                # Do not let a nearby but unusable view hide a farther safe
+                # observation point on this same boundary branch.
+                stats['rejected_near_robot'] += 1
+            else:
+                candidates.add((cx, cy))
+                continue
         # Expand one extra ring so the distance counter includes branches
         # whose first otherwise-checkable viewpoint lies just beyond range.
         for nx, ny in ((cx - 1, cy), (cx + 1, cy), (cx, cy - 1), (cx, cy + 1)):
@@ -384,7 +393,7 @@ def score_clusters(clusters: List[FrontierCluster], gv: GridView,
     for segment in _split_clusters(clusters, gv):
         for tx, ty in _frontier_goal_candidates(
                 gv, segment.cell_indices, reachable, safe_goal,
-                diagnostics=stats):
+                diagnostics=stats, robot_xy=robot_xy):
             stats['generated_viewpoints'] += 1
             stats['goal_clearance_candidates'] += 1
             wx, wy = gv.cell_to_world(tx, ty)
@@ -393,6 +402,8 @@ def score_clusters(clusters: List[FrontierCluster], gv: GridView,
                 stats['rejected_distance'] += 1
                 continue
             if travel < MIN_TARGET_DISTANCE_M:
+                # Defensive check for candidates supplied by alternate search
+                # implementations; the bounded viewpoint flood filters these.
                 stats['rejected_near_robot'] += 1
                 continue
             if failed_goals and any(

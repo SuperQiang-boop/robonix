@@ -7,8 +7,10 @@ triggers the `robonix/skill/explore/explore` tool).
 See `CAPABILITY.md` for the full interface + behaviour spec.
 
 Frontier goals are sampled by a bounded two-dimensional search from real
-boundary cells into known-free space (up to 2.5 m observation distance). Goals
-must have a known-free sight line to their source boundary; the observation
+boundary cells into known-free space (up to 2.5 m observation distance). If
+an otherwise safe view is too close to be a useful navigation stop, that
+bounded search branch continues looking for a farther candidate. Goals must
+have a known-free sight line to their source boundary; the observation
 search is not a route the robot follows. A candidate must have a 0.65 m known-free clearance disk and belong to
 the robot's clearance-safe connected region before Nav2 plans the route. Large
 frontiers are split into local segments; recent failed-goal regions are cooled
@@ -19,8 +21,10 @@ successful coverage.
 
 No-target retries wait for an actual 30-second no-progress window rather than
 failing after five fast polls of a static map. New measured map growth or
-translation restarts this window. Selection diagnostics report robot clearance,
-reachable cells, generated viewpoints and distance/cooldown/budget rejections.
+translation restarts this window. If frontiers remain but no safe candidate is
+selected, terminal detail explicitly says mapping is partial and not reported
+complete. Selection diagnostics report robot clearance, reachable cells,
+generated viewpoints and distance/cooldown/budget rejections.
 Sweep-disabled runs do not claim to be rotating. Status elapsed time stops at
 termination; query the exact run again instead of reusing an old RUNNING result.
 These limitations are not evidence that the map needs resetting. Status also exposes frontier region count, safe observation candidates, budget-rejected candidates, and the current observation target.

@@ -560,8 +560,10 @@ class ExploreController:
                 diagnostics = self._selection_detail(selection)
                 if quiet_s >= self.DONE_QUIET_SECONDS:
                     self._terminate(handle, "error",
-                        f"{n_frontiers} frontiers remain but no safe observable reachable goal "
-                        f"after {quiet_s:.1f}s without new progress; {diagnostics}")
+                        f"partial mapping; exploration blocked: {n_frontiers} frontiers remain "
+                        f"but no safe observable reachable goal was found after "
+                        f"{quiet_s:.1f}s without new progress; map is not reported complete; "
+                        f"{diagnostics}")
                     return
                 handle.consecutive_no_target += 1
                 handle.consecutive_nav_fails = 0
