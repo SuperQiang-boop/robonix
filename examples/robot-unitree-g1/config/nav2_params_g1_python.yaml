@@ -209,7 +209,8 @@ global_costmap:
       rolling_window: false
       track_unknown_space: true
       always_send_full_costmap: true
-      plugins: ["static_layer", "obstacle_layer", "inflation_layer"]
+      # Keep temporary obstacles in the local costmap so stale hits do not block global routes.
+      plugins: ["static_layer", "inflation_layer"]
 
       static_layer:
         plugin: "nav2_costmap_2d::StaticLayer"
@@ -220,23 +221,6 @@ global_costmap:
         # incremental updates, so a cell RTAB-Map has cleared stays in the
         # global costmap until the whole map is replaced.
         subscribe_to_updates: true
-
-      obstacle_layer:
-        plugin: "nav2_costmap_2d::ObstacleLayer"
-        enabled: true
-        observation_sources: scan
-        scan:
-          topic: "__ROBONIX_SCAN_TOPIC__"
-          marking: true
-          clearing: true
-          obstacle_max_range: 8.0
-          raytrace_max_range: 12.0
-          inf_is_valid: true
-          observation_persistence: 0.0
-          expected_update_rate: 0.50
-          # Height filtering is performed before conversion to planar scan.
-          min_obstacle_height: 0.0
-          max_obstacle_height: 2.00
 
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
